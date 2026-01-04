@@ -1,0 +1,34 @@
+# Allowlisting gitignore template for GO projects prevents us
+# from adding various unwanted local files, such as generated
+# files, developer configurations or IDE-specific files etc.
+#
+# Recommended: Go.AllowList.gitignore
+
+# Ignore everything
+*
+
+# But not these files...
+!/.gitignore
+
+# Weave Compute Daemon Source Files
+!/**/*.c
+!/**/*.cpp
+!/**/*.h
+!/**/*.cu
+
+# Weave Project Files
+!README.md
+!LICENSE
+
+!Makefile
+
+# Scripts
+!scripts/
+!scripts/**/*.sh
+
+# Third-party dependencies (git submodules)
+!third_party/
+!third_party/**
+
+# ...even if they are in subdirectories
+!*/
