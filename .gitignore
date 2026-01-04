@@ -20,6 +20,7 @@
 
 # Weave Documentation
 !docs/**/*.md
+!docs/**/*.png
 
 # Weave project
 !README.md
