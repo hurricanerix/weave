@@ -8,4 +8,4 @@ This project is currently under development working towards a MVP state.
 
 See the [docs](./docs) for more details.
 
-![POC running locally](./docs/images/example.png)
+![POC running locally](docs/images/example.png)
