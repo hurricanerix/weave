@@ -7,3 +7,5 @@ A conversational interface for stable diffusion with a focus on being simeple an
 This project is currently under development working towards a MVP state.
 
 See the [docs](./docs) for more details.
+
+![POC running locally](./docs/images/example.png)
