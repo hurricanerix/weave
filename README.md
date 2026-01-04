@@ -5,3 +5,5 @@
 A conversational interface for stable diffusion with a focus on being simeple and fun to use.
 
 This project is currently under development working towards a MVP state.
+
+See the [docs](./docs) for more details.
