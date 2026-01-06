@@ -182,9 +182,9 @@ func (m *Manager) trimHistory() {
 //	[system] You help users create images...
 //	[user] I want a cat
 //	[assistant] Here's a prompt for a cat...
-//	[system] [user edited prompt to: "a fluffy cat"]
+//	[user] [user edited prompt to: "a fluffy cat"]
 //	[user] Make it orange
-//	[system] [current prompt: "a fluffy cat"]
+//	[user] [current prompt: "a fluffy cat"]
 func (m *Manager) BuildLLMContext(systemPrompt string) []Message {
 	// Pre-allocate exact capacity to avoid slice growth during appends.
 	// Capacity = history + optional system prompt + optional trailing context.
@@ -209,10 +209,13 @@ func (m *Manager) BuildLLMContext(systemPrompt string) []Message {
 	// Add all conversation history
 	context = append(context, m.conv.messages...)
 
-	// Append trailing context with current prompt if set
+	// Append trailing context with current prompt if set.
+	// Note: We use RoleUser instead of RoleSystem because Ollama requires
+	// system messages to be first in the conversation. This context message
+	// represents state information for the agent, similar to edit notifications.
 	if m.conv.currentPrompt != "" {
 		context = append(context, Message{
-			Role:    RoleSystem,
+			Role:    RoleUser,
 			Content: `[current prompt: "` + m.conv.currentPrompt + `"]`,
 		})
 	}

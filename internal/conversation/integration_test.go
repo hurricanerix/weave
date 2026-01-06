@@ -68,11 +68,12 @@ func TestMultiTurnConversationFlow(t *testing.T) {
 			editNotification.Role, editNotification.Content, expectedEdit)
 	}
 
-	// Verify trailing context
+	// Verify trailing context (uses RoleUser, not RoleSystem, because
+	// ollama requires system messages to be first in conversation)
 	trailing := context[5]
 	expectedTrailing := `[current prompt: "a fluffy tabby cat sitting on a sunny windowsill"]`
-	if trailing.Role != RoleSystem || trailing.Content != expectedTrailing {
-		t.Errorf("Trailing context = {%s, %q}, want {system, %q}",
+	if trailing.Role != RoleUser || trailing.Content != expectedTrailing {
+		t.Errorf("Trailing context = {%s, %q}, want {user, %q}",
 			trailing.Role, trailing.Content, expectedTrailing)
 	}
 
@@ -273,16 +274,19 @@ func TestEditNotificationFlow(t *testing.T) {
 	m.AddUserMessage("Make me a cat")
 	m.AddAssistantMessage("Here's a cat prompt", "a cat")
 
-	// No edit yet
+	// No edit yet - context has: system, user, assistant, trailing (3 non-system)
+	// Note: trailing context is RoleUser, not RoleSystem, because ollama
+	// requires system messages to be first in conversation
 	context1 := m.BuildLLMContext("system")
-	historyMessages := 0
+	nonSystemMessages := 0
 	for _, msg := range context1 {
 		if msg.Role != RoleSystem {
-			historyMessages++
+			nonSystemMessages++
 		}
 	}
-	if historyMessages != 2 {
-		t.Errorf("Expected 2 history messages before edit, got %d", historyMessages)
+	// Expect 3: user message, assistant message, trailing context (all RoleUser or RoleAssistant)
+	if nonSystemMessages != 3 {
+		t.Errorf("Expected 3 non-system messages before edit (user, assistant, trailing), got %d", nonSystemMessages)
 	}
 
 	// User edits

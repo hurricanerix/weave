@@ -103,6 +103,47 @@ func TestExtractPrompt(t *testing.T) {
 			response: "Here's the prompt:\nPrompt:a cat in space",
 			want:     "a cat in space",
 		},
+		// LLM variations - agent doesn't always use exact "Prompt:" format
+		{
+			name:     "prompt updated variation",
+			response: "Let me revise that:\n\nPrompt Updated: a fluffy orange cat dancing",
+			want:     "a fluffy orange cat dancing",
+		},
+		{
+			name:     "prompt revised variation",
+			response: "Based on your feedback:\n\nPrompt Revised: a dark brooding cat on the lawn",
+			want:     "a dark brooding cat on the lawn",
+		},
+		{
+			name:     "prompt revised and enhanced variation",
+			response: "Prompt Revised and Enhanced: a mysterious cat in moonlight",
+			want:     "a mysterious cat in moonlight",
+		},
+		{
+			name:     "prompt with quotes around content",
+			response: `Prompt: "a cat wearing a top hat"`,
+			want:     "a cat wearing a top hat",
+		},
+		{
+			name:     "prompt updated with quotes",
+			response: `Prompt Updated: "a dancing cat under moonlight"`,
+			want:     "a dancing cat under moonlight",
+		},
+		{
+			name:     "prompt variation lowercase",
+			response: "prompt updated: a lowercase variation",
+			want:     "a lowercase variation",
+		},
+		{
+			name:     "invalid modifier with numbers ignored",
+			response: "Prompt123: should not match\nPrompt: actual prompt",
+			want:     "actual prompt",
+		},
+		{
+			name:     "invalid modifier with hyphen ignored",
+			response: "Prompt-Updated: should not match\nPrompt: actual prompt",
+			want:     "actual prompt",
+		},
 	}
 
 	for _, tt := range tests {

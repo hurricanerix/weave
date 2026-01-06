@@ -403,10 +403,11 @@ func TestBuildLLMContextCurrentPromptOnly(t *testing.T) {
 		t.Fatalf("Expected 2 messages (history + trailing), got %d", len(context))
 	}
 
-	// Last message should be trailing context
+	// Last message should be trailing context (uses RoleUser, not RoleSystem,
+	// because Ollama requires system messages to be first)
 	trailing := context[len(context)-1]
-	if trailing.Role != RoleSystem {
-		t.Errorf("Trailing message role = %q, want %q", trailing.Role, RoleSystem)
+	if trailing.Role != RoleUser {
+		t.Errorf("Trailing message role = %q, want %q", trailing.Role, RoleUser)
 	}
 
 	expected := `[current prompt: "a cute cat"]`
@@ -429,6 +430,8 @@ func TestBuildLLMContextFull(t *testing.T) {
 	}
 
 	// Verify structure: system prompt, history (3), trailing context
+	// Note: trailing context uses RoleUser (not RoleSystem) because
+	// Ollama requires system messages to be first in conversation
 	expected := []struct {
 		role    string
 		content string
@@ -437,7 +440,7 @@ func TestBuildLLMContextFull(t *testing.T) {
 		{RoleUser, "I want a cat"},
 		{RoleAssistant, "Here's a cat prompt"},
 		{RoleUser, "Make it fluffy"},
-		{RoleSystem, `[current prompt: "a cute cat"]`},
+		{RoleUser, `[current prompt: "a cute cat"]`},
 	}
 
 	for i, exp := range expected {
