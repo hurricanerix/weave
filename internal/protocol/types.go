@@ -150,8 +150,8 @@ const (
 	SD35MinCFG         float32 = 0.0
 	SD35MaxCFG         float32 = 20.0
 	SD35MinPromptLen   uint32  = 1
-	SD35MaxPromptLen   uint32  = 2048 // Per encoder
-	SD35MaxPromptData  uint32  = 6144 // 3 * 2048
+	SD35MaxPromptLen   uint32  = 256 // Per encoder (limited by CLIP/T5 token mismatch bug)
+	SD35MaxPromptData  uint32  = 768 // 3 * 256
 	SD35ChannelsRGB    uint32  = 3
 	SD35ChannelsRGBA   uint32  = 4
 )

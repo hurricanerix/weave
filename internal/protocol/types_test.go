@@ -263,8 +263,8 @@ func TestSD35ParameterBounds(t *testing.T) {
 		{"SD35MinCFG", SD35MinCFG, float32(0.0)},
 		{"SD35MaxCFG", SD35MaxCFG, float32(20.0)},
 		{"SD35MinPromptLen", SD35MinPromptLen, uint32(1)},
-		{"SD35MaxPromptLen", SD35MaxPromptLen, uint32(2048)},
-		{"SD35MaxPromptData", SD35MaxPromptData, uint32(6144)},
+		{"SD35MaxPromptLen", SD35MaxPromptLen, uint32(256)},
+		{"SD35MaxPromptData", SD35MaxPromptData, uint32(768)},
 		{"SD35ChannelsRGB", SD35ChannelsRGB, uint32(3)},
 		{"SD35ChannelsRGBA", SD35ChannelsRGBA, uint32(4)},
 	}
@@ -455,8 +455,8 @@ func TestPromptOffsetTableBounds(t *testing.T) {
 		{"length too long", 20, 11, 30, false},
 		{"offset plus length overflow", 25, 10, 30, false},
 		{"zero length", 0, 0, 30, false},
-		{"length too long for max", 0, 2049, 2048, false},
-		{"valid max length", 0, 2048, 2048, true},
+		{"length too long for max", 0, 257, 256, false},
+		{"valid max length", 0, 256, 256, true},
 	}
 
 	for _, tt := range tests {

@@ -12,6 +12,7 @@
  */
 
 #define _POSIX_C_SOURCE 199309L
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -139,6 +140,16 @@ static uint64_t get_time_ms(void) {
  * @note req->prompt_data must remain valid during this call
  * @note This function is NOT thread-safe (ctx is single-threaded)
  */
+/*
+ * Track whether a generation has been performed.
+ *
+ * stable-diffusion.cpp requires a context reset between generations, but
+ * NOT before the first generation. The initially created context works
+ * correctly, but recreated contexts from sd_wrapper_reset() may have
+ * subtle differences that cause crashes.
+ */
+static bool generation_performed = false;
+
 error_code_t process_generate_request(sd_wrapper_ctx_t *ctx,
                                        const sd35_generate_request_t *req,
                                        sd35_generate_response_t *resp) {
@@ -149,17 +160,39 @@ error_code_t process_generate_request(sd_wrapper_ctx_t *ctx,
     char prompt[SD35_MAX_PROMPT_LENGTH + 1];
     sd_wrapper_gen_params_t params;
     error_code_t err;
+    sd_wrapper_error_t sd_err;
 
     err = convert_request_params(req, &params, prompt, sizeof(prompt));
     if (err != ERR_NONE) {
         return err;
     }
 
+    /*
+     * WORKAROUND: Reset SD context between generations to avoid segfault.
+     *
+     * stable-diffusion.cpp has a bug where GGML compute buffers are not
+     * properly freed between generate_image() calls on the same context.
+     * This causes segfaults on subsequent generations with different prompt
+     * lengths. Resetting the context ensures clean state.
+     *
+     * Important: Only reset AFTER the first generation. The initially created
+     * context works correctly, but we must reset before subsequent generations.
+     *
+     * Performance impact: ~2-3 seconds model reload per generation (after first).
+     * This should be removed once the upstream bug is fixed.
+     */
+    if (generation_performed) {
+        sd_err = sd_wrapper_reset(ctx);
+        if (sd_err != SD_WRAPPER_OK) {
+            return ERR_INTERNAL;
+        }
+    }
+
     sd_wrapper_image_t image;
     memset(&image, 0, sizeof(image));
 
     uint64_t start_time = get_time_ms();
-    sd_wrapper_error_t sd_err = sd_wrapper_generate(ctx, &params, &image);
+    sd_err = sd_wrapper_generate(ctx, &params, &image);
     uint64_t end_time = get_time_ms();
 
     uint32_t status;
@@ -217,6 +250,9 @@ error_code_t process_generate_request(sd_wrapper_ctx_t *ctx,
     resp->channels = image.channels;
     resp->image_data_len = (uint32_t)image.data_size;
     resp->image_data = image.data;
+
+    /* Mark that a generation has been performed for reset logic */
+    generation_performed = true;
 
     return ERR_NONE;
 }

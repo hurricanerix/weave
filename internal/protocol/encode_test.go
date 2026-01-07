@@ -643,7 +643,7 @@ func TestNewSD35GenerateRequest(t *testing.T) {
 		{
 			name:      "maximum prompt length",
 			requestID: 3,
-			prompt:    string(bytes.Repeat([]byte("a"), 2048)),
+			prompt:    string(bytes.Repeat([]byte("a"), 256)),
 			width:     512,
 			height:    512,
 			steps:     28,

@@ -334,6 +334,64 @@ sd_wrapper_error_t sd_wrapper_get_model_info(sd_wrapper_ctx_t* ctx,
 }
 
 /**
+ * Reset the SD context to clean state.
+ *
+ * WORKAROUND: stable-diffusion.cpp has a bug where calling generate_image()
+ * multiple times on the same context causes segfaults due to GGML compute
+ * buffers not being properly freed between calls. This function destroys
+ * and recreates the internal context to ensure clean state.
+ */
+sd_wrapper_error_t sd_wrapper_reset(sd_wrapper_ctx_t* ctx) {
+    if (ctx == NULL) {
+        return SD_WRAPPER_ERR_INVALID_PARAM;
+    }
+
+    /* Free existing SD context if present */
+    if (ctx->sd_ctx != NULL) {
+        free_sd_ctx(ctx->sd_ctx);
+        ctx->sd_ctx = NULL;
+    }
+
+    /* Recreate SD context with stored configuration */
+    sd_ctx_params_t sd_params;
+    sd_ctx_params_init(&sd_params);
+
+    /* Set model paths from stored config */
+    sd_params.model_path = ctx->config.model_path;
+    sd_params.clip_l_path = ctx->config.clip_l_path;
+    sd_params.clip_g_path = ctx->config.clip_g_path;
+    sd_params.t5xxl_path = ctx->config.t5xxl_path;
+    sd_params.vae_path = ctx->config.vae_path;
+
+    /* Set CPU/GPU offloading */
+    sd_params.keep_clip_on_cpu = ctx->config.keep_clip_on_cpu;
+    sd_params.keep_vae_on_cpu = ctx->config.keep_vae_on_cpu;
+
+    /* Set threading */
+    if (ctx->config.n_threads > 0) {
+        sd_params.n_threads = ctx->config.n_threads;
+    } else {
+        sd_params.n_threads = sd_get_num_physical_cores();
+    }
+
+    /* Enable flash attention if configured */
+    sd_params.diffusion_flash_attn = ctx->config.enable_flash_attn;
+
+    /* Use FP16 for model weights */
+    sd_params.wtype = SD_TYPE_F16;
+
+    /* Recreate context */
+    ctx->sd_ctx = new_sd_ctx(&sd_params);
+    if (ctx->sd_ctx == NULL) {
+        ctx->error_msg = "Failed to recreate SD context";
+        return SD_WRAPPER_ERR_INIT_FAILED;
+    }
+
+    ctx->error_msg = "";
+    return SD_WRAPPER_OK;
+}
+
+/**
  * Logging callback for stable-diffusion.cpp.
  */
 static void sd_wrapper_log_callback(enum sd_log_level_t level,

@@ -66,6 +66,11 @@ void sd_wrapper_free_image(sd_wrapper_image_t* image) {
     }
 }
 
+sd_wrapper_error_t sd_wrapper_reset(sd_wrapper_ctx_t* ctx) {
+    (void)ctx;  /* Unused in mock - no actual reset needed */
+    return SD_WRAPPER_OK;
+}
+
 /**
  * Test helpers
  */

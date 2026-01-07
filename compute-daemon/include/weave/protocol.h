@@ -74,10 +74,20 @@
 /** Minimum prompt length per encoder (bytes, UTF-8) */
 #define SD35_MIN_PROMPT_LENGTH 1
 
-/** Maximum prompt length per encoder (bytes, UTF-8) */
-#define SD35_MAX_PROMPT_LENGTH 2048
+/**
+ * Maximum prompt length per encoder (bytes, UTF-8)
+ *
+ * Note: stable-diffusion.cpp has a bug where T5 producing more tokens than
+ * CLIP causes GGML assertion failures. Tokenizers break words into subwords,
+ * so character count != token count. Complex words like "photorealistic" may
+ * become 3+ tokens. Limiting to 256 bytes (~50-70 tokens) keeps token counts
+ * safely below CLIP's limits and prevents CLIP/T5 mismatch.
+ *
+ * Observed: 379 chars with 58 words still crashed (subword expansion).
+ */
+#define SD35_MAX_PROMPT_LENGTH 256
 
-/** Maximum total prompt data size (3 encoders × 2048 bytes) */
+/** Maximum total prompt data size (3 encoders × 256 bytes) */
 #define SD35_MAX_PROMPT_DATA_SIZE (3 * SD35_MAX_PROMPT_LENGTH)
 
 /**
@@ -178,11 +188,11 @@ typedef struct {
 
     /* Prompt offset table */
     uint32_t clip_l_offset; /**< Byte offset of CLIP-L prompt in prompt_data */
-    uint32_t clip_l_length; /**< Length of CLIP-L prompt (1-2048 bytes) */
+    uint32_t clip_l_length; /**< Length of CLIP-L prompt (1-1024 bytes) */
     uint32_t clip_g_offset; /**< Byte offset of CLIP-G prompt in prompt_data */
-    uint32_t clip_g_length; /**< Length of CLIP-G prompt (1-2048 bytes) */
+    uint32_t clip_g_length; /**< Length of CLIP-G prompt (1-1024 bytes) */
     uint32_t t5_offset;     /**< Byte offset of T5 prompt in prompt_data */
-    uint32_t t5_length;     /**< Length of T5 prompt (1-2048 bytes) */
+    uint32_t t5_length;     /**< Length of T5 prompt (1-1024 bytes) */
 
     /* Prompt data (not owned by this struct, points into received buffer) */
     const uint8_t *prompt_data;  /**< Pointer to prompt data buffer */

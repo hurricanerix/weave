@@ -161,6 +161,24 @@ sd_wrapper_error_t sd_wrapper_get_model_info(sd_wrapper_ctx_t* ctx,
                                               char* model_name,
                                               size_t buf_size);
 
+/**
+ * Reset the SD context to clean state.
+ *
+ * This function destroys and recreates the internal stable-diffusion.cpp
+ * context to ensure clean state between generations.
+ *
+ * WORKAROUND: This is needed because stable-diffusion.cpp has a bug where
+ * GGML compute buffers are not properly freed between generate_image() calls,
+ * causing segfaults on subsequent generations with different prompt lengths.
+ *
+ * @param ctx  SD wrapper context (must not be NULL)
+ * @return     SD_WRAPPER_OK on success, error code on failure
+ *
+ * @note This operation takes 2-3 seconds as the model must be reloaded.
+ * @note Call this before each generation to avoid segfaults.
+ */
+sd_wrapper_error_t sd_wrapper_reset(sd_wrapper_ctx_t* ctx);
+
 #ifdef __cplusplus
 }
 #endif

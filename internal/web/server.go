@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hurricanerix/weave/internal/client"
 	"github.com/hurricanerix/weave/internal/conversation"
@@ -438,6 +439,26 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, `{"status":"ok","session_id":"%s"}`, sessionID)
 		return
+	}
+
+	// Truncate prompt if it exceeds maximum length
+	// This works around the CLIP/T5 token mismatch bug in stable-diffusion.cpp
+	// where T5 producing more tokens than CLIP causes GGML assertion failures.
+	// See docs/bugs/003-long-prompt-crash.md for details.
+	promptBytes := []byte(prompt)
+	if len(promptBytes) > int(protocol.SD35MaxPromptLen) {
+		originalLen := len(promptBytes)
+
+		// Truncate at UTF-8 character boundary to avoid corrupting multi-byte characters
+		maxLen := int(protocol.SD35MaxPromptLen)
+		for maxLen > 0 && !utf8.RuneStart(promptBytes[maxLen]) {
+			maxLen--
+		}
+
+		prompt = string(promptBytes[:maxLen])
+		log.Printf("Truncated prompt from %d to %d bytes for session %s",
+			originalLen, len(prompt), sessionID)
+		manager.UpdatePrompt(prompt)
 	}
 
 	// Generate unique request ID
