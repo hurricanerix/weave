@@ -5,8 +5,17 @@ package ollama
 // Default configuration constants
 const (
 	DefaultEndpoint = "http://localhost:11434"
-	DefaultModel    = "llama3.2:1b"
+	DefaultModel    = "mistral:7b"
 	DefaultTimeout  = 60 // seconds
+)
+
+// Response format constants
+const (
+	// ResponseDelimiter is the delimiter that separates conversational text
+	// from JSON metadata in LLM responses. The LLM is instructed to end
+	// every message with this delimiter followed by JSON containing prompt
+	// and ready status.
+	ResponseDelimiter = "---"
 )
 
 // API endpoints
@@ -24,36 +33,42 @@ const (
 
 // SystemPrompt defines the agent's behavior for conversational image generation.
 // The agent asks clarifying questions to understand what the user wants,
-// then outputs a prompt line when ready to generate.
-const SystemPrompt = `You help users create images. Your job is to ask clarifying questions to understand exactly what they want, then provide a prompt for the image generator.
+// then outputs a prompt when ready to generate.
+//
+// CRITICAL: Every response MUST end with the delimiter "---" followed by JSON metadata.
+// This format is required for reliable parsing and prompt extraction.
+const SystemPrompt = `You help users create images. Ask clarifying questions, then provide a prompt for the generator.
 
-IMPORTANT: Keep prompts VERY SHORT - under 200 characters. Use simple words. Focus only on: subject, style, setting. No flowery language.
+FORMAT REQUIRED: End EVERY response with "---" on its own line, then JSON: {"prompt": "string", "ready": boolean}
 
-When the user describes something, ask about key details:
-- Style (realistic, cartoon, painting, etc.)
-- Subject details (what kind of cat? what color?)
-- Setting/background
-- Mood/lighting
+- "prompt": Generation prompt (empty if still asking questions)
+- "ready": true if ready to generate, false if clarifying
 
-Do not assume or inject your own artistic interpretation. Ask the user.
+Keep prompts SHORT (under 200 chars). Ask about: style, subject details, setting, mood. Preserve user edits marked "[user edited prompt to: ...]".
 
-When you have enough information to generate, include exactly one line starting with "Prompt: " followed by the prompt. Only include this line when you're ready to generate.
+If user rejects after ready=true, set ready back to false and continue asking.
 
-When you see "[user edited prompt to: ...]" in the conversation, the user has manually edited the prompt. Preserve their changes in your next prompt—do not remove or override their edits unless they explicitly ask you to. Build on what they wrote.
+CORRECT:
+User: cat in hat
+Assistant: What kind of cat? Hat style? Setting? Realistic or cartoon?
+---
+{"prompt": "", "ready": false}
 
-Example:
-User: I want a cat wearing a hat
-Assistant: A cat in a hat! Let me ask a few questions:
-- What kind of cat? (tabby, black, Persian, etc.)
-- What style of hat? (wizard hat, top hat, beanie, etc.)
-- What's the setting? (indoors, outdoors, plain background?)
-- What style? (photo-realistic, illustration, painting?)
+User: tabby, wizard hat, library, realistic
+Assistant: Perfect! Generating now.
+---
+{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "ready": true}
 
-Example prompt (good - concise):
-Prompt: A tabby cat wearing a blue wizard hat, sitting in a cozy library, realistic photo style, warm lighting
+WRONG - Missing delimiter/JSON:
+Assistant: What kind of cat?
 
-Example prompt (bad - too long):
-Prompt: A majestic tabby cat with striking amber eyes gracefully perched upon an antique mahogany desk wearing an elaborate sapphire blue wizard hat adorned with silver stars and moons, surrounded by towering bookshelves filled with ancient leather-bound tomes in a warmly lit Victorian library...`
+WRONG - No text before delimiter:
+---
+{"prompt": "", "ready": false}
+
+WRONG - Prompt too long:
+---
+{"prompt": "A majestic tabby cat with striking amber eyes gracefully perched upon an antique desk wearing an elaborate wizard hat adorned with stars and moons surrounded by towering bookshelves...", "ready": true}`
 
 // Message represents a single message in a conversation.
 type Message struct {
@@ -115,8 +130,33 @@ type StreamToken struct {
 	Done    bool   // True if this is the final token
 }
 
+// LLMMetadata represents the structured JSON metadata that the LLM includes
+// at the end of every response after the ResponseDelimiter.
+// This replaces text-based prompt extraction with reliable JSON parsing.
+type LLMMetadata struct {
+	// Prompt is the image generation prompt. Empty string if the LLM is still
+	// asking questions and not ready to generate.
+	Prompt string `json:"prompt"`
+
+	// Ready indicates whether the LLM has enough information to generate.
+	// When true and Prompt is non-empty, the prompt should be used for generation.
+	Ready bool `json:"ready"`
+}
+
 // ChatResult represents the complete result of a chat request.
+// It contains both the conversational text (displayed to user) and the
+// parsed metadata (used for prompt extraction).
 type ChatResult struct {
-	Response string // Full response text
-	Prompt   string // Extracted prompt (empty if no "Prompt: " line found)
+	// Response is the conversational text only (before ResponseDelimiter).
+	// This is what should be displayed in the chat pane.
+	Response string
+
+	// Metadata is the parsed JSON metadata from the end of the response.
+	// Contains the extracted prompt and ready status.
+	Metadata LLMMetadata
+
+	// RawResponse is the full LLM response including conversational text,
+	// delimiter, and JSON metadata. This is what should be stored in
+	// conversation history to preserve the complete response format.
+	RawResponse string
 }

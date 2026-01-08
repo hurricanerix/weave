@@ -140,15 +140,16 @@ type StreamCallback func(token StreamToken) error
 //     any non-nil value (including 0) produces deterministic output with that seed.
 //   - callback: Function called for each streamed token (may be nil to collect silently)
 //
-// Returns the complete response text or an error.
+// Returns the parsed ChatResult containing conversational text and metadata.
 // The callback is called for each token as it arrives, with Done=true on the final token.
 //
 // Returns ErrNotRunning if ollama is not reachable.
 // Returns an error if messages is empty.
-func (c *Client) Chat(ctx context.Context, messages []Message, seed *int64, callback StreamCallback) (string, error) {
+// Returns ErrMissingDelimiter, ErrInvalidJSON, or ErrMissingFields if response parsing fails.
+func (c *Client) Chat(ctx context.Context, messages []Message, seed *int64, callback StreamCallback) (ChatResult, error) {
 	// Validate messages
 	if len(messages) == 0 {
-		return "", errors.New("messages cannot be empty")
+		return ChatResult{}, errors.New("messages cannot be empty")
 	}
 
 	// Validate message roles to prevent system prompt injection.
@@ -159,12 +160,12 @@ func (c *Client) Chat(ctx context.Context, messages []Message, seed *int64, call
 		switch msg.Role {
 		case RoleSystem:
 			if i != 0 {
-				return "", errors.New("system message must be first in conversation")
+				return ChatResult{}, errors.New("system message must be first in conversation")
 			}
 		case RoleUser, RoleAssistant:
 			// Valid roles
 		default:
-			return "", fmt.Errorf("invalid message role: %q", msg.Role)
+			return ChatResult{}, fmt.Errorf("invalid message role: %q", msg.Role)
 		}
 	}
 
@@ -184,12 +185,12 @@ func (c *Client) Chat(ctx context.Context, messages []Message, seed *int64, call
 
 	body, err := json.Marshal(chatReq)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal request: %w", err)
+		return ChatResult{}, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return ChatResult{}, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
@@ -202,9 +203,9 @@ func (c *Client) Chat(ctx context.Context, messages []Message, seed *int64, call
 	if err != nil {
 		classified := c.classifyError(err)
 		if errors.Is(classified, ErrNotRunning) {
-			return "", fmt.Errorf("%w at %s (start with: ollama serve)", ErrNotRunning, c.endpoint)
+			return ChatResult{}, fmt.Errorf("%w at %s (start with: ollama serve)", ErrNotRunning, c.endpoint)
 		}
-		return "", classified
+		return ChatResult{}, classified
 	}
 	defer resp.Body.Close()
 
@@ -212,13 +213,28 @@ func (c *Client) Chat(ctx context.Context, messages []Message, seed *int64, call
 		// Read error body for diagnostic information
 		errBody, readErr := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		if readErr != nil {
-			return "", fmt.Errorf("%w: status %d (failed to read error: %v)", ErrRequestFailed, resp.StatusCode, readErr)
+			return ChatResult{}, fmt.Errorf("%w: status %d (failed to read error: %v)", ErrRequestFailed, resp.StatusCode, readErr)
 		}
-		return "", fmt.Errorf("%w: status %d: %s", ErrRequestFailed, resp.StatusCode, string(errBody))
+		return ChatResult{}, fmt.Errorf("%w: status %d: %s", ErrRequestFailed, resp.StatusCode, string(errBody))
 	}
 
 	// Parse streaming response (newline-delimited JSON)
-	return c.parseStreamingResponse(resp.Body, callback)
+	fullResponse, err := c.parseStreamingResponse(resp.Body, callback)
+	if err != nil {
+		return ChatResult{}, err
+	}
+
+	// Parse the response to extract conversational text and metadata
+	conversationalText, metadata, err := parseResponse(fullResponse)
+	if err != nil {
+		return ChatResult{}, err
+	}
+
+	return ChatResult{
+		Response:    conversationalText,
+		Metadata:    metadata,
+		RawResponse: fullResponse,
+	}, nil
 }
 
 // Maximum response size to prevent unbounded memory usage (1 MB)
@@ -226,9 +242,44 @@ const maxResponseSize = 1024 * 1024
 
 // parseStreamingResponse reads newline-delimited JSON from the response body
 // and calls the callback for each token.
+//
+// This function implements delimiter detection for structured output. The LLM is
+// required to format responses as:
+//
+//	[conversational text]
+//	---
+//	{"prompt": "...", "ready": true/false}
+//
+// WHY DELIMITER DETECTION:
+// We want to preserve the streaming UX (live typing effect) for conversational
+// text while hiding the JSON metadata from the user. The delimiter signals when
+// to stop displaying tokens and start buffering JSON.
+//
+// WHY STREAMING STOPS AT DELIMITER:
+// The JSON portion contains structured metadata (prompt, ready flag) that should
+// not be displayed in the chat UI. By stopping the callback when we detect "---",
+// we ensure the user sees only conversational text. The JSON is buffered silently
+// and parsed after the stream completes.
+//
+// DELIMITER SPLIT HANDLING:
+// The delimiter may appear in the middle of a token (ollama's tokenization doesn't
+// respect our delimiter boundary). For example, a token might be "text---{". We
+// must split this token:
+// - "text" goes to callback (conversational text)
+// - "---{" goes to JSON buffer (metadata)
+//
+// Without this split logic, we'd either:
+// - Show part of the delimiter/JSON to the user (bad UX)
+// - Skip the pre-delimiter text in that token (lost content)
+//
+// RESPONSE SIZE LIMIT:
+// We enforce a 1MB limit to prevent unbounded memory usage if the LLM generates
+// an extremely long response (malicious or malfunctioning model).
 func (c *Client) parseStreamingResponse(body io.Reader, callback StreamCallback) (string, error) {
 	scanner := bufio.NewScanner(body)
 	var fullResponse bytes.Buffer
+	var jsonBuffer bytes.Buffer
+	delimiterFound := false
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -241,22 +292,70 @@ func (c *Client) parseStreamingResponse(body io.Reader, callback StreamCallback)
 			return "", fmt.Errorf("failed to parse response: %w", err)
 		}
 
-		// Append token to full response
-		fullResponse.WriteString(chatResp.Message.Content)
+		token := chatResp.Message.Content
+
+		// Append token to full response (always include everything)
+		// WHY: We need the complete response for parsing and storage, regardless of
+		// what gets displayed. The fullResponse includes both conversational text
+		// and JSON metadata.
+		fullResponse.WriteString(token)
 
 		// Check response size limit to prevent unbounded memory usage
+		// WHY: Without a limit, a malicious or malfunctioning LLM could exhaust
+		// server memory by generating an infinite response.
 		if fullResponse.Len() > maxResponseSize {
 			return fullResponse.String(), fmt.Errorf("response too large (>%d bytes)", maxResponseSize)
 		}
 
-		// Call callback with token
-		if callback != nil {
-			token := StreamToken{
-				Content: chatResp.Message.Content,
-				Done:    chatResp.Done,
-			}
-			if err := callback(token); err != nil {
-				return fullResponse.String(), fmt.Errorf("callback error after %d bytes: %w", fullResponse.Len(), err)
+		// If delimiter already found, buffer everything as JSON
+		// WHY: Once we've seen "---", everything after it is JSON metadata that
+		// should not be displayed to the user. We buffer it for parsing after
+		// the stream completes.
+		if delimiterFound {
+			jsonBuffer.WriteString(token)
+		} else {
+			// Check if this token contains the delimiter
+			// WHY: We check each token because the delimiter can appear at any time.
+			// Ollama's tokenization doesn't align with our delimiter, so we must
+			// search within each token.
+			delimiterIndex := bytes.Index([]byte(token), []byte(ResponseDelimiter))
+			if delimiterIndex != -1 {
+				// Delimiter found in this token - split it
+				delimiterFound = true
+
+				// Part before delimiter goes to callback (conversational text)
+				// WHY: This ensures we display all conversational text up to the
+				// delimiter, even if the delimiter appears mid-token. Without this,
+				// we'd lose the text that appears before "---" in this token.
+				beforeDelimiter := token[:delimiterIndex]
+				if callback != nil && beforeDelimiter != "" {
+					streamToken := StreamToken{
+						Content: beforeDelimiter,
+						Done:    false,
+					}
+					if err := callback(streamToken); err != nil {
+						return fullResponse.String(), fmt.Errorf("callback error after %d bytes: %w", fullResponse.Len(), err)
+					}
+				}
+
+				// Part after delimiter (including delimiter) goes to JSON buffer
+				// WHY: We include the delimiter in the JSON buffer so that parseResponse()
+				// can find it when splitting the full response later. The delimiter is
+				// part of the structured format, not conversational text.
+				jsonBuffer.WriteString(token[delimiterIndex:])
+			} else {
+				// No delimiter yet - send entire token to callback
+				// WHY: Before we've seen the delimiter, all tokens are conversational
+				// text that should be displayed to the user for the live typing effect.
+				if callback != nil {
+					streamToken := StreamToken{
+						Content: token,
+						Done:    false,
+					}
+					if err := callback(streamToken); err != nil {
+						return fullResponse.String(), fmt.Errorf("callback error after %d bytes: %w", fullResponse.Len(), err)
+					}
+				}
 			}
 		}
 

@@ -2,163 +2,233 @@ package ollama
 
 import "testing"
 
-func TestExtractPrompt(t *testing.T) {
+func TestParseResponse(t *testing.T) {
 	tests := []struct {
-		name     string
-		response string
-		want     string
+		name               string
+		response           string
+		wantText           string
+		wantPrompt         string
+		wantReady          bool
+		wantErr            error
+		wantErrDescription string
 	}{
 		{
-			name:     "single prompt line",
-			response: "Here's your prompt:\n\nPrompt: a cat wearing a wizard hat",
-			want:     "a cat wearing a wizard hat",
+			name:       "valid response with prompt ready",
+			response:   "Perfect! Generating your image now.\n---\n{\"prompt\": \"a tabby cat wearing a blue wizard hat\", \"ready\": true}",
+			wantText:   "Perfect! Generating your image now.",
+			wantPrompt: "a tabby cat wearing a blue wizard hat",
+			wantReady:  true,
+			wantErr:    nil,
 		},
 		{
-			name:     "multiple prompt lines uses last",
-			response: "First attempt:\nPrompt: a simple cat\n\nActually, let me revise:\nPrompt: a tabby cat wearing a blue wizard hat",
-			want:     "a tabby cat wearing a blue wizard hat",
+			name:       "valid response still asking questions",
+			response:   "What kind of cat? Hat style?\n---\n{\"prompt\": \"\", \"ready\": false}",
+			wantText:   "What kind of cat? Hat style?",
+			wantPrompt: "",
+			wantReady:  false,
+			wantErr:    nil,
 		},
 		{
-			name:     "no prompt line returns empty",
-			response: "I need more information. What style would you like?",
-			want:     "",
+			name:       "valid response with empty prompt not ready",
+			response:   "I need more details about the setting.\n---\n{\"prompt\": \"\", \"ready\": false}",
+			wantText:   "I need more details about the setting.",
+			wantPrompt: "",
+			wantReady:  false,
+			wantErr:    nil,
 		},
 		{
-			name:     "empty response returns empty",
-			response: "",
-			want:     "",
+			name:       "valid response with multiline conversational text",
+			response:   "Great! I have all the details I need.\n\nLet me create that image for you.\n---\n{\"prompt\": \"realistic photo of a golden retriever\", \"ready\": true}",
+			wantText:   "Great! I have all the details I need.\n\nLet me create that image for you.",
+			wantPrompt: "realistic photo of a golden retriever",
+			wantReady:  true,
+			wantErr:    nil,
 		},
 		{
-			name:     "whitespace only response returns empty",
-			response: "   \n\n   \t\n",
-			want:     "",
+			name:       "valid response with whitespace before delimiter",
+			response:   "Here you go!   \n   ---\n{\"prompt\": \"a cat in space\", \"ready\": true}",
+			wantText:   "Here you go!",
+			wantPrompt: "a cat in space",
+			wantReady:  true,
+			wantErr:    nil,
 		},
 		{
-			name:     "prompt with leading whitespace on line",
-			response: "  Prompt: a cat in space",
-			want:     "a cat in space",
+			name:       "valid response with whitespace after delimiter",
+			response:   "Ready!\n---   \n   {\"prompt\": \"a dog on the moon\", \"ready\": true}",
+			wantText:   "Ready!",
+			wantPrompt: "a dog on the moon",
+			wantReady:  true,
+			wantErr:    nil,
 		},
 		{
-			name:     "prompt with trailing whitespace",
-			response: "Prompt: a cat in space   ",
-			want:     "a cat in space",
+			name:               "missing delimiter",
+			response:           "This response has no delimiter or JSON",
+			wantText:           "",
+			wantPrompt:         "",
+			wantReady:          false,
+			wantErr:            ErrMissingDelimiter,
+			wantErrDescription: "response missing delimiter",
 		},
 		{
-			name:     "prompt with whitespace around content",
-			response: "Prompt:   a cat in space   ",
-			want:     "a cat in space",
+			name:               "delimiter but no JSON",
+			response:           "Some text\n---\n",
+			wantText:           "",
+			wantPrompt:         "",
+			wantReady:          false,
+			wantErr:            ErrInvalidJSON,
+			wantErrDescription: "invalid JSON after delimiter",
 		},
 		{
-			name:     "prompt line in middle of response",
-			response: "Great! Based on your preferences:\n\nPrompt: a realistic photo of a tabby cat\n\nLet me know if you'd like changes.",
-			want:     "a realistic photo of a tabby cat",
+			name:               "delimiter with invalid JSON",
+			response:           "Some text\n---\n{this is not valid json}",
+			wantText:           "",
+			wantPrompt:         "",
+			wantReady:          false,
+			wantErr:            ErrInvalidJSON,
+			wantErrDescription: "invalid JSON after delimiter",
 		},
 		{
-			name:     "prompt prefix as part of word ignored",
-			response: "The Prompted response was helpful.\nPrompt: actual prompt here",
-			want:     "actual prompt here",
+			name:               "delimiter with malformed JSON",
+			response:           "Some text\n---\n{\"prompt\": \"missing closing brace\", \"ready\": true",
+			wantText:           "",
+			wantPrompt:         "",
+			wantReady:          false,
+			wantErr:            ErrInvalidJSON,
+			wantErrDescription: "invalid JSON after delimiter",
 		},
 		{
-			name:     "prompt with special characters",
-			response: "Prompt: a cat with a $100 hat & fancy monocle",
-			want:     "a cat with a $100 hat & fancy monocle",
+			name:               "valid JSON missing prompt field",
+			response:           "Some text\n---\n{\"ready\": true}",
+			wantText:           "",
+			wantPrompt:         "",
+			wantReady:          false,
+			wantErr:            ErrMissingFields,
+			wantErrDescription: "JSON missing required fields",
 		},
 		{
-			name:     "prompt with unicode characters",
-			response: "Prompt: a cat wearing a hat in Tokyo",
-			want:     "a cat wearing a hat in Tokyo",
+			name:               "valid JSON missing ready field",
+			response:           "Some text\n---\n{\"prompt\": \"a cat\"}",
+			wantText:           "",
+			wantPrompt:         "",
+			wantReady:          false,
+			wantErr:            ErrMissingFields,
+			wantErrDescription: "JSON missing required fields",
 		},
 		{
-			name:     "prompt case sensitivity",
-			response: "PROMPT: should not match\nprompt: should not match\nPrompt: correct match",
-			want:     "correct match",
+			name:               "valid JSON missing both fields",
+			response:           "Some text\n---\n{\"other\": \"field\"}",
+			wantText:           "",
+			wantPrompt:         "",
+			wantReady:          false,
+			wantErr:            ErrMissingFields,
+			wantErrDescription: "JSON missing required fields",
 		},
 		{
-			name:     "prompt followed by colon in content",
-			response: "Prompt: Subject: a cat, Style: realistic",
-			want:     "Subject: a cat, Style: realistic",
+			name:               "empty JSON object",
+			response:           "Some text\n---\n{}",
+			wantText:           "",
+			wantPrompt:         "",
+			wantReady:          false,
+			wantErr:            ErrMissingFields,
+			wantErrDescription: "JSON missing required fields",
 		},
 		{
-			name:     "windows line endings",
-			response: "First line\r\nPrompt: a cat\r\nLast line",
-			want:     "a cat",
+			name:       "delimiter in conversational text",
+			response:   "I'll use --- as a separator in the prompt.\n---\n{\"prompt\": \"image with --- separator\", \"ready\": true}",
+			wantText:   "I'll use --- as a separator in the prompt.",
+			wantPrompt: "image with --- separator",
+			wantReady:  true,
+			wantErr:    nil,
 		},
 		{
-			name:     "multi-line prompt with content on next line",
-			response: "Here's your prompt:\n\nPrompt:\na cat wearing a hat",
-			want:     "a cat wearing a hat",
+			name:       "response with extra fields in JSON",
+			response:   "Great!\n---\n{\"prompt\": \"a cat\", \"ready\": true, \"confidence\": 0.95, \"other\": \"field\"}",
+			wantText:   "Great!",
+			wantPrompt: "a cat",
+			wantReady:  true,
+			wantErr:    nil,
 		},
 		{
-			name:     "multi-line prompt with multiple lines",
-			response: "Prompt:\na realistic photograph\nof a happy cat\nwearing a bowtie\n\nLet me know if you want changes.",
-			want:     "a realistic photograph of a happy cat wearing a bowtie",
+			name:       "response with special characters in prompt",
+			response:   "Done!\n---\n{\"prompt\": \"a cat with \\\"quotes\\\" and \\n newlines\", \"ready\": true}",
+			wantText:   "Done!",
+			wantPrompt: "a cat with \"quotes\" and \n newlines",
+			wantReady:  true,
+			wantErr:    nil,
 		},
 		{
-			name:     "multi-line prompt with list markers",
-			response: "Prompt:\n- A realistic photograph featuring a happy cat\n- wearing a colorful bowtie\n\nDone!",
-			want:     "A realistic photograph featuring a happy cat wearing a colorful bowtie",
+			name:       "response with unicode in conversational text",
+			response:   "Perfect! 🎨\n---\n{\"prompt\": \"a cat in Tokyo\", \"ready\": true}",
+			wantText:   "Perfect! 🎨",
+			wantPrompt: "a cat in Tokyo",
+			wantReady:  true,
+			wantErr:    nil,
 		},
 		{
-			name:     "prompt with only colon no space",
-			response: "Here's the prompt:\nPrompt:a cat in space",
-			want:     "a cat in space",
-		},
-		// LLM variations - agent doesn't always use exact "Prompt:" format
-		{
-			name:     "prompt updated variation",
-			response: "Let me revise that:\n\nPrompt Updated: a fluffy orange cat dancing",
-			want:     "a fluffy orange cat dancing",
+			name:       "compact format no whitespace",
+			response:   "Done\n---\n{\"prompt\":\"a cat\",\"ready\":true}",
+			wantText:   "Done",
+			wantPrompt: "a cat",
+			wantReady:  true,
+			wantErr:    nil,
 		},
 		{
-			name:     "prompt revised variation",
-			response: "Based on your feedback:\n\nPrompt Revised: a dark brooding cat on the lawn",
-			want:     "a dark brooding cat on the lawn",
+			name:       "formatted JSON with indentation",
+			response:   "Done\n---\n{\n  \"prompt\": \"a cat\",\n  \"ready\": true\n}",
+			wantText:   "Done",
+			wantPrompt: "a cat",
+			wantReady:  true,
+			wantErr:    nil,
 		},
 		{
-			name:     "prompt revised and enhanced variation",
-			response: "Prompt Revised and Enhanced: a mysterious cat in moonlight",
-			want:     "a mysterious cat in moonlight",
+			name:       "multiple delimiters on own lines uses last",
+			response:   "Here's a separator:\n---\nLet me continue.\n---\n{\"prompt\": \"a cat\", \"ready\": true}",
+			wantText:   "Here's a separator:\n---\nLet me continue.",
+			wantPrompt: "a cat",
+			wantReady:  true,
+			wantErr:    nil,
 		},
 		{
-			name:     "prompt with quotes around content",
-			response: `Prompt: "a cat wearing a top hat"`,
-			want:     "a cat wearing a top hat",
-		},
-		{
-			name:     "prompt updated with quotes",
-			response: `Prompt Updated: "a dancing cat under moonlight"`,
-			want:     "a dancing cat under moonlight",
-		},
-		{
-			name:     "prompt variation lowercase",
-			response: "prompt updated: a lowercase variation",
-			want:     "a lowercase variation",
-		},
-		{
-			name:     "invalid modifier with numbers ignored",
-			response: "Prompt123: should not match\nPrompt: actual prompt",
-			want:     "actual prompt",
-		},
-		{
-			name:     "invalid modifier with hyphen ignored",
-			response: "Prompt-Updated: should not match\nPrompt: actual prompt",
-			want:     "actual prompt",
+			name:               "JSON with prompt as number",
+			response:           "Done\n---\n{\"prompt\": 123, \"ready\": true}",
+			wantText:           "",
+			wantPrompt:         "",
+			wantReady:          false,
+			wantErr:            ErrInvalidJSON,
+			wantErrDescription: "invalid JSON after delimiter",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := ExtractPrompt(tt.response)
-			if got != tt.want {
-				t.Errorf("ExtractPrompt() = %q, want %q", got, tt.want)
+			gotText, gotMetadata, gotErr := parseResponse(tt.response)
+
+			// Check error
+			if gotErr != tt.wantErr {
+				t.Errorf("parseResponse() error = %v, wantErr %v", gotErr, tt.wantErr)
+				if tt.wantErrDescription != "" && gotErr != nil {
+					t.Errorf("  error description = %q, want %q", gotErr.Error(), tt.wantErrDescription)
+				}
+				return
+			}
+
+			// If we expected an error, don't check the other return values
+			if tt.wantErr != nil {
+				return
+			}
+
+			// Check conversational text
+			if gotText != tt.wantText {
+				t.Errorf("parseResponse() text = %q, want %q", gotText, tt.wantText)
+			}
+
+			// Check metadata fields
+			if gotMetadata.Prompt != tt.wantPrompt {
+				t.Errorf("parseResponse() metadata.Prompt = %q, want %q", gotMetadata.Prompt, tt.wantPrompt)
+			}
+			if gotMetadata.Ready != tt.wantReady {
+				t.Errorf("parseResponse() metadata.Ready = %v, want %v", gotMetadata.Ready, tt.wantReady)
 			}
 		})
-	}
-}
-
-func TestPromptPrefix(t *testing.T) {
-	// Verify the constant is correct
-	if PromptPrefix != "Prompt:" {
-		t.Errorf("PromptPrefix = %q, want %q", PromptPrefix, "Prompt:")
 	}
 }

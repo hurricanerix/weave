@@ -22,7 +22,7 @@ cd compute-daemon && make
 ## 4. Run weave
 
 ```bash
-# Use default model (llama3.2:1b)
+# Use default model (mistral:7b)
 ./bin/weave
 
 # Or specify your model
@@ -37,7 +37,7 @@ http://localhost:8080
 
 | Error | Fix |
 |-------|-----|
-| "model not found" | Use `--ollama-model <your-model>` or `ollama pull llama3.2:1b` |
+| "model not found" | Use `--ollama-model <your-model>` or `ollama pull mistral:7b` |
 | "ollama not running" | Run `ollama serve` |
 | "weave-compute not running" | Start daemon or skip image generation |
 | Port in use | `./bin/weave --port 3000` |

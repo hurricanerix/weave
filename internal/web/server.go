@@ -52,7 +52,7 @@ const (
 // ollamaClient is an interface for ollama client operations.
 // This allows for mocking in tests.
 type ollamaClient interface {
-	Chat(ctx context.Context, messages []ollama.Message, seed *int64, callback ollama.StreamCallback) (string, error)
+	Chat(ctx context.Context, messages []ollama.Message, seed *int64, callback ollama.StreamCallback) (ollama.ChatResult, error)
 }
 
 // Server provides HTTP serving for the web UI.
@@ -291,8 +291,8 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Stream response from ollama
-	fullResponse, err := s.ollamaClient.Chat(r.Context(), ollamaMessages, nil, func(token ollama.StreamToken) error {
+	// Stream response from ollama with automatic retry on format errors
+	result, err := s.chatWithRetry(r.Context(), ollamaMessages, nil, func(token ollama.StreamToken) error {
 		// Send each token via SSE
 		if token.Content != "" {
 			// Check for send errors to detect client disconnection
@@ -307,9 +307,34 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	})
 
 	if err != nil {
-		// SECURITY: Log full error server-side but send generic message to client
-		log.Printf("Ollama chat error for session %s: %v", sessionID, err)
-		s.sendErrorEvent(sessionID, "An error occurred while processing your message. Please try again.")
+		// Check if this is a format error after all retries (Level 3: needs context reset)
+		isFormatError := errors.Is(err, ollama.ErrMissingDelimiter) ||
+			errors.Is(err, ollama.ErrInvalidJSON) ||
+			errors.Is(err, ollama.ErrMissingFields)
+
+		if isFormatError {
+			// Level 3: All retries exhausted - clear context and inform user
+			log.Printf("Format error after all retries for session %s, clearing context: %v", sessionID, err)
+
+			// Log conversation history for debugging before clearing
+			history := manager.GetHistory()
+			log.Printf("Conversation history before reset (session %s, %d messages):", sessionID, len(history))
+			for i, msg := range history {
+				log.Printf("  [%d] %s: %s", i, msg.Role, msg.Content)
+			}
+
+			// Clear conversation history
+			manager.Clear()
+
+			// Send error event to user with friendly message
+			s.sendErrorEvent(sessionID, "I'm having trouble understanding the format. Let's start fresh.")
+		} else {
+			// Non-format error - send generic error message
+			// SECURITY: Log full error server-side but send generic message to client
+			log.Printf("Ollama chat error for session %s: %v", sessionID, err)
+			s.sendErrorEvent(sessionID, "An error occurred while processing your message. Please try again.")
+		}
+
 		// Send agent-done to finalize any partial message
 		_ = s.broker.SendEvent(sessionID, EventAgentDone, map[string]bool{"done": true})
 		w.Header().Set("Content-Type", "application/json")
@@ -318,11 +343,15 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract prompt from response
-	prompt := ollama.ExtractPrompt(fullResponse)
+	// Extract prompt from metadata (only if ready and non-empty)
+	prompt := ""
+	if result.Metadata.Ready && result.Metadata.Prompt != "" {
+		prompt = result.Metadata.Prompt
+	}
 
 	// Add assistant message to conversation (with prompt if found)
-	manager.AddAssistantMessage(fullResponse, prompt)
+	// Use full response (conversational text + delimiter + JSON) for storage
+	manager.AddAssistantMessage(result.RawResponse, prompt)
 
 	// Send prompt-update event if prompt was extracted
 	if prompt != "" {
@@ -344,6 +373,275 @@ func (s *Server) sendErrorEvent(sessionID string, message string) {
 	_ = s.broker.SendEvent(sessionID, EventError, map[string]string{
 		"message": message,
 	})
+}
+
+// compactContext compacts conversation history into a single system message
+// summarizing user intent. This is used as a Level 2 recovery strategy when
+// the LLM repeatedly fails to follow the required response format.
+//
+// The compaction strategy is rule-based (not LLM-based): it extracts key words
+// from user messages to summarize what the user wants. This reduces cognitive
+// load on the LLM and explicitly requests a JSON-only response.
+//
+// Parameters:
+//   - messages: Full conversation history
+//
+// Returns:
+//   - Compacted message array with system prompt requesting JSON-only response
+//
+// Compaction logic:
+//   - Extracts user messages (skips system and assistant messages)
+//   - Identifies key words related to: subject, style, setting, mood
+//   - Builds summary: "User wants: [extracted details]"
+//   - Returns single system message with summary + JSON-only request + example
+//
+// Example:
+//
+//	Input messages:
+//	  [system] System prompt...
+//	  [user] I want a cat in a hat
+//	  [assistant] What kind of cat?
+//	  [user] A tabby cat
+//	  [user] Make it realistic
+//
+//	Output:
+//	  [system] User wants: cat, hat, tabby, realistic.
+//	           Respond with ONLY JSON (no conversational text): {"prompt": "...", "ready": true}
+func (s *Server) compactContext(messages []ollama.Message) []ollama.Message {
+	// Extract user messages and concatenate their content
+	// WHY ONLY USER MESSAGES: User messages contain the requirements (what they want).
+	// Assistant messages are the LLM's responses (which failed to follow format).
+	// System messages are instructions (already in the system prompt). We only need
+	// to preserve what the user wants, not the failed conversation.
+	var userContent strings.Builder
+	for _, msg := range messages {
+		if msg.Role == ollama.RoleUser {
+			// Skip system-injected messages (edit notifications, current prompt)
+			// WHY SKIP SYSTEM-INJECTED: These are metadata messages like
+			// "[User edited prompt to: ...]" that aren't user requirements.
+			if strings.HasPrefix(msg.Content, "[") {
+				continue
+			}
+			if userContent.Len() > 0 {
+				userContent.WriteString(" ")
+			}
+			userContent.WriteString(msg.Content)
+		}
+	}
+
+	// Extract key details from user messages
+	// WHY RULE-BASED: We use simple string processing instead of asking an LLM
+	// to summarize. This avoids:
+	// - Additional LLM call (slow, may fail)
+	// - Compounding format errors (if summarization LLM also fails)
+	// - Unpredictable summarization (deterministic is better for debugging)
+	content := userContent.String()
+	content = strings.ToLower(content)
+
+	// Remove common filler words to focus on key details
+	// WHY REMOVE FILLERS: Filler words add noise without meaning. For example:
+	// "I want a cat in a hat" → "cat hat"
+	// This reduces token count and makes the summary clearer to the LLM.
+	fillers := []string{
+		"i want", "i'd like", "can you", "please", "make", "create",
+		"generate", "a ", "an ", "the ", "some ", "of ", "in ", "on ",
+		"with ", "and ", "or ", "but ", "that ", "this ", "these ", "those",
+	}
+	for _, filler := range fillers {
+		content = strings.ReplaceAll(content, filler, " ")
+	}
+
+	// Clean up extra whitespace
+	content = strings.Join(strings.Fields(content), " ")
+
+	// Truncate to reasonable length (avoid sending huge compacted messages)
+	// WHY TRUNCATE: If the user wrote a novel, we don't want to send it all.
+	// 200 chars is enough to capture key details while keeping the context small.
+	const maxSummaryLen = 200
+	if len(content) > maxSummaryLen {
+		content = content[:maxSummaryLen] + "..."
+	}
+
+	// Build compacted system message with JSON-only request
+	// WHY JSON-ONLY: After 2 format reminder failures, we assume the LLM is
+	// struggling with the "conversational text + delimiter + JSON" format.
+	// By requesting JSON-only (just "---\n{...}"), we simplify the task.
+	// The LLM doesn't need to generate conversational text, reducing complexity.
+	//
+	// WHY INCLUDE USER SUMMARY: The LLM still needs to know what the user wants
+	// to generate a valid prompt. The summary preserves this context while
+	// discarding the failed conversation history.
+	summary := fmt.Sprintf(`User wants: %s
+
+Respond with ONLY JSON (no conversational text before the delimiter).
+Use this exact format:
+
+---
+{"prompt": "detailed image generation prompt based on user's request", "ready": true}
+
+CRITICAL: Your response must be ONLY the delimiter "---" followed by the JSON.
+Do not include any conversational text before the delimiter.`, content)
+
+	// Return single system message with compacted context
+	// WHY SINGLE MESSAGE: We replace the entire conversation (potentially dozens
+	// of messages) with a single system message. This:
+	// - Reduces token count (faster, cheaper)
+	// - Eliminates confusing context (simpler for LLM)
+	// - Focuses on the task: generate JSON with prompt
+	return []ollama.Message{
+		{
+			Role:    ollama.RoleSystem,
+			Content: summary,
+		},
+	}
+}
+
+// chatWithRetry calls the ollama client's Chat method with automatic retry
+// on format errors (missing delimiter, invalid JSON, or missing fields).
+//
+// This implements Level 1 and Level 2 recovery:
+//
+// Level 1 (Format Reminder): When the LLM fails to follow the required
+// response format (conversational text + "---" + JSON), we append a system
+// message reminding it of the format and retry up to 2 times.
+//
+// Level 2 (Context Compaction): If format reminders fail, we compact the
+// conversation context to reduce cognitive load and explicitly request
+// JSON-only response. This is tried once.
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - messages: Conversation history (will be modified with format reminders on retry)
+//   - seed: Optional seed for deterministic responses
+//   - callback: Function called for each streamed token
+//
+// Returns:
+//   - ChatResult: Parsed result with conversational text and metadata
+//   - error: Returns format error if all retries exhausted, or other errors immediately
+//
+// Retry behavior:
+//   - Format errors (ErrMissingDelimiter, ErrInvalidJSON, ErrMissingFields) trigger retry
+//   - Other errors (connection, context, etc.) are returned immediately
+//   - Level 1: 2 retries with format reminder appended to full conversation
+//   - Level 2: 1 retry with compacted context (summarized user intent)
+//   - Maximum 3 total attempts (initial + 2 format reminders + 1 compaction)
+//   - Retry count is per-request, not cumulative across conversation
+func (s *Server) chatWithRetry(ctx context.Context, messages []ollama.Message, seed *int64, callback ollama.StreamCallback) (ollama.ChatResult, error) {
+	const maxFormatRetries = 2
+
+	// Format reminder message with example showing correct format.
+	// This is appended to the conversation when the LLM fails to format correctly.
+	const formatReminder = `CRITICAL: Your last response did not follow the required format.
+
+You MUST end EVERY response with "---" on its own line, followed by JSON metadata.
+
+CORRECT EXAMPLE:
+What kind of cat? What style of hat?
+---
+{"prompt": "", "ready": false}
+
+ANOTHER CORRECT EXAMPLE:
+Perfect! Generating your image now.
+---
+{"prompt": "tabby cat wearing wizard hat", "ready": true}
+
+Please respond again with the correct format.`
+
+	// Make a shallow copy of messages so we don't modify the caller's slice.
+	// WHY NOT SAVE FORMAT REMINDERS TO HISTORY: Format reminders are transient
+	// corrections, not part of the actual conversation. If we saved them to history:
+	// - Conversation would be polluted with system corrections
+	// - History would grow unbounded if format errors recur
+	// - Retry logic handles format errors on a per-request basis, not cumulatively
+	messagesCopy := make([]ollama.Message, len(messages))
+	copy(messagesCopy, messages)
+
+	// Level 1: Try initial request plus format reminder retries
+	// WHY LEVEL 1: Most format errors are transient - the LLM temporarily forgot
+	// the format. A simple reminder usually fixes it without needing to restart.
+	for attempt := 0; attempt <= maxFormatRetries; attempt++ {
+		result, err := s.ollamaClient.Chat(ctx, messagesCopy, seed, callback)
+
+		// If no error, return success
+		if err == nil {
+			return result, nil
+		}
+
+		// Check if this is a format error that should trigger retry
+		// WHY CHECK ERROR TYPE: We only retry format errors (recoverable).
+		// Other errors (connection, timeout, context cancellation) indicate
+		// problems we can't fix by retrying - return them immediately.
+		isFormatError := errors.Is(err, ollama.ErrMissingDelimiter) ||
+			errors.Is(err, ollama.ErrInvalidJSON) ||
+			errors.Is(err, ollama.ErrMissingFields)
+
+		if !isFormatError {
+			// Non-format error (connection, context, etc.) - return immediately
+			// WHY NO RETRY: These errors won't be fixed by format reminders.
+			// Retrying would waste time and resources.
+			return ollama.ChatResult{}, err
+		}
+
+		// Format error detected
+		if attempt < maxFormatRetries {
+			// We have retries left - append format reminder and try again
+			log.Printf("Format error on attempt %d, retrying with format reminder: %v", attempt+1, err)
+
+			// Append system message with format reminder
+			// WHY APPEND TO COPY: We append to messagesCopy (not messages) so the
+			// reminder is transient. The caller's conversation history remains clean.
+			messagesCopy = append(messagesCopy, ollama.Message{
+				Role:    ollama.RoleSystem,
+				Content: formatReminder,
+			})
+
+			// Loop will retry with updated messages
+		} else {
+			// Exhausted Level 1 retries - escalate to Level 2 (context compaction)
+			log.Printf("Format error after %d retries, trying context compaction: %v", maxFormatRetries, err)
+
+			// Compact original messages (not messagesCopy with format reminders).
+			// WHY USE ORIGINAL MESSAGES: Level 2 compaction starts fresh with a
+			// simplified context. We discard failed attempts and format reminders
+			// to reduce cognitive load on the LLM. If the LLM couldn't follow the
+			// format with reminders, the context is probably too complex.
+			compactedMessages := s.compactContext(messages)
+			result, compactErr := s.ollamaClient.Chat(ctx, compactedMessages, seed, callback)
+
+			if compactErr == nil {
+				// Compaction retry succeeded - return the result
+				log.Printf("Context compaction retry succeeded")
+				return result, nil
+			}
+
+			// Check if compaction retry also failed with format error
+			isCompactFormatError := errors.Is(compactErr, ollama.ErrMissingDelimiter) ||
+				errors.Is(compactErr, ollama.ErrInvalidJSON) ||
+				errors.Is(compactErr, ollama.ErrMissingFields)
+
+			if isCompactFormatError {
+				// Compaction retry failed with format error - escalate to Level 3
+				// WHY RETURN ERROR: Level 3 (context reset) happens in handleChat,
+				// not here. This function's job is to try Levels 1 and 2. If both
+				// fail, we return the error so the caller can reset context.
+				log.Printf("Context compaction retry failed with format error: %v", compactErr)
+				return ollama.ChatResult{}, compactErr
+			} else {
+				// Compaction retry failed with non-format error
+				// WHY DIFFERENT ERROR PATH: Non-format errors after compaction
+				// suggest a deeper problem (connection, timeout). Return immediately.
+				log.Printf("Context compaction retry failed: %v", compactErr)
+				return ollama.ChatResult{}, compactErr
+			}
+		}
+	}
+
+	// This line is unreachable because:
+	// - If no error: returns at line 536
+	// - If non-format error: returns at line 547
+	// - If format error on final attempt (attempt == maxFormatRetries): enters else block at line 562, which always returns
+	// However, the compiler can't prove this, so we need a return statement.
+	panic("chatWithRetry: unreachable code - all paths should have returned")
 }
 
 // handlePrompt handles prompt updates from the user.

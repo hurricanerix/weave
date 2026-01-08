@@ -21,7 +21,13 @@ func TestImagePipeline_EndToEnd(t *testing.T) {
 	sessionMgr := conversation.NewSessionManager()
 
 	// Create server with mocked dependencies
-	mockOllama := &mockOllamaClient{response: "test prompt"}
+	mockOllama := &mockOllamaClient{
+		response: "test response",
+		metadata: ollama.LLMMetadata{
+			Prompt: "test prompt",
+			Ready:  true,
+		},
+	}
 	server, err := NewServerWithDeps("", mockOllama, sessionMgr, storage)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
@@ -84,7 +90,13 @@ func TestImagePipeline_FullWorkflow(t *testing.T) {
 	storage.StartCleanup(ctx, logger)
 
 	// Create server
-	mockOllama := &mockOllamaClient{response: "A beautiful sunset"}
+	mockOllama := &mockOllamaClient{
+		response: "test response",
+		metadata: ollama.LLMMetadata{
+			Prompt: "A beautiful sunset",
+			Ready:  true,
+		},
+	}
 	server, err := NewServerWithDeps("", mockOllama, sessionMgr, storage)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)

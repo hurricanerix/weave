@@ -56,7 +56,7 @@ The weave binary accepts the following command-line flags:
 --seed <SEED>              Image generation seed, 0 = random (default: 0)
 --llm-seed <SEED>          LLM seed for deterministic responses, 0 = random (default: 0)
 --ollama-url <URL>         Ollama API endpoint (default: http://localhost:11434)
---ollama-model <MODEL>     Ollama model name (default: llama3.2:1b)
+--ollama-model <MODEL>     Ollama model name (default: mistral:7b)
 --log-level <LEVEL>        Log level: debug, info, warn, error (default: info)
 --help                     Show help message
 --version                  Show version information
@@ -112,7 +112,7 @@ All validation happens before the HTTP server starts listening. This ensures tha
 Successful startup:
 ```
 2026/01/04 11:00:00 [INFO] Starting weave...
-2026/01/04 11:00:00 [INFO] Connected to ollama at http://localhost:11434 (model: llama3.2:1b)
+2026/01/04 11:00:00 [INFO] Connected to ollama at http://localhost:11434 (model: mistral:7b)
 2026/01/04 11:00:00 [INFO] Connected to weave-compute at /run/user/1000/weave/weave.sock
 2026/01/04 11:00:00 [INFO] Listening on http://localhost:8080
 2026/01/04 11:00:00 Starting web server on http://localhost:8080
@@ -122,14 +122,14 @@ With debug logging (`--log-level debug`):
 ```
 2026/01/04 11:00:00 [INFO] Starting weave...
 2026/01/04 11:00:00 [DEBUG] Configuration: port=8080, steps=4, cfg=1.0, width=1024, height=1024, seed=0, llm-seed=0
-2026/01/04 11:00:00 [DEBUG] Ollama: url=http://localhost:11434, model=llama3.2:1b
+2026/01/04 11:00:00 [DEBUG] Ollama: url=http://localhost:11434, model=mistral:7b
 2026/01/04 11:00:00 [DEBUG] Log level: debug
 2026/01/04 11:00:00 [DEBUG] Validating ollama connection...
-2026/01/04 11:00:00 [INFO] Connected to ollama at http://localhost:11434 (model: llama3.2:1b)
+2026/01/04 11:00:00 [INFO] Connected to ollama at http://localhost:11434 (model: mistral:7b)
 2026/01/04 11:00:00 [DEBUG] Validating weave-compute connection...
 2026/01/04 11:00:00 [INFO] Connected to weave-compute at /run/user/1000/weave/weave.sock
 2026/01/04 11:00:00 [DEBUG] Initializing components...
-2026/01/04 11:00:00 [DEBUG] Created ollama client: endpoint=http://localhost:11434, model=llama3.2:1b
+2026/01/04 11:00:00 [DEBUG] Created ollama client: endpoint=http://localhost:11434, model=mistral:7b
 2026/01/04 11:00:00 [DEBUG] Created session manager
 2026/01/04 11:00:00 [DEBUG] Created web server on port 8080
 2026/01/04 11:00:00 [INFO] Listening on http://localhost:8080
@@ -173,12 +173,12 @@ The shutdown process:
 2. Verify it's running: `curl http://localhost:11434/api/tags`
 3. If using a custom URL, ensure `--ollama-url` matches where ollama is running
 
-#### Error: "model not available in ollama: llama3.2:1b"
+#### Error: "model not available in ollama: mistral:7b"
 
 **Cause**: The configured model has not been pulled.
 
 **Solution**:
-1. Pull the model: `ollama pull llama3.2:1b`
+1. Pull the model: `ollama pull mistral:7b`
 2. List available models: `ollama list`
 3. Use an available model with `--ollama-model <name>`
 
@@ -1467,13 +1467,13 @@ brew services start ollama
 
 ### Pulling the Required Model
 
-Weave uses `llama3.2:1b` for the conversational agent:
+Weave uses `mistral:7b` for the conversational agent:
 
 ```bash
-ollama pull llama3.2:1b
+ollama pull mistral:7b
 ```
 
-This downloads approximately 1.3GB. The model is small enough to run on most hardware.
+This downloads approximately 4.1GB. The model provides better instruction following and format adherence than smaller models.
 
 ### Verifying ollama is Running
 
@@ -1486,7 +1486,7 @@ ollama list
 
 # Expected output should include:
 # NAME              ID              SIZE      MODIFIED
-# llama3.2:1b       ...             1.3 GB    ...
+# mistral:7b        ...             4.1 GB    ...
 ```
 
 ### Running Integration Tests
@@ -1518,13 +1518,13 @@ pgrep ollama
 **Model not found**
 
 ```
-Error: model llama3.2:1b not available in ollama
+Error: model mistral:7b not available in ollama
 ```
 
 Solution:
 ```bash
 # Pull the model
-ollama pull llama3.2:1b
+ollama pull mistral:7b
 
 # Verify it's available
 ollama list
@@ -1569,7 +1569,7 @@ The first request after model load is slower due to model initialization. Subseq
 
 **Out of memory (OOM)**
 
-llama3.2:1b requires approximately 2GB RAM. If you see OOM errors:
+mistral:7b requires approximately 5GB RAM. If you see OOM errors:
 ```bash
 # Check available memory
 free -h
@@ -1589,22 +1589,147 @@ curl http://localhost:11434/api/tags
 
 ### Model Selection
 
-Weave currently uses `llama3.2:1b` which offers a good balance of speed and quality for conversational tasks. This model:
+Weave currently uses `mistral:7b` which provides excellent instruction following and format adherence for conversational tasks. This model:
 - Runs on CPU (no GPU required)
-- Uses ~2GB RAM
-- Generates responses in 1-3 seconds
+- Uses ~5GB RAM
+- Generates responses in 2-5 seconds
+- Better at maintaining structured output format than smaller models
 - Suitable for clarifying questions and prompt generation
 
-For production use with higher quality responses, consider:
-```bash
-# Higher quality, slower
-ollama pull llama3.2:3b
+**Why Mistral 7B:**
 
-# Much higher quality, requires more RAM
-ollama pull llama3.1:8b
+Mistral 7B was chosen over smaller models like Llama 3.2 1B due to superior instruction following and format adherence. The structured output format (see below) requires the model to consistently end every message with a delimiter and JSON. Smaller models tend to drift from this format after 3-4 conversation turns, causing prompts to appear in the chat window instead of being extracted correctly. Mistral 7B maintains format consistency across multi-turn conversations.
+
+For alternative models, use the `--ollama-model` flag:
+```bash
+# Smaller, faster (may have format drift issues)
+./bin/weave --ollama-model llama3.2:1b
+
+# Larger, higher quality
+./bin/weave --ollama-model llama3.1:8b
 ```
 
-Note: Changing models requires updating the hardcoded model name in `internal/ollama/types.go`.
+The default model can be changed by updating `defaultOllamaModel` in `internal/config/config.go`.
+
+### Structured Output Format
+
+Weave uses a structured output format to separate conversational text (shown in chat) from machine-readable metadata (prompt extraction). Every LLM response follows this format:
+
+```
+<Conversational text visible to user>
+---
+{"prompt": "extracted prompt", "ready": true}
+```
+
+**Format specification:**
+
+1. **Conversational text**: Appears before the `---` delimiter. This is displayed in the chat pane and provides a natural conversation experience.
+
+2. **Delimiter**: Three hyphens (`---`) on their own line. This signals the end of user-visible text and the start of metadata.
+
+3. **JSON metadata**: Appears after the delimiter. This is parsed but not shown in the chat pane.
+
+**JSON schema:**
+
+```json
+{
+  "prompt": "string",  // Image generation prompt (empty string if not ready)
+  "ready": boolean     // True if enough info to generate, false if still asking
+}
+```
+
+**Examples:**
+
+Agent asking clarifying questions:
+```
+A cat in a hat! Let me ask a few questions:
+- What kind of cat?
+- What style of hat?
+---
+{"prompt": "", "ready": false}
+```
+
+Agent ready to generate:
+```
+Perfect! Generating your image now.
+---
+{"prompt": "a tabby cat wearing a blue wizard hat", "ready": true}
+```
+
+### Automatic Retry Logic
+
+The structured format requires precise adherence. If the LLM fails to provide the delimiter or valid JSON, weave automatically retries with escalating recovery strategies. This happens transparently without user intervention.
+
+**Three-level retry strategy:**
+
+**Level 1: Format Reminder (2 attempts)**
+
+If the response is missing the `---` delimiter, has invalid JSON, or is missing required fields, weave appends a system message reminding the LLM of the format:
+
+```
+Please end your response with `---` followed by JSON using this format:
+{"prompt": "your prompt here", "ready": true}
+```
+
+The LLM gets up to 2 chances to correct the format. This recovers most format errors.
+
+**Level 2: Context Compaction (1 attempt)**
+
+If format reminders fail, weave assumes the conversation context has grown too large and confused the model. It compacts the context by:
+
+1. Extracting key details from user messages (subject, style, setting)
+2. Replacing entire conversation history with a single system message
+3. Requesting JSON-only response (no conversational text)
+
+Compacted format:
+```
+User wants: [key details extracted from conversation].
+Respond with ONLY JSON (no conversational text): {"prompt": "...", "ready": true}
+```
+
+This gives the LLM a fresh start with minimal context. One retry attempt is made with compacted context.
+
+**Level 3: Error and Reset**
+
+If compaction retry fails, weave shows an error to the user:
+
+```
+I'm having trouble understanding the format. Let's start fresh.
+```
+
+The conversation history is cleared and the user can start a new conversation immediately. The full error with message history is logged for debugging.
+
+**Retry behavior:**
+
+- Retries are transparent to the user (no error shown during retry)
+- Retry count resets on successful parse (not cumulative across conversation)
+- Maximum retries: 2 format reminders + 1 compaction = 3 total attempts before reset
+- Retry logs are visible at DEBUG level: `--log-level debug`
+
+### Format Error Debugging
+
+To debug format errors, enable DEBUG logging:
+
+```bash
+./bin/weave --log-level debug
+```
+
+Look for log messages indicating:
+- Format errors (missing delimiter, invalid JSON, missing fields)
+- Retry attempts (format reminder, context compaction)
+- Full LLM response text (before parsing)
+
+Example DEBUG output:
+```
+[DEBUG] LLM response missing delimiter, appending format reminder (attempt 1/2)
+[DEBUG] Retry with format reminder successful
+[DEBUG] Parsed metadata: prompt="a cat", ready=true
+```
+
+If you see repeated format errors, the model may not support this format well. Try a larger model:
+```bash
+./bin/weave --ollama-model llama3.1:8b
+```
 
 ## Web UI
 

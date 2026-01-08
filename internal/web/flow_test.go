@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -230,10 +231,13 @@ func TestUserFlow_ChatStreaming(t *testing.T) {
 
 	// Create a mock ollama client that streams tokens
 	mockClient := &mockOllamaClient{
-		response: "Here's a prompt for your cat:\n\nPrompt: a fluffy orange cat",
+		response: "Here's a prompt for your cat",
+		metadata: ollama.LLMMetadata{
+			Prompt: "a fluffy orange cat",
+			Ready:  true,
+		},
 		tokens: []string{
-			"Here's ", "a ", "prompt ", "for ", "your ", "cat:\n\n",
-			"Prompt: ", "a ", "fluffy ", "orange ", "cat",
+			"Here's ", "a ", "prompt ", "for ", "your ", "cat",
 		},
 	}
 	// Replace the ollama client with mock for testing
@@ -276,29 +280,83 @@ func TestUserFlow_ChatStreaming(t *testing.T) {
 }
 
 // mockOllamaClient is a mock implementation of ollama.Client for testing.
+// It supports both single-response mode (for simple tests) and multi-response mode (for retry tests).
 type mockOllamaClient struct {
+	// Single-response mode fields (legacy support for existing tests)
 	response string
+	metadata ollama.LLMMetadata
 	tokens   []string
 	err      error
+
+	// Multi-response mode fields (for retry testing)
+	// If responses is non-nil, it takes precedence over single-response fields
+	responses []mockResponse
+	callCount int
+}
+
+type mockResponse struct {
+	result ollama.ChatResult
+	tokens []string
+	err    error
 }
 
 // Chat simulates streaming tokens to the callback.
-func (m *mockOllamaClient) Chat(ctx context.Context, messages []ollama.Message, seed *int64, callback ollama.StreamCallback) (string, error) {
+func (m *mockOllamaClient) Chat(ctx context.Context, messages []ollama.Message, seed *int64, callback ollama.StreamCallback) (ollama.ChatResult, error) {
+	// Multi-response mode (for retry testing)
+	if m.responses != nil {
+		if m.callCount >= len(m.responses) {
+			return ollama.ChatResult{}, errors.New("no more mock responses configured")
+		}
+
+		resp := m.responses[m.callCount]
+		m.callCount++
+
+		if resp.err != nil {
+			return ollama.ChatResult{}, resp.err
+		}
+
+		// Stream tokens if callback provided
+		if callback != nil {
+			tokens := resp.tokens
+			if len(tokens) == 0 && resp.result.Response != "" {
+				// Auto-generate tokens from response if not explicitly provided
+				tokens = strings.Split(resp.result.Response, " ")
+			}
+
+			for _, token := range tokens {
+				if err := callback(ollama.StreamToken{Content: token + " ", Done: false}); err != nil {
+					return ollama.ChatResult{}, err
+				}
+			}
+
+			// Send final token
+			if err := callback(ollama.StreamToken{Content: "", Done: true}); err != nil {
+				return ollama.ChatResult{}, err
+			}
+		}
+
+		return resp.result, nil
+	}
+
+	// Single-response mode (legacy support)
 	if m.err != nil {
-		return "", m.err
+		return ollama.ChatResult{}, m.err
 	}
 
 	// Stream tokens
 	for _, token := range m.tokens {
 		if err := callback(ollama.StreamToken{Content: token, Done: false}); err != nil {
-			return "", err
+			return ollama.ChatResult{}, err
 		}
 	}
 
 	// Send final token
 	if err := callback(ollama.StreamToken{Content: "", Done: true}); err != nil {
-		return "", err
+		return ollama.ChatResult{}, err
 	}
 
-	return m.response, nil
+	return ollama.ChatResult{
+		Response: m.response,
+		Metadata: m.metadata,
+	}, nil
 }

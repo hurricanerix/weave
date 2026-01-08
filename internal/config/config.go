@@ -24,7 +24,7 @@ const (
 	defaultSeed        = 0
 	defaultLLMSeed     = 0
 	defaultOllamaURL   = "http://localhost:11434"
-	defaultOllamaModel = "llama3.2:1b"
+	defaultOllamaModel = "mistral:7b"
 	defaultLogLevel    = "info"
 
 	// Validation constraints

@@ -1,98 +1,141 @@
 package ollama
 
 import (
+	"encoding/json"
+	"errors"
 	"strings"
 )
 
-// PromptPrefix is the marker that precedes image generation prompts in agent responses.
-const PromptPrefix = "Prompt:"
+// Parsing errors returned by parseResponse.
+var (
+	// ErrMissingDelimiter indicates the response does not contain the ResponseDelimiter.
+	// This means the LLM did not follow the required format of ending with "---\n{JSON}".
+	ErrMissingDelimiter = errors.New("response missing delimiter")
 
-// ExtractPrompt parses an assistant response to find the image generation prompt.
-// The agent outputs prompts with "Prompt:" marker followed by the prompt content.
+	// ErrInvalidJSON indicates the JSON portion after the delimiter could not be parsed.
+	// This means the LLM included the delimiter but the JSON is malformed.
+	ErrInvalidJSON = errors.New("invalid JSON after delimiter")
+
+	// ErrMissingFields indicates the JSON is valid but missing required fields.
+	// Both "prompt" and "ready" fields must be present in the metadata.
+	ErrMissingFields = errors.New("JSON missing required fields")
+)
+
+// parseResponse parses a complete LLM response into conversational text and metadata.
 //
-// Supported formats:
-//   - "Prompt: a cat wearing a hat" (content on same line)
-//   - "Prompt:\na cat wearing a hat" (content on next line(s))
-//   - "Prompt Updated: ..." (LLM variation)
-//   - "Prompt Revised: ..." (LLM variation)
+// The LLM is required to format responses as:
 //
-// For multi-line prompts, content continues until a blank line or end of response.
-// If multiple prompts exist, returns the last one (agent may revise).
-// If no prompt is found, returns empty string.
-func ExtractPrompt(response string) string {
+//	[conversational text]
+//	---
+//	{"prompt": "...", "ready": true/false}
+//
+// WHY THIS FORMAT:
+// This structured format allows us to:
+// 1. Display conversational text in the chat UI (user sees friendly dialog)
+// 2. Extract structured metadata (prompt, ready flag) for automation
+// 3. Detect format errors reliably (missing delimiter or invalid JSON)
+//
+// WHY THREE ERROR TYPES:
+//
+// ErrMissingDelimiter - The LLM didn't include "---" in its response.
+// This usually means the LLM forgot the format or didn't understand the
+// system prompt. Recoverable via Level 1 retry (format reminder).
+//
+// ErrInvalidJSON - The LLM included "---" but the JSON is malformed.
+// This means the LLM attempted to follow the format but made a syntax error
+// (missing quote, invalid escape, etc.). Recoverable via Level 1 retry.
+//
+// ErrMissingFields - The JSON is valid but missing required fields.
+// This means the LLM generated syntactically correct JSON but didn't include
+// "prompt" or "ready" fields. This violates the schema. Recoverable via retry.
+//
+// WHY SEARCH FROM END:
+// We search for the delimiter from the end of the response because the
+// conversational text might legitimately contain "---" (markdown horizontal rule,
+// ASCII art, etc.). The LAST occurrence of "---" on its own line is the delimiter.
+//
+// WHY VALIDATE FIELD PRESENCE:
+// Go's json.Unmarshal sets missing fields to zero values (empty string, false).
+// We need to distinguish between:
+// - {"prompt": "", "ready": false} - Valid (LLM is asking questions)
+// - {} - Invalid (missing required fields)
+//
+// Without the map check, both would unmarshal successfully but have different
+// semantics. The map check ensures the LLM explicitly provided both fields.
+func parseResponse(response string) (string, LLMMetadata, error) {
+	// Find the delimiter that separates conversational text from JSON.
+	// WHY SPLIT BY NEWLINES: The delimiter must be on its own line to avoid
+	// false matches. For example, "What do you think of this---no really?" should
+	// not be detected as a delimiter. Only "---" as a standalone line counts.
 	lines := strings.Split(response, "\n")
-	var lastPrompt string
+	delimiterLineIndex := -1
 
-	for i := 0; i < len(lines); i++ {
+	// Find the LAST line that is exactly the delimiter (with whitespace trimmed).
+	// WHY SEARCH FROM END: Conversational text might legitimately contain "---"
+	// (markdown horizontal rules, ASCII art, separator lines). For example:
+	//
+	//   "Here are your options:
+	//    Option A: cats
+	//    ---
+	//    Option B: dogs
+	//    ---
+	//    {"prompt": "...", "ready": true}"
+	//
+	// We want the LAST "---" to be the delimiter, not earlier ones that are
+	// part of the conversational text.
+	for i := len(lines) - 1; i >= 0; i-- {
 		trimmed := strings.TrimSpace(lines[i])
-		lower := strings.ToLower(trimmed)
-
-		// Check if line starts with "prompt" followed by optional words then ":"
-		// This handles variations like "Prompt:", "Prompt Updated:", "Prompt Revised:"
-		if !strings.HasPrefix(lower, "prompt") {
-			continue
-		}
-
-		// Find the colon after "prompt"
-		colonIdx := strings.Index(trimmed, ":")
-		if colonIdx == -1 {
-			continue
-		}
-
-		// Verify the text between "prompt" and ":" is reasonable (only letters/spaces)
-		// This prevents matching things like "Prompt123:" or "Prompt-foo:"
-		between := strings.TrimSpace(trimmed[len("prompt"):colonIdx])
-		if !isValidPromptModifier(between) {
-			continue
-		}
-
-		// Extract content after the colon
-		content := strings.TrimSpace(trimmed[colonIdx+1:])
-
-		// Strip surrounding quotes if present (LLM sometimes wraps in quotes)
-		content = stripQuotes(content)
-
-		if content != "" {
-			// Content is on the same line
-			lastPrompt = content
-		} else {
-			// Content is on subsequent lines - collect until blank line
-			var promptLines []string
-			for j := i + 1; j < len(lines); j++ {
-				line := strings.TrimSpace(lines[j])
-				if line == "" {
-					break // Stop at blank line
-				}
-				// Clean up list markers like "- " at start
-				if strings.HasPrefix(line, "- ") {
-					line = strings.TrimPrefix(line, "- ")
-				}
-				promptLines = append(promptLines, line)
-			}
-			if len(promptLines) > 0 {
-				lastPrompt = strings.Join(promptLines, " ")
-			}
+		if trimmed == ResponseDelimiter {
+			delimiterLineIndex = i
+			break
 		}
 	}
 
-	return lastPrompt
-}
-
-// isValidPromptModifier checks if the text between "Prompt" and ":" is valid.
-// Valid modifiers are empty or contain only letters and spaces (e.g., "Updated", "Revised").
-func isValidPromptModifier(s string) bool {
-	for _, r := range s {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == ' ') {
-			return false
-		}
+	if delimiterLineIndex == -1 {
+		// No delimiter found - LLM didn't follow format
+		// WHY RETURN ERROR: Without a delimiter, we can't reliably separate
+		// conversational text from JSON. The entire response might be text,
+		// or it might be malformed JSON, or both mixed together.
+		return "", LLMMetadata{}, ErrMissingDelimiter
 	}
-	return true
-}
 
-// stripQuotes removes surrounding double quotes from a string if present.
-func stripQuotes(s string) string {
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		return s[1 : len(s)-1]
+	// Split into conversational text (before delimiter) and JSON (after delimiter)
+	conversationalText := strings.TrimSpace(strings.Join(lines[:delimiterLineIndex], "\n"))
+	jsonPortion := strings.TrimSpace(strings.Join(lines[delimiterLineIndex+1:], "\n"))
+
+	// Unmarshal the JSON into metadata struct
+	// WHY CHECK UNMARSHAL ERROR: The LLM might have included the delimiter but
+	// written invalid JSON syntax: missing quotes, trailing commas, etc.
+	var metadata LLMMetadata
+	if err := json.Unmarshal([]byte(jsonPortion), &metadata); err != nil {
+		return "", LLMMetadata{}, ErrInvalidJSON
 	}
-	return s
+
+	// Validate that the JSON contains the required fields.
+	// WHY DOUBLE UNMARSHAL: Go's json.Unmarshal sets missing fields to zero values.
+	// We need to distinguish between:
+	// - {"prompt": "", "ready": false} - Valid (LLM explicitly provided fields)
+	// - {"other": "data"} - Invalid (missing required fields, but unmarshals to zero values)
+	//
+	// The map check tells us which fields were actually present in the JSON,
+	// not just which fields ended up with zero values after unmarshaling.
+	var rawMap map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonPortion), &rawMap); err != nil {
+		// This should not happen since we already unmarshaled successfully above,
+		// but handle it defensively
+		return "", LLMMetadata{}, ErrInvalidJSON
+	}
+
+	// Check that both required fields are present in the JSON
+	// WHY REQUIRE BOTH FIELDS: The "ready" flag tells us if the LLM has enough
+	// information to generate. The "prompt" field contains the generation prompt
+	// (empty if not ready yet). Both are required for the system to function.
+	// Missing either field means the LLM didn't follow the schema.
+	_, hasPrompt := rawMap["prompt"]
+	_, hasReady := rawMap["ready"]
+	if !hasPrompt || !hasReady {
+		return "", LLMMetadata{}, ErrMissingFields
+	}
+
+	return conversationalText, metadata, nil
 }

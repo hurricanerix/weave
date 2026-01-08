@@ -38,7 +38,7 @@ func (m *Manager) AddUserMessage(content string) {
 // and updates the current prompt if provided.
 //
 // The prompt parameter should be the extracted prompt from the assistant's
-// response (via ollama.ExtractPrompt). If empty, the current prompt is unchanged.
+// response. If empty, the current prompt is unchanged.
 // If the history exceeds MaxHistorySize, the oldest messages are removed.
 func (m *Manager) AddAssistantMessage(content string, prompt string) {
 	m.conv.messages = append(m.conv.messages, Message{

@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/hurricanerix/weave/internal/image"
+	"github.com/hurricanerix/weave/internal/ollama"
 )
 
 func TestNewServer(t *testing.T) {
@@ -650,5 +652,376 @@ func TestHandleImage_InvalidID(t *testing.T) {
 				t.Errorf("got status %d, want %d", w.Code, http.StatusBadRequest)
 			}
 		})
+	}
+}
+
+func TestChatWithRetry_FormatReminderAfterParseError(t *testing.T) {
+	tests := []struct {
+		name           string
+		initialError   error
+		wantRetryCount int
+	}{
+		{
+			name:           "missing delimiter triggers retry",
+			initialError:   ollama.ErrMissingDelimiter,
+			wantRetryCount: 2, // initial + 1 retry
+		},
+		{
+			name:           "invalid JSON triggers retry",
+			initialError:   ollama.ErrInvalidJSON,
+			wantRetryCount: 2, // initial + 1 retry
+		},
+		{
+			name:           "missing fields triggers retry",
+			initialError:   ollama.ErrMissingFields,
+			wantRetryCount: 2, // initial + 1 retry
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockOllamaClient{
+				responses: []mockResponse{
+					{err: tt.initialError}, // First attempt fails
+					{result: ollama.ChatResult{ // Retry succeeds
+						Response:    "Perfect! Generating now.",
+						Metadata:    ollama.LLMMetadata{Prompt: "test prompt", Ready: true},
+						RawResponse: "Perfect! Generating now.\n---\n{\"prompt\":\"test prompt\",\"ready\":true}",
+					}},
+				},
+			}
+
+			server, err := NewServerWithDeps("", mock, nil, nil)
+			if err != nil {
+				t.Fatalf("NewServerWithDeps failed: %v", err)
+			}
+
+			messages := []ollama.Message{
+				{Role: ollama.RoleUser, Content: "test message"},
+			}
+
+			result, err := server.chatWithRetry(context.Background(), messages, nil, nil)
+
+			if err != nil {
+				t.Fatalf("chatWithRetry failed: %v", err)
+			}
+
+			if mock.callCount != tt.wantRetryCount {
+				t.Errorf("call count = %d, want %d", mock.callCount, tt.wantRetryCount)
+			}
+
+			if result.Response != "Perfect! Generating now." {
+				t.Errorf("response = %q, want %q", result.Response, "Perfect! Generating now.")
+			}
+
+			if result.Metadata.Prompt != "test prompt" {
+				t.Errorf("prompt = %q, want %q", result.Metadata.Prompt, "test prompt")
+			}
+		})
+	}
+}
+
+func TestChatWithRetry_ContextCompactionAfterTwoRetries(t *testing.T) {
+	mock := &mockOllamaClient{
+		responses: []mockResponse{
+			{err: ollama.ErrMissingDelimiter}, // First attempt fails
+			{err: ollama.ErrInvalidJSON},      // First retry fails
+			{err: ollama.ErrMissingDelimiter}, // Second retry fails
+			{result: ollama.ChatResult{ // Compaction retry succeeds
+				Response:    "Perfect!",
+				Metadata:    ollama.LLMMetadata{Prompt: "compacted prompt", Ready: true},
+				RawResponse: "Perfect!\n---\n{\"prompt\":\"compacted prompt\",\"ready\":true}",
+			}},
+		},
+	}
+
+	server, err := NewServerWithDeps("", mock, nil, nil)
+	if err != nil {
+		t.Fatalf("NewServerWithDeps failed: %v", err)
+	}
+
+	messages := []ollama.Message{
+		{Role: ollama.RoleSystem, Content: ollama.SystemPrompt},
+		{Role: ollama.RoleUser, Content: "I want a cat in a hat"},
+		{Role: ollama.RoleAssistant, Content: "What kind of cat?"},
+		{Role: ollama.RoleUser, Content: "A tabby cat"},
+	}
+
+	result, err := server.chatWithRetry(context.Background(), messages, nil, nil)
+
+	if err != nil {
+		t.Fatalf("chatWithRetry failed: %v", err)
+	}
+
+	// Should have tried: initial + 2 format retries + 1 compaction = 4 calls
+	if mock.callCount != 4 {
+		t.Errorf("call count = %d, want 4", mock.callCount)
+	}
+
+	if result.Metadata.Prompt != "compacted prompt" {
+		t.Errorf("prompt = %q, want %q", result.Metadata.Prompt, "compacted prompt")
+	}
+}
+
+func TestChatWithRetry_ErrorReturnedAfterAllRetriesFail(t *testing.T) {
+	mock := &mockOllamaClient{
+		responses: []mockResponse{
+			{err: ollama.ErrMissingDelimiter}, // First attempt fails
+			{err: ollama.ErrInvalidJSON},      // First retry fails
+			{err: ollama.ErrMissingFields},    // Second retry fails
+			{err: ollama.ErrMissingDelimiter}, // Compaction retry fails
+		},
+	}
+
+	server, err := NewServerWithDeps("", mock, nil, nil)
+	if err != nil {
+		t.Fatalf("NewServerWithDeps failed: %v", err)
+	}
+
+	messages := []ollama.Message{
+		{Role: ollama.RoleUser, Content: "test message"},
+	}
+
+	_, err = server.chatWithRetry(context.Background(), messages, nil, nil)
+
+	if err == nil {
+		t.Fatal("expected error after all retries fail, got nil")
+	}
+
+	// Should be a format error
+	if !errors.Is(err, ollama.ErrMissingDelimiter) &&
+		!errors.Is(err, ollama.ErrInvalidJSON) &&
+		!errors.Is(err, ollama.ErrMissingFields) {
+		t.Errorf("expected format error, got %v", err)
+	}
+
+	// Should have tried: initial + 2 format retries + 1 compaction = 4 calls
+	if mock.callCount != 4 {
+		t.Errorf("call count = %d, want 4", mock.callCount)
+	}
+}
+
+func TestChatWithRetry_RetryCountResetsOnSuccess(t *testing.T) {
+	mock := &mockOllamaClient{
+		responses: []mockResponse{
+			{result: ollama.ChatResult{ // First request succeeds
+				Response:    "What kind of cat?",
+				Metadata:    ollama.LLMMetadata{Prompt: "", Ready: false},
+				RawResponse: "What kind of cat?\n---\n{\"prompt\":\"\",\"ready\":false}",
+			}},
+			{err: ollama.ErrMissingDelimiter}, // Second request fails
+			{result: ollama.ChatResult{ // Retry succeeds
+				Response:    "Perfect!",
+				Metadata:    ollama.LLMMetadata{Prompt: "tabby cat", Ready: true},
+				RawResponse: "Perfect!\n---\n{\"prompt\":\"tabby cat\",\"ready\":true}",
+			}},
+		},
+	}
+
+	server, err := NewServerWithDeps("", mock, nil, nil)
+	if err != nil {
+		t.Fatalf("NewServerWithDeps failed: %v", err)
+	}
+
+	messages1 := []ollama.Message{
+		{Role: ollama.RoleUser, Content: "first message"},
+	}
+
+	// First request should succeed without retry
+	result1, err := server.chatWithRetry(context.Background(), messages1, nil, nil)
+	if err != nil {
+		t.Fatalf("first chatWithRetry failed: %v", err)
+	}
+
+	if mock.callCount != 1 {
+		t.Errorf("first call count = %d, want 1", mock.callCount)
+	}
+
+	if result1.Response != "What kind of cat?" {
+		t.Errorf("first response = %q, want %q", result1.Response, "What kind of cat?")
+	}
+
+	// Second request should fail then retry (demonstrating retry count is per-request)
+	messages2 := []ollama.Message{
+		{Role: ollama.RoleUser, Content: "second message"},
+	}
+
+	result2, err := server.chatWithRetry(context.Background(), messages2, nil, nil)
+	if err != nil {
+		t.Fatalf("second chatWithRetry failed: %v", err)
+	}
+
+	// Total calls should be 3 (1 from first + 2 from second)
+	if mock.callCount != 3 {
+		t.Errorf("total call count = %d, want 3", mock.callCount)
+	}
+
+	if result2.Metadata.Prompt != "tabby cat" {
+		t.Errorf("second prompt = %q, want %q", result2.Metadata.Prompt, "tabby cat")
+	}
+}
+
+func TestChatWithRetry_NonFormatErrorReturnsImmediately(t *testing.T) {
+	nonFormatErr := errors.New("connection error")
+
+	mock := &mockOllamaClient{
+		responses: []mockResponse{
+			{err: nonFormatErr}, // Non-format error
+		},
+	}
+
+	server, err := NewServerWithDeps("", mock, nil, nil)
+	if err != nil {
+		t.Fatalf("NewServerWithDeps failed: %v", err)
+	}
+
+	messages := []ollama.Message{
+		{Role: ollama.RoleUser, Content: "test message"},
+	}
+
+	_, err = server.chatWithRetry(context.Background(), messages, nil, nil)
+
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	if !errors.Is(err, nonFormatErr) {
+		t.Errorf("expected connection error, got %v", err)
+	}
+
+	// Should have only tried once (no retry for non-format errors)
+	if mock.callCount != 1 {
+		t.Errorf("call count = %d, want 1", mock.callCount)
+	}
+}
+
+func TestCompactContext_CorrectFormat(t *testing.T) {
+	server, err := NewServerWithDeps("", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewServerWithDeps failed: %v", err)
+	}
+
+	messages := []ollama.Message{
+		{Role: ollama.RoleSystem, Content: ollama.SystemPrompt},
+		{Role: ollama.RoleUser, Content: "I want a cat in a hat"},
+		{Role: ollama.RoleAssistant, Content: "What kind of cat?\n---\n{\"prompt\":\"\",\"ready\":false}"},
+		{Role: ollama.RoleUser, Content: "A tabby cat wearing a wizard hat"},
+		{Role: ollama.RoleUser, Content: "Make it realistic"},
+	}
+
+	compacted := server.compactContext(messages)
+
+	// Should return single system message
+	if len(compacted) != 1 {
+		t.Fatalf("compacted length = %d, want 1", len(compacted))
+	}
+
+	if compacted[0].Role != ollama.RoleSystem {
+		t.Errorf("compacted role = %q, want %q", compacted[0].Role, ollama.RoleSystem)
+	}
+
+	content := compacted[0].Content
+
+	// Should contain "User wants:"
+	if !strings.Contains(content, "User wants:") {
+		t.Errorf("compacted content missing 'User wants:', got: %s", content)
+	}
+
+	// Should contain extracted keywords from user messages
+	keywords := []string{"cat", "hat", "tabby", "wizard", "realistic"}
+	for _, keyword := range keywords {
+		if !strings.Contains(strings.ToLower(content), keyword) {
+			t.Errorf("compacted content missing keyword %q, got: %s", keyword, content)
+		}
+	}
+
+	// Should request JSON-only response
+	if !strings.Contains(content, "ONLY JSON") {
+		t.Errorf("compacted content missing 'ONLY JSON', got: %s", content)
+	}
+
+	// Should include delimiter
+	if !strings.Contains(content, "---") {
+		t.Errorf("compacted content missing delimiter '---', got: %s", content)
+	}
+
+	// Should include JSON format example
+	if !strings.Contains(content, `{"prompt":`) {
+		t.Errorf("compacted content missing JSON format example, got: %s", content)
+	}
+
+	if !strings.Contains(content, `"ready": true`) {
+		t.Errorf("compacted content missing 'ready' field example, got: %s", content)
+	}
+}
+
+func TestCompactContext_SkipsSystemInjectedMessages(t *testing.T) {
+	server, err := NewServerWithDeps("", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewServerWithDeps failed: %v", err)
+	}
+
+	messages := []ollama.Message{
+		{Role: ollama.RoleSystem, Content: ollama.SystemPrompt},
+		{Role: ollama.RoleUser, Content: "I want a cat"},
+		{Role: ollama.RoleUser, Content: "[user edited prompt to: cat in hat]"}, // Should be skipped
+		{Role: ollama.RoleUser, Content: "[Current prompt: cat in space]"},      // Should be skipped
+		{Role: ollama.RoleUser, Content: "Make it blue"},
+	}
+
+	compacted := server.compactContext(messages)
+
+	content := compacted[0].Content
+
+	// Should contain user content
+	if !strings.Contains(strings.ToLower(content), "cat") {
+		t.Errorf("compacted content missing user content, got: %s", content)
+	}
+
+	if !strings.Contains(strings.ToLower(content), "blue") {
+		t.Errorf("compacted content missing user content, got: %s", content)
+	}
+
+	// Should NOT contain system-injected messages
+	if strings.Contains(content, "[user edited") {
+		t.Errorf("compacted content should not contain system-injected messages, got: %s", content)
+	}
+
+	if strings.Contains(content, "[Current prompt") {
+		t.Errorf("compacted content should not contain system-injected messages, got: %s", content)
+	}
+}
+
+func TestCompactContext_TruncatesLongContent(t *testing.T) {
+	server, err := NewServerWithDeps("", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("NewServerWithDeps failed: %v", err)
+	}
+
+	// Create a very long user message
+	longMessage := strings.Repeat("cat dog bird fish ", 100) // ~1700 chars
+
+	messages := []ollama.Message{
+		{Role: ollama.RoleUser, Content: longMessage},
+	}
+
+	compacted := server.compactContext(messages)
+	content := compacted[0].Content
+
+	// Extract just the "User wants: ..." part before the instructions
+	userWantsPart := content
+	if idx := strings.Index(content, "\n\nRespond with ONLY JSON"); idx != -1 {
+		userWantsPart = content[:idx]
+	}
+
+	// The summary should be truncated (max 200 chars after "User wants: ")
+	// Total should be less than some reasonable upper bound
+	if len(userWantsPart) > 300 {
+		t.Errorf("compacted user wants section too long: %d chars (should be under 300)", len(userWantsPart))
+	}
+
+	// Should contain ellipsis if truncated
+	if len(longMessage) > 200 && !strings.Contains(userWantsPart, "...") {
+		t.Errorf("expected truncation ellipsis for long content, got: %s", userWantsPart)
 	}
 }
