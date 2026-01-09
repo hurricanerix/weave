@@ -412,7 +412,7 @@ func TestChatSuccess(t *testing.T) {
 			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: " there"}, Done: false},
 			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "!\n"}, Done: false},
 			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "---\n"}, Done: false},
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "a test prompt", "ready": true}`}, Done: true},
+			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "a test prompt", "ready": true, "steps": 28, "cfg": 7.5, "seed": 42}`}, Done: true},
 		}
 
 		for _, resp := range responses {
@@ -461,7 +461,7 @@ func TestChatSuccess(t *testing.T) {
 	}
 
 	// Check RawResponse includes full response (text + delimiter + JSON)
-	expectedRawResponse := "Hello there!\n---\n{\"prompt\": \"a test prompt\", \"ready\": true}"
+	expectedRawResponse := "Hello there!\n---\n{\"prompt\": \"a test prompt\", \"ready\": true, \"steps\": 28, \"cfg\": 7.5, \"seed\": 42}"
 	if result.RawResponse != expectedRawResponse {
 		t.Errorf("RawResponse = %q, want %q", result.RawResponse, expectedRawResponse)
 	}
@@ -496,7 +496,7 @@ func TestChatWithSeed(t *testing.T) {
 		// Send minimal response with delimiter and JSON
 		responses := []ChatResponse{
 			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "ok\n---\n"}, Done: false},
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "", "ready": false}`}, Done: true},
+			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "", "ready": false, "steps": 20, "cfg": 7.0, "seed": 0}`}, Done: true},
 		}
 		for _, resp := range responses {
 			data, _ := json.Marshal(resp)
@@ -544,7 +544,7 @@ func TestChatWithoutSeed(t *testing.T) {
 		// Send minimal response with delimiter and JSON
 		responses := []ChatResponse{
 			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "ok\n---\n"}, Done: false},
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "", "ready": false}`}, Done: true},
+			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "", "ready": false, "steps": 20, "cfg": 7.0, "seed": 0}`}, Done: true},
 		}
 		for _, resp := range responses {
 			data, _ := json.Marshal(resp)
@@ -757,7 +757,7 @@ func TestChatNilCallback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		responses := []ChatResponse{
 			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "ok\n---\n"}, Done: false},
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "test", "ready": true}`}, Done: true},
+			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "test", "ready": true, "steps": 28, "cfg": 7.5, "seed": 42}`}, Done: true},
 		}
 		for _, resp := range responses {
 			data, _ := json.Marshal(resp)
@@ -792,7 +792,7 @@ func TestChatNilCallback(t *testing.T) {
 	}
 
 	// Verify RawResponse contains full response
-	expectedRaw := "ok\n---\n{\"prompt\": \"test\", \"ready\": true}"
+	expectedRaw := "ok\n---\n{\"prompt\": \"test\", \"ready\": true, \"steps\": 28, \"cfg\": 7.5, \"seed\": 42}"
 	if result.RawResponse != expectedRaw {
 		t.Errorf("RawResponse = %q, want %q", result.RawResponse, expectedRaw)
 	}

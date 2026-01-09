@@ -245,3 +245,167 @@ func TestConcurrentReadWrite(t *testing.T) {
 		t.Errorf("Invalid session count: %d", count)
 	}
 }
+
+func TestSessionManagerReturnsSession(t *testing.T) {
+	sm := NewSessionManager()
+
+	session := sm.GetSession("test-session")
+
+	if session == nil {
+		t.Fatal("GetSession returned nil")
+	}
+
+	if session.Manager() == nil {
+		t.Error("Session.Manager() returned nil")
+	}
+}
+
+func TestSetGenerationSettings(t *testing.T) {
+	sm := NewSessionManager()
+	session := sm.GetSession("test-session")
+
+	// Initially, settings should not be set
+	_, _, _, hasSettings := session.GetGenerationSettings()
+	if hasSettings {
+		t.Error("New session should not have settings")
+	}
+
+	// Set settings
+	session.SetGenerationSettings(20, 5.0, 12345)
+
+	// Verify settings can be retrieved
+	steps, cfg, seed, hasSettings := session.GetGenerationSettings()
+	if !hasSettings {
+		t.Error("Settings should be set after SetGenerationSettings")
+	}
+
+	if steps != 20 {
+		t.Errorf("Steps = %d, want 20", steps)
+	}
+	if cfg != 5.0 {
+		t.Errorf("CFG = %f, want 5.0", cfg)
+	}
+	if seed != 12345 {
+		t.Errorf("Seed = %d, want 12345", seed)
+	}
+}
+
+func TestGetGenerationSettings_NotSet(t *testing.T) {
+	sm := NewSessionManager()
+	session := sm.GetSession("test-session")
+
+	steps, cfg, seed, hasSettings := session.GetGenerationSettings()
+
+	if hasSettings {
+		t.Error("New session should return hasSettings=false")
+	}
+
+	// Zero values should be returned when not set
+	if steps != 0 {
+		t.Errorf("Steps = %d, want 0", steps)
+	}
+	if cfg != 0 {
+		t.Errorf("CFG = %f, want 0", cfg)
+	}
+	if seed != 0 {
+		t.Errorf("Seed = %d, want 0", seed)
+	}
+}
+
+func TestGetGenerationSettings_MultipleUpdates(t *testing.T) {
+	sm := NewSessionManager()
+	session := sm.GetSession("test-session")
+
+	// Set initial values
+	session.SetGenerationSettings(10, 2.5, 100)
+
+	// Update values
+	session.SetGenerationSettings(30, 7.5, 200)
+
+	// Verify latest values are returned
+	steps, cfg, seed, hasSettings := session.GetGenerationSettings()
+	if !hasSettings {
+		t.Fatal("Settings should be set")
+	}
+
+	if steps != 30 {
+		t.Errorf("Steps = %d, want 30", steps)
+	}
+	if cfg != 7.5 {
+		t.Errorf("CFG = %f, want 7.5", cfg)
+	}
+	if seed != 200 {
+		t.Errorf("Seed = %d, want 200", seed)
+	}
+}
+
+func TestGenerationSettings_SessionIsolation(t *testing.T) {
+	sm := NewSessionManager()
+
+	session1 := sm.GetSession("session-1")
+	session2 := sm.GetSession("session-2")
+
+	// Set different settings for each session
+	session1.SetGenerationSettings(10, 2.0, 100)
+	session2.SetGenerationSettings(20, 4.0, 200)
+
+	// Verify session 1 settings
+	steps1, cfg1, seed1, hasSettings1 := session1.GetGenerationSettings()
+	if !hasSettings1 {
+		t.Error("Session 1 should have settings")
+	}
+	if steps1 != 10 || cfg1 != 2.0 || seed1 != 100 {
+		t.Errorf("Session 1 settings = (%d, %f, %d), want (10, 2.0, 100)", steps1, cfg1, seed1)
+	}
+
+	// Verify session 2 settings
+	steps2, cfg2, seed2, hasSettings2 := session2.GetGenerationSettings()
+	if !hasSettings2 {
+		t.Error("Session 2 should have settings")
+	}
+	if steps2 != 20 || cfg2 != 4.0 || seed2 != 200 {
+		t.Errorf("Session 2 settings = (%d, %f, %d), want (20, 4.0, 200)", steps2, cfg2, seed2)
+	}
+}
+
+func TestGenerationSettings_NegativeSeed(t *testing.T) {
+	sm := NewSessionManager()
+	session := sm.GetSession("test-session")
+
+	// Set seed to -1 (random)
+	session.SetGenerationSettings(4, 1.0, -1)
+
+	steps, cfg, seed, hasSettings := session.GetGenerationSettings()
+	if !hasSettings {
+		t.Fatal("Settings should be set")
+	}
+
+	if seed != -1 {
+		t.Errorf("Seed = %d, want -1", seed)
+	}
+
+	// Verify other values are correct
+	if steps != 4 {
+		t.Errorf("Steps = %d, want 4", steps)
+	}
+	if cfg != 1.0 {
+		t.Errorf("CFG = %f, want 1.0", cfg)
+	}
+}
+
+func TestGenerationSettings_ZeroValues(t *testing.T) {
+	sm := NewSessionManager()
+	session := sm.GetSession("test-session")
+
+	// Set all values to zero (edge case)
+	session.SetGenerationSettings(0, 0, 0)
+
+	steps, cfg, seed, hasSettings := session.GetGenerationSettings()
+	if !hasSettings {
+		t.Fatal("Settings should be set even with zero values")
+	}
+
+	if steps != 0 || cfg != 0 || seed != 0 {
+		t.Errorf("Zero values should be preserved: got (%d, %f, %d)", steps, cfg, seed)
+	}
+}

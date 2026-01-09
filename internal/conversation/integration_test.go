@@ -45,7 +45,7 @@ func TestMultiTurnConversationFlow(t *testing.T) {
 	m.AddUserMessage("Can you make it more magical?")
 
 	// Build LLM context - should include edit notification
-	context := m.BuildLLMContext(systemPrompt)
+	context := m.BuildLLMContext(systemPrompt, 0, 0, 0)
 
 	// Verify context structure
 	// Expected: system, user, assistant, edit notification, user, trailing
@@ -85,7 +85,7 @@ func TestMultiTurnConversationFlow(t *testing.T) {
 
 	// Build context again - edit notification should still be in history
 	// but trailing context should have new prompt
-	context2 := m.BuildLLMContext(systemPrompt)
+	context2 := m.BuildLLMContext(systemPrompt, 0, 0, 0)
 
 	// Expected: system, user, assistant, edit, user, assistant, trailing
 	if len(context2) != 7 {
@@ -178,7 +178,7 @@ func TestClearResetsAllState(t *testing.T) {
 	}
 
 	// Verify LLM context is minimal
-	context := m.BuildLLMContext("system prompt")
+	context := m.BuildLLMContext("system prompt", 0, 0, 0)
 	if len(context) != 1 {
 		t.Errorf("Context should have only system prompt after clear, got %d messages", len(context))
 	}
@@ -252,7 +252,7 @@ func TestContextWithoutPrompt(t *testing.T) {
 	m.AddUserMessage("Hello")
 	m.AddAssistantMessage("Hi there! How can I help?", "") // No prompt
 
-	context := m.BuildLLMContext(systemPrompt)
+	context := m.BuildLLMContext(systemPrompt, 0, 0, 0)
 
 	// Should have: system, user, assistant (no trailing context)
 	if len(context) != 3 {
@@ -277,7 +277,7 @@ func TestEditNotificationFlow(t *testing.T) {
 	// No edit yet - context has: system, user, assistant, trailing (3 non-system)
 	// Note: trailing context is RoleUser, not RoleSystem, because ollama
 	// requires system messages to be first in conversation
-	context1 := m.BuildLLMContext("system")
+	context1 := m.BuildLLMContext("system", 0, 0, 0)
 	nonSystemMessages := 0
 	for _, msg := range context1 {
 		if msg.Role != RoleSystem {
@@ -294,7 +294,7 @@ func TestEditNotificationFlow(t *testing.T) {
 	m.NotifyPromptEdited()
 
 	// Context should now include edit notification in history
-	context2 := m.BuildLLMContext("system")
+	context2 := m.BuildLLMContext("system", 0, 0, 0)
 
 	// Find the edit notification
 	found := false
@@ -339,7 +339,7 @@ func TestPromptEvolution(t *testing.T) {
 	}
 
 	// Final context should have v4-user
-	context := m.BuildLLMContext("system")
+	context := m.BuildLLMContext("system", 0, 0, 0)
 	trailing := context[len(context)-1]
 	expected := `[current prompt: "v4-user"]`
 	if trailing.Content != expected {

@@ -37,6 +37,12 @@ const (
 	// Example: {"message": "Generation failed: timeout"}
 	EventError = "error"
 
+	// EventSettingsUpdate indicates the agent has specified generation settings.
+	// UI controls should update to reflect these values.
+	// Data schema: {"steps": int, "cfg": float, "seed": int}
+	// Example: {"steps": 20, "cfg": 5.0, "seed": -1}
+	EventSettingsUpdate = "settings-update"
+
 	// MaxConnections is the maximum number of concurrent SSE connections.
 	MaxConnections = 1000
 )

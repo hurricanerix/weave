@@ -1,5 +1,7 @@
 package conversation
 
+import "fmt"
+
 const (
 	// MaxHistorySize is the maximum number of messages allowed in conversation history.
 	// When this limit is reached, the oldest messages are removed to make room for new ones.
@@ -164,8 +166,16 @@ func (m *Manager) trimHistory() {
 //
 // The returned slice contains:
 //  1. System prompt (if provided) as the first message
-//  2. All messages from the conversation history
-//  3. Trailing context with the current prompt (if set)
+//  2. Current generation settings (if any are non-zero) as a user message
+//  3. All messages from the conversation history
+//  4. Trailing context with the current prompt (if set)
+//
+// The settings message has the format:
+//
+//	[Current generation settings: steps=X, cfg=Y, seed=Z]
+//
+// This appears after the system prompt but before conversation history so
+// the agent sees current UI values when generating responses.
 //
 // The trailing context message has the format:
 //
@@ -180,16 +190,22 @@ func (m *Manager) trimHistory() {
 // Example output structure:
 //
 //	[system] You help users create images...
+//	[user] [Current generation settings: steps=20, cfg=7.5, seed=42]
 //	[user] I want a cat
 //	[assistant] Here's a prompt for a cat...
 //	[user] [user edited prompt to: "a fluffy cat"]
 //	[user] Make it orange
 //	[user] [current prompt: "a fluffy cat"]
-func (m *Manager) BuildLLMContext(systemPrompt string) []Message {
+func (m *Manager) BuildLLMContext(systemPrompt string, currentSteps int, currentCFG float64, currentSeed int64) []Message {
 	// Pre-allocate exact capacity to avoid slice growth during appends.
-	// Capacity = history + optional system prompt + optional trailing context.
+	// Capacity = history + optional system prompt + optional settings + optional trailing context.
 	capacity := len(m.conv.messages)
 	if systemPrompt != "" {
+		capacity++
+	}
+	// Check if any settings are non-zero (settings are set)
+	hasSettings := currentSteps != 0 || currentCFG != 0 || currentSeed != 0
+	if hasSettings {
 		capacity++
 	}
 	if m.conv.currentPrompt != "" {
@@ -203,6 +219,21 @@ func (m *Manager) BuildLLMContext(systemPrompt string) []Message {
 		context = append(context, Message{
 			Role:    RoleSystem,
 			Content: systemPrompt,
+		})
+	}
+
+	// Inject current generation settings if any are non-zero.
+	// This appears after the system prompt but before conversation history
+	// so the agent sees current UI values when generating responses.
+	// Note: We use RoleUser instead of RoleSystem because Ollama requires
+	// system messages to be first in the conversation (only one allowed).
+	if hasSettings {
+		// Format: [Current generation settings: steps=20, cfg=7.5, seed=42]
+		settingsMsg := fmt.Sprintf("[Current generation settings: steps=%d, cfg=%.1f, seed=%d]",
+			currentSteps, currentCFG, currentSeed)
+		context = append(context, Message{
+			Role:    RoleUser,
+			Content: settingsMsg,
 		})
 	}
 

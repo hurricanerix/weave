@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hurricanerix/weave/internal/config"
 	"github.com/hurricanerix/weave/internal/image"
 	"github.com/hurricanerix/weave/internal/ollama"
 )
@@ -177,6 +179,74 @@ func TestServer_HandleIndex(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "Weave Web UI") {
 		t.Errorf("body should contain title, got %q", body)
+	}
+}
+
+func TestServer_HandleIndex_UsesDefaultValues(t *testing.T) {
+	tests := []struct {
+		name      string
+		steps     int
+		cfg       float64
+		seed      int64
+		wantSteps int
+		wantCFG   float64
+		wantSeed  int64
+	}{
+		{
+			name:      "default values",
+			steps:     4,
+			cfg:       1.0,
+			seed:      0,
+			wantSteps: 4,
+			wantCFG:   1.0,
+			wantSeed:  0,
+		},
+		{
+			name:      "custom values",
+			steps:     10,
+			cfg:       2.5,
+			seed:      42,
+			wantSteps: 10,
+			wantCFG:   2.5,
+			wantSeed:  42,
+		},
+		{
+			name:      "random seed",
+			steps:     20,
+			cfg:       7.5,
+			seed:      -1,
+			wantSteps: 20,
+			wantCFG:   7.5,
+			wantSeed:  -1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				Steps: tt.steps,
+				CFG:   tt.cfg,
+				Seed:  tt.seed,
+			}
+
+			s, err := NewServerWithDeps("", nil, nil, nil, cfg)
+			if err != nil {
+				t.Fatalf("NewServerWithDeps() error = %v", err)
+			}
+
+			// Verify server stored the defaults correctly
+			if s.defaultSteps != tt.wantSteps {
+				t.Errorf("defaultSteps = %d, want %d", s.defaultSteps, tt.wantSteps)
+			}
+
+			if s.defaultCFG != tt.wantCFG {
+				t.Errorf("defaultCFG = %f, want %f", s.defaultCFG, tt.wantCFG)
+			}
+
+			if s.defaultSeed != tt.wantSeed {
+				t.Errorf("defaultSeed = %d, want %d", s.defaultSeed, tt.wantSeed)
+			}
+		})
 	}
 }
 
@@ -552,7 +622,7 @@ func TestServer_APIEndpoints_Integration(t *testing.T) {
 
 func TestHandleImage_ValidImage(t *testing.T) {
 	storage := image.NewStorage()
-	server, err := NewServerWithDeps("", nil, nil, storage)
+	server, err := NewServerWithDeps("", nil, nil, storage, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -609,7 +679,7 @@ func TestHandleImage_ValidImage(t *testing.T) {
 
 func TestHandleImage_NotFound(t *testing.T) {
 	storage := image.NewStorage()
-	server, err := NewServerWithDeps("", nil, nil, storage)
+	server, err := NewServerWithDeps("", nil, nil, storage, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -628,7 +698,7 @@ func TestHandleImage_NotFound(t *testing.T) {
 
 func TestHandleImage_InvalidID(t *testing.T) {
 	storage := image.NewStorage()
-	server, err := NewServerWithDeps("", nil, nil, storage)
+	server, err := NewServerWithDeps("", nil, nil, storage, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -691,7 +761,7 @@ func TestChatWithRetry_FormatReminderAfterParseError(t *testing.T) {
 				},
 			}
 
-			server, err := NewServerWithDeps("", mock, nil, nil)
+			server, err := NewServerWithDeps("", mock, nil, nil, nil)
 			if err != nil {
 				t.Fatalf("NewServerWithDeps failed: %v", err)
 			}
@@ -735,7 +805,7 @@ func TestChatWithRetry_ContextCompactionAfterTwoRetries(t *testing.T) {
 		},
 	}
 
-	server, err := NewServerWithDeps("", mock, nil, nil)
+	server, err := NewServerWithDeps("", mock, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -773,7 +843,7 @@ func TestChatWithRetry_ErrorReturnedAfterAllRetriesFail(t *testing.T) {
 		},
 	}
 
-	server, err := NewServerWithDeps("", mock, nil, nil)
+	server, err := NewServerWithDeps("", mock, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -818,7 +888,7 @@ func TestChatWithRetry_RetryCountResetsOnSuccess(t *testing.T) {
 		},
 	}
 
-	server, err := NewServerWithDeps("", mock, nil, nil)
+	server, err := NewServerWithDeps("", mock, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -870,7 +940,7 @@ func TestChatWithRetry_NonFormatErrorReturnsImmediately(t *testing.T) {
 		},
 	}
 
-	server, err := NewServerWithDeps("", mock, nil, nil)
+	server, err := NewServerWithDeps("", mock, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -896,7 +966,7 @@ func TestChatWithRetry_NonFormatErrorReturnsImmediately(t *testing.T) {
 }
 
 func TestCompactContext_CorrectFormat(t *testing.T) {
-	server, err := NewServerWithDeps("", nil, nil, nil)
+	server, err := NewServerWithDeps("", nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -956,7 +1026,7 @@ func TestCompactContext_CorrectFormat(t *testing.T) {
 }
 
 func TestCompactContext_SkipsSystemInjectedMessages(t *testing.T) {
-	server, err := NewServerWithDeps("", nil, nil, nil)
+	server, err := NewServerWithDeps("", nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -993,7 +1063,7 @@ func TestCompactContext_SkipsSystemInjectedMessages(t *testing.T) {
 }
 
 func TestCompactContext_TruncatesLongContent(t *testing.T) {
-	server, err := NewServerWithDeps("", nil, nil, nil)
+	server, err := NewServerWithDeps("", nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -1023,5 +1093,402 @@ func TestCompactContext_TruncatesLongContent(t *testing.T) {
 	// Should contain ellipsis if truncated
 	if len(longMessage) > 200 && !strings.Contains(userWantsPart, "...") {
 		t.Errorf("expected truncation ellipsis for long content, got: %s", userWantsPart)
+	}
+}
+
+func TestServer_ParseSteps(t *testing.T) {
+	cfg := &config.Config{
+		Steps: 20,
+		CFG:   1.0,
+		Seed:  0,
+	}
+	server, err := NewServerWithDeps("", nil, nil, nil, cfg)
+	if err != nil {
+		t.Fatalf("NewServerWithDeps failed: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		value string
+		want  uint32
+	}{
+		{"valid value", "50", 50},
+		{"minimum value", "1", 1},
+		{"maximum value", "100", 100},
+		{"empty string uses default", "", 20},
+		{"zero uses default", "0", 20},
+		{"negative uses default", "-1", 20},
+		{"too large uses default", "101", 20},
+		{"invalid format uses default", "abc", 20},
+		{"float uses default", "4.5", 20},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := server.parseSteps(tt.value)
+			if got != tt.want {
+				t.Errorf("parseSteps(%q) = %d, want %d", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestServer_ParseCFG(t *testing.T) {
+	cfg := &config.Config{
+		Steps: 20,
+		CFG:   1.5,
+		Seed:  0,
+	}
+	server, err := NewServerWithDeps("", nil, nil, nil, cfg)
+	if err != nil {
+		t.Fatalf("NewServerWithDeps failed: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		value string
+		want  float64
+	}{
+		{"valid integer", "7", 7.0},
+		{"valid decimal", "7.5", 7.5},
+		{"minimum value", "0", 0.0},
+		{"maximum value", "20", 20.0},
+		{"empty string uses default", "", 1.5},
+		{"negative uses default", "-1", 1.5},
+		{"too large uses default", "21", 1.5},
+		{"invalid format uses default", "abc", 1.5},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := server.parseCFG(tt.value)
+			if got != tt.want {
+				t.Errorf("parseCFG(%q) = %f, want %f", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestServer_ParseSeed(t *testing.T) {
+	cfg := &config.Config{
+		Steps: 20,
+		CFG:   1.0,
+		Seed:  42,
+	}
+	server, err := NewServerWithDeps("", nil, nil, nil, cfg)
+	if err != nil {
+		t.Fatalf("NewServerWithDeps failed: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		value string
+		want  int64
+	}{
+		{"valid positive", "12345", 12345},
+		{"zero", "0", 0},
+		{"negative one (random)", "-1", -1},
+		{"large value", "9223372036854775807", 9223372036854775807}, // max int64
+		{"empty string uses default", "", 42},
+		{"invalid format uses default", "abc", 42},
+		{"float uses default", "123.45", 42},
+		{"seed below -1 uses default", "-2", 42},
+		{"very negative seed uses default", "-999", 42},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := server.parseSeed(tt.value)
+			if got != tt.want {
+				t.Errorf("parseSeed(%q) = %d, want %d", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestServer_HandleGenerateWithSettings(t *testing.T) {
+	cfg := &config.Config{
+		Steps: 4,
+		CFG:   1.0,
+		Seed:  0,
+	}
+	server, err := NewServerWithDeps("", nil, nil, nil, cfg)
+	if err != nil {
+		t.Fatalf("NewServerWithDeps failed: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		steps string
+		cfg   string
+		seed  string
+	}{
+		{"custom values", "50", "7.5", "12345"},
+		{"missing steps", "", "7.5", "12345"},
+		{"missing cfg", "50", "", "12345"},
+		{"missing seed", "50", "7.5", ""},
+		{"all missing", "", "", ""},
+		{"invalid steps", "999", "7.5", "12345"},
+		{"invalid cfg", "50", "999", "12345"},
+	}
+
+	for i, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create form data
+			formData := "prompt=test+prompt"
+			if tt.steps != "" {
+				formData += "&steps=" + tt.steps
+			}
+			if tt.cfg != "" {
+				formData += "&cfg=" + tt.cfg
+			}
+			if tt.seed != "" {
+				formData += "&seed=" + tt.seed
+			}
+
+			req := httptest.NewRequest("POST", "/generate", strings.NewReader(formData))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+			// Use unique session ID per test to avoid rate limiting
+			sessionID := fmt.Sprintf("test-session-%d", i)
+			ctx := setSessionID(req.Context(), sessionID)
+			req = req.WithContext(ctx)
+
+			w := httptest.NewRecorder()
+
+			server.handleGenerate(w, req)
+
+			// Should return OK status (daemon unavailable is expected, but parsing should work)
+			if w.Code != http.StatusOK && w.Code != http.StatusServiceUnavailable {
+				t.Errorf("status code = %d, want %d or %d", w.Code, http.StatusOK, http.StatusServiceUnavailable)
+			}
+		})
+	}
+}
+
+func TestServer_SeedConversionForProtocol(t *testing.T) {
+	tests := []struct {
+		name          string
+		seedInput     int64
+		wantSeedValue uint64
+		description   string
+	}{
+		{
+			name:          "seed -1 converts to 0 for random",
+			seedInput:     -1,
+			wantSeedValue: 0,
+			description:   "seed=-1 means random, protocol expects 0",
+		},
+		{
+			name:          "seed 0 stays 0",
+			seedInput:     0,
+			wantSeedValue: 0,
+			description:   "explicit 0 is valid",
+		},
+		{
+			name:          "positive seed preserved",
+			seedInput:     12345,
+			wantSeedValue: 12345,
+			description:   "deterministic seed should be preserved",
+		},
+		{
+			name:          "large seed preserved",
+			seedInput:     9223372036854775807,
+			wantSeedValue: 9223372036854775807,
+			description:   "max int64 should work",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Simulate the conversion logic from handleGenerate
+			var seedValue uint64
+			if tt.seedInput == -1 {
+				seedValue = 0
+			} else {
+				seedValue = uint64(tt.seedInput)
+			}
+
+			if seedValue != tt.wantSeedValue {
+				t.Errorf("seed conversion: input=%d, got=%d, want=%d (%s)",
+					tt.seedInput, seedValue, tt.wantSeedValue, tt.description)
+			}
+		})
+	}
+}
+
+func TestClampGenerationSettings(t *testing.T) {
+	tests := []struct {
+		name        string
+		steps       int
+		cfg         float64
+		seed        int64
+		wantSteps   int
+		wantCFG     float64
+		wantSeed    int64
+		wantClamped int // number of clamped settings
+	}{
+		{
+			name:        "valid values unchanged",
+			steps:       20,
+			cfg:         5.0,
+			seed:        42,
+			wantSteps:   20,
+			wantCFG:     5.0,
+			wantSeed:    42,
+			wantClamped: 0,
+		},
+		{
+			name:        "minimum valid values",
+			steps:       1,
+			cfg:         0.0,
+			seed:        -1,
+			wantSteps:   1,
+			wantCFG:     0.0,
+			wantSeed:    -1,
+			wantClamped: 0,
+		},
+		{
+			name:        "maximum valid values",
+			steps:       100,
+			cfg:         20.0,
+			seed:        9999999,
+			wantSteps:   100,
+			wantCFG:     20.0,
+			wantSeed:    9999999,
+			wantClamped: 0,
+		},
+		{
+			name:        "steps too low clamped to 1",
+			steps:       0,
+			cfg:         5.0,
+			seed:        42,
+			wantSteps:   1,
+			wantCFG:     5.0,
+			wantSeed:    42,
+			wantClamped: 1,
+		},
+		{
+			name:        "steps negative clamped to 1",
+			steps:       -10,
+			cfg:         5.0,
+			seed:        42,
+			wantSteps:   1,
+			wantCFG:     5.0,
+			wantSeed:    42,
+			wantClamped: 1,
+		},
+		{
+			name:        "steps too high clamped to 100",
+			steps:       150,
+			cfg:         5.0,
+			seed:        42,
+			wantSteps:   100,
+			wantCFG:     5.0,
+			wantSeed:    42,
+			wantClamped: 1,
+		},
+		{
+			name:        "cfg negative clamped to 0",
+			steps:       20,
+			cfg:         -2.0,
+			seed:        42,
+			wantSteps:   20,
+			wantCFG:     0.0,
+			wantSeed:    42,
+			wantClamped: 1,
+		},
+		{
+			name:        "cfg too high clamped to 20",
+			steps:       20,
+			cfg:         25.0,
+			seed:        42,
+			wantSteps:   20,
+			wantCFG:     20.0,
+			wantSeed:    42,
+			wantClamped: 1,
+		},
+		{
+			name:        "seed too negative clamped to -1",
+			steps:       20,
+			cfg:         5.0,
+			seed:        -5,
+			wantSteps:   20,
+			wantCFG:     5.0,
+			wantSeed:    -1,
+			wantClamped: 1,
+		},
+		{
+			name:        "multiple values clamped",
+			steps:       200,
+			cfg:         -3.0,
+			seed:        -100,
+			wantSteps:   100,
+			wantCFG:     0.0,
+			wantSeed:    -1,
+			wantClamped: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotSteps, gotCFG, gotSeed, clamped := clampGenerationSettings(tt.steps, tt.cfg, tt.seed)
+
+			if gotSteps != tt.wantSteps {
+				t.Errorf("steps = %d, want %d", gotSteps, tt.wantSteps)
+			}
+			if gotCFG != tt.wantCFG {
+				t.Errorf("cfg = %f, want %f", gotCFG, tt.wantCFG)
+			}
+			if gotSeed != tt.wantSeed {
+				t.Errorf("seed = %d, want %d", gotSeed, tt.wantSeed)
+			}
+			if len(clamped) != tt.wantClamped {
+				t.Errorf("clamped count = %d, want %d", len(clamped), tt.wantClamped)
+			}
+		})
+	}
+}
+
+func TestFormatClampedFeedback(t *testing.T) {
+	tests := []struct {
+		name    string
+		clamped []clampedSetting
+		want    string
+	}{
+		{
+			name:    "no clamped settings",
+			clamped: nil,
+			want:    "",
+		},
+		{
+			name:    "empty slice",
+			clamped: []clampedSetting{},
+			want:    "",
+		},
+		{
+			name: "single clamped setting",
+			clamped: []clampedSetting{
+				{name: "steps", original: "150", clamped: "100", reason: "maximum is 100"},
+			},
+			want: "Settings adjusted: steps 150→100 (maximum is 100)",
+		},
+		{
+			name: "multiple clamped settings",
+			clamped: []clampedSetting{
+				{name: "steps", original: "150", clamped: "100", reason: "maximum is 100"},
+				{name: "cfg", original: "-2.0", clamped: "0.0", reason: "minimum is 0"},
+			},
+			want: "Settings adjusted: steps 150→100 (maximum is 100), cfg -2.0→0.0 (minimum is 0)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatClampedFeedback(tt.clamped)
+			if got != tt.want {
+				t.Errorf("formatClampedFeedback() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }

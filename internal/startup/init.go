@@ -51,8 +51,8 @@ func CreateImageStorage(ctx context.Context, logger *logging.Logger) *image.Stor
 func CreateWebServer(cfg *config.Config, ollamaClient *ollama.Client, sessionManager *conversation.SessionManager, imageStorage *image.Storage, logger *logging.Logger) (*web.Server, error) {
 	addr := fmt.Sprintf("localhost:%d", cfg.Port)
 
-	// Create server with dependencies
-	server, err := web.NewServerWithDeps(addr, ollamaClient, sessionManager, imageStorage)
+	// Create server with dependencies including config for default generation settings
+	server, err := web.NewServerWithDeps(addr, ollamaClient, sessionManager, imageStorage, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create web server: %w", err)
 	}

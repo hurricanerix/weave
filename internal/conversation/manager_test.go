@@ -344,7 +344,7 @@ func TestBuildLLMContextEmpty(t *testing.T) {
 	m := NewManager()
 
 	// No system prompt, no history, no current prompt
-	context := m.BuildLLMContext("")
+	context := m.BuildLLMContext("", 0, 0, 0)
 
 	if len(context) != 0 {
 		t.Errorf("Expected empty context, got %d messages", len(context))
@@ -354,7 +354,7 @@ func TestBuildLLMContextEmpty(t *testing.T) {
 func TestBuildLLMContextSystemPromptOnly(t *testing.T) {
 	m := NewManager()
 
-	context := m.BuildLLMContext("You are a helpful assistant.")
+	context := m.BuildLLMContext("You are a helpful assistant.", 0, 0, 0)
 
 	if len(context) != 1 {
 		t.Fatalf("Expected 1 message, got %d", len(context))
@@ -376,7 +376,7 @@ func TestBuildLLMContextHistoryOnly(t *testing.T) {
 	m.AddAssistantMessage("hi there", "")
 
 	// No system prompt
-	context := m.BuildLLMContext("")
+	context := m.BuildLLMContext("", 0, 0, 0)
 
 	if len(context) != 2 {
 		t.Fatalf("Expected 2 messages, got %d", len(context))
@@ -397,7 +397,7 @@ func TestBuildLLMContextCurrentPromptOnly(t *testing.T) {
 	m.AddAssistantMessage("Here's a prompt", "a cute cat")
 
 	// No system prompt, but has current prompt
-	context := m.BuildLLMContext("")
+	context := m.BuildLLMContext("", 0, 0, 0)
 
 	if len(context) != 2 {
 		t.Fatalf("Expected 2 messages (history + trailing), got %d", len(context))
@@ -423,7 +423,7 @@ func TestBuildLLMContextFull(t *testing.T) {
 	m.AddAssistantMessage("Here's a cat prompt", "a cute cat")
 	m.AddUserMessage("Make it fluffy")
 
-	context := m.BuildLLMContext("You help users create images.")
+	context := m.BuildLLMContext("You help users create images.", 0, 0, 0)
 
 	if len(context) != 5 {
 		t.Fatalf("Expected 5 messages, got %d", len(context))
@@ -462,7 +462,7 @@ func TestBuildLLMContextWithEditNotification(t *testing.T) {
 	m.NotifyPromptEdited()
 	m.AddUserMessage("Now make it orange")
 
-	context := m.BuildLLMContext("You help users.")
+	context := m.BuildLLMContext("You help users.", 0, 0, 0)
 
 	// Structure: system prompt, user, assistant, edit notification, user, trailing
 	if len(context) != 6 {
@@ -495,7 +495,7 @@ func TestBuildLLMContextDoesNotModifyHistory(t *testing.T) {
 	m.AddAssistantMessage("hi", "test prompt")
 
 	// Build context
-	_ = m.BuildLLMContext("system prompt")
+	_ = m.BuildLLMContext("system prompt", 0, 0, 0)
 
 	// History should still have only 2 messages (not system prompt or trailing)
 	history := m.GetHistory()
@@ -510,7 +510,7 @@ func TestBuildLLMContextNoTrailingWhenNoPrompt(t *testing.T) {
 	m.AddUserMessage("hello")
 	m.AddAssistantMessage("hi there", "") // No prompt provided
 
-	context := m.BuildLLMContext("You are helpful.")
+	context := m.BuildLLMContext("You are helpful.", 0, 0, 0)
 
 	// Should be: system prompt + 2 history messages (no trailing)
 	if len(context) != 3 {
@@ -657,5 +657,213 @@ func TestTrimHistory_NotifyPromptEditedTriggersTrim(t *testing.T) {
 	}
 	if last.Content != `[user edited prompt to: "new prompt"]` {
 		t.Errorf("Last message content = %q, expected prompt notification", last.Content)
+	}
+}
+
+func TestBuildLLMContextWithSettings(t *testing.T) {
+	m := NewManager()
+
+	m.AddUserMessage("I want a cat")
+	m.AddAssistantMessage("Here's a cat prompt", "a cute cat")
+
+	// Build context with settings
+	context := m.BuildLLMContext("You help users create images.", 20, 7.5, 42)
+
+	// Expected structure: system prompt, settings, history (2), trailing
+	if len(context) != 5 {
+		t.Fatalf("Expected 5 messages, got %d", len(context))
+	}
+
+	// Verify system prompt is first
+	if context[0].Role != RoleSystem {
+		t.Errorf("First message role = %q, want %q", context[0].Role, RoleSystem)
+	}
+	if context[0].Content != "You help users create images." {
+		t.Errorf("First message content = %q, want system prompt", context[0].Content)
+	}
+
+	// Verify settings message is second (uses RoleUser since Ollama only allows one system message)
+	settingsMsg := context[1]
+	if settingsMsg.Role != RoleUser {
+		t.Errorf("Settings message role = %q, want %q", settingsMsg.Role, RoleUser)
+	}
+	expectedSettings := "[Current generation settings: steps=20, cfg=7.5, seed=42]"
+	if settingsMsg.Content != expectedSettings {
+		t.Errorf("Settings message = %q, want %q", settingsMsg.Content, expectedSettings)
+	}
+
+	// Verify conversation history follows
+	if context[2].Role != RoleUser || context[2].Content != "I want a cat" {
+		t.Errorf("History message 1 = {%s, %s}, want {user, I want a cat}",
+			context[2].Role, context[2].Content)
+	}
+
+	// Verify trailing context is last
+	trailing := context[4]
+	if trailing.Content != `[current prompt: "a cute cat"]` {
+		t.Errorf("Trailing context = %q, want prompt context", trailing.Content)
+	}
+}
+
+func TestBuildLLMContextWithSettingsNoSystemPrompt(t *testing.T) {
+	m := NewManager()
+
+	m.AddUserMessage("hello")
+
+	// Build context with settings but no system prompt
+	context := m.BuildLLMContext("", 10, 2.5, -1)
+
+	// Expected structure: settings, history
+	if len(context) != 2 {
+		t.Fatalf("Expected 2 messages, got %d", len(context))
+	}
+
+	// First message should be settings (uses RoleUser since Ollama only allows one system message)
+	settingsMsg := context[0]
+	if settingsMsg.Role != RoleUser {
+		t.Errorf("Settings message role = %q, want %q", settingsMsg.Role, RoleUser)
+	}
+	expectedSettings := "[Current generation settings: steps=10, cfg=2.5, seed=-1]"
+	if settingsMsg.Content != expectedSettings {
+		t.Errorf("Settings message = %q, want %q", settingsMsg.Content, expectedSettings)
+	}
+}
+
+func TestBuildLLMContextZeroSettingsSkipped(t *testing.T) {
+	m := NewManager()
+
+	m.AddUserMessage("hello")
+	m.AddAssistantMessage("hi", "test prompt")
+
+	// Build context with all zero settings
+	context := m.BuildLLMContext("You are helpful.", 0, 0, 0)
+
+	// Expected structure: system prompt, history (2), trailing
+	// No settings message should be injected
+	if len(context) != 4 {
+		t.Fatalf("Expected 4 messages (no settings), got %d", len(context))
+	}
+
+	// First should be system, second should be history (not settings)
+	if context[0].Role != RoleSystem {
+		t.Errorf("First message role = %q, want system", context[0].Role)
+	}
+	if context[1].Role != RoleUser || context[1].Content != "hello" {
+		t.Errorf("Second message = {%s, %s}, want {user, hello}", context[1].Role, context[1].Content)
+	}
+}
+
+func TestBuildLLMContextPartialSettings(t *testing.T) {
+	tests := []struct {
+		name  string
+		steps int
+		cfg   float64
+		seed  int64
+		want  string
+	}{
+		{
+			name:  "only steps",
+			steps: 20,
+			cfg:   0,
+			seed:  0,
+			want:  "[Current generation settings: steps=20, cfg=0.0, seed=0]",
+		},
+		{
+			name:  "only cfg",
+			steps: 0,
+			cfg:   7.5,
+			seed:  0,
+			want:  "[Current generation settings: steps=0, cfg=7.5, seed=0]",
+		},
+		{
+			name:  "only seed",
+			steps: 0,
+			cfg:   0,
+			seed:  42,
+			want:  "[Current generation settings: steps=0, cfg=0.0, seed=42]",
+		},
+		{
+			name:  "negative seed",
+			steps: 4,
+			cfg:   1.0,
+			seed:  -1,
+			want:  "[Current generation settings: steps=4, cfg=1.0, seed=-1]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := NewManager()
+
+			context := m.BuildLLMContext("system", tt.steps, tt.cfg, tt.seed)
+
+			// Should have system prompt + settings
+			if len(context) != 2 {
+				t.Fatalf("Expected 2 messages, got %d", len(context))
+			}
+
+			settingsMsg := context[1]
+			if settingsMsg.Content != tt.want {
+				t.Errorf("Settings message = %q, want %q", settingsMsg.Content, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildLLMContextSettingsPositionBeforeHistory(t *testing.T) {
+	m := NewManager()
+
+	// Add several messages to history
+	m.AddUserMessage("first")
+	m.AddAssistantMessage("second", "")
+	m.AddUserMessage("third")
+
+	// Build context with settings
+	context := m.BuildLLMContext("system prompt", 30, 5.0, 123)
+
+	// Expected: system, settings, history (3)
+	if len(context) != 5 {
+		t.Fatalf("Expected 5 messages, got %d", len(context))
+	}
+
+	// Verify order: system prompt, settings, then history
+	if context[0].Role != RoleSystem || context[0].Content != "system prompt" {
+		t.Errorf("Position 0 should be system prompt, got {%s, %s}", context[0].Role, context[0].Content)
+	}
+
+	if context[1].Role != RoleUser || context[1].Content != "[Current generation settings: steps=30, cfg=5.0, seed=123]" {
+		t.Errorf("Position 1 should be settings, got {%s, %s}", context[1].Role, context[1].Content)
+	}
+
+	if context[2].Role != RoleUser || context[2].Content != "first" {
+		t.Errorf("Position 2 should be first history message, got {%s, %s}", context[2].Role, context[2].Content)
+	}
+}
+
+func TestBuildLLMContextSettingsWithTrailing(t *testing.T) {
+	m := NewManager()
+
+	// Add messages with a current prompt
+	m.AddUserMessage("I want a dog")
+	m.AddAssistantMessage("Here's a dog", "a happy dog")
+	m.AddUserMessage("make it bigger")
+
+	// Build context with settings
+	context := m.BuildLLMContext("system", 15, 3.5, 999)
+
+	// Expected: system, settings, history (3), trailing
+	if len(context) != 6 {
+		t.Fatalf("Expected 6 messages, got %d", len(context))
+	}
+
+	// Verify settings is position 1
+	if context[1].Content != "[Current generation settings: steps=15, cfg=3.5, seed=999]" {
+		t.Errorf("Settings not at position 1: %s", context[1].Content)
+	}
+
+	// Verify trailing is last
+	trailing := context[5]
+	if trailing.Content != `[current prompt: "a happy dog"]` {
+		t.Errorf("Trailing not at last position: %s", trailing.Content)
 	}
 }

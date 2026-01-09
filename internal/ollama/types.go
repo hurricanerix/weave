@@ -39,36 +39,75 @@ const (
 // This format is required for reliable parsing and prompt extraction.
 const SystemPrompt = `You help users create images. Ask clarifying questions, then provide a prompt for the generator.
 
-FORMAT REQUIRED: End EVERY response with "---" on its own line, then JSON: {"prompt": "string", "ready": boolean}
+FORMAT REQUIRED: End EVERY response with "---" on its own line, then JSON with these fields:
 
-- "prompt": Generation prompt (empty if still asking questions)
-- "ready": true if ready to generate, false if clarifying
+- "prompt" (string): Generation prompt (empty if still asking questions)
+- "ready" (boolean): true if ready to generate, false if clarifying
+- "steps" (integer, 1-100): Inference steps. Controls quality/speed tradeoff. Higher = more detailed but slower.
+- "cfg" (float, 0-20): Classifier-free guidance. Controls prompt adherence. Higher = stricter.
+- "seed" (integer): Random seed. -1 for random, 0+ for deterministic/reproducible results.
 
 Keep prompts SHORT (under 200 chars). Ask about: style, subject details, setting, mood. Preserve user edits marked "[user edited prompt to: ...]".
 
 If user rejects after ready=true, set ready back to false and continue asking.
 
+GENERATION SETTINGS GUIDANCE:
+
+Be conservative with settings - only change when user explicitly asks or implies different quality/speed needs.
+
+Steps (1-100):
+- Default: 4 (fast iteration, good for exploring ideas)
+- Quality: 20-30 (more detailed, slower)
+- User says "more detailed" or "higher quality" → increase steps to 20-30
+- User says "faster" or "quick preview" → decrease steps to 4-8
+
+CFG (0-20):
+- Default: 1.0 (balanced)
+- Strict adherence: 3-7 (when results don't match prompt well)
+- User says results don't match their description → suggest increasing cfg to 3-7
+
+Seed:
+- Default: -1 (random, for exploring variations)
+- Deterministic: 0+ (when user wants reproducibility or to iterate on specific result)
+- Keep at -1 unless user explicitly wants "same result" or "reproduce this"
+
+Invalid values will be clamped to valid ranges and you will receive feedback.
+
 CORRECT:
 User: cat in hat
 Assistant: What kind of cat? Hat style? Setting? Realistic or cartoon?
 ---
-{"prompt": "", "ready": false}
+{"prompt": "", "ready": false, "steps": 4, "cfg": 1.0, "seed": -1}
 
 User: tabby, wizard hat, library, realistic
 Assistant: Perfect! Generating now.
 ---
-{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "ready": true}
+{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "ready": true, "steps": 4, "cfg": 1.0, "seed": -1}
+
+User: make it more detailed
+Assistant: I'll increase the quality settings for more detail.
+---
+{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "ready": true, "steps": 28, "cfg": 1.0, "seed": -1}
+
+User: I want to reproduce the last one exactly
+Assistant: Setting a fixed seed so you get the same result.
+---
+{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "ready": true, "steps": 28, "cfg": 1.0, "seed": 42}
 
 WRONG - Missing delimiter/JSON:
 Assistant: What kind of cat?
 
 WRONG - No text before delimiter:
 ---
-{"prompt": "", "ready": false}
+{"prompt": "", "ready": false, "steps": 4, "cfg": 1.0, "seed": -1}
 
 WRONG - Prompt too long:
 ---
-{"prompt": "A majestic tabby cat with striking amber eyes gracefully perched upon an antique desk wearing an elaborate wizard hat adorned with stars and moons surrounded by towering bookshelves...", "ready": true}`
+{"prompt": "A majestic tabby cat with striking amber eyes gracefully perched upon an antique desk wearing an elaborate wizard hat adorned with stars and moons surrounded by towering bookshelves...", "ready": true, "steps": 4, "cfg": 1.0, "seed": -1}
+
+WRONG - Missing required fields:
+---
+{"prompt": "cat in hat", "ready": true}`
 
 // Message represents a single message in a conversation.
 type Message struct {
@@ -141,6 +180,19 @@ type LLMMetadata struct {
 	// Ready indicates whether the LLM has enough information to generate.
 	// When true and Prompt is non-empty, the prompt should be used for generation.
 	Ready bool `json:"ready"`
+
+	// Steps is the number of inference steps to use for generation.
+	// The web layer clamps this to valid ranges for the selected model.
+	Steps int `json:"steps"`
+
+	// CFG is the classifier-free guidance scale.
+	// Higher values make the image adhere more strictly to the prompt.
+	// The web layer clamps this to valid ranges for the selected model.
+	CFG float64 `json:"cfg"`
+
+	// Seed is the random seed for deterministic generation.
+	// Using the same seed with the same prompt and settings produces identical images.
+	Seed int64 `json:"seed"`
 }
 
 // ChatResult represents the complete result of a chat request.

@@ -8,12 +8,14 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
 	"github.com/hurricanerix/weave/internal/client"
+	"github.com/hurricanerix/weave/internal/config"
 	"github.com/hurricanerix/weave/internal/conversation"
 	"github.com/hurricanerix/weave/internal/image"
 	"github.com/hurricanerix/weave/internal/ollama"
@@ -71,8 +73,21 @@ type Server struct {
 	// Image storage for generated images
 	imageStorage *image.Storage
 
+	// Default generation settings from CLI flags
+	defaultSteps int
+	defaultCFG   float64
+	defaultSeed  int64
+
 	// Request ID counter for compute daemon requests
 	requestID uint64
+}
+
+// indexTemplateData holds data passed to the index.html template.
+// It contains default values for generation settings that populate the UI controls.
+type indexTemplateData struct {
+	Steps int
+	CFG   float64
+	Seed  int64
 }
 
 // NewServer creates a new Server listening on the given address.
@@ -82,7 +97,7 @@ type Server struct {
 // Deprecated: Use NewServerWithDeps to inject dependencies.
 // This function creates default clients for backward compatibility with tests.
 func NewServer(addr string) (*Server, error) {
-	return NewServerWithDeps(addr, nil, nil, nil)
+	return NewServerWithDeps(addr, nil, nil, nil, nil)
 }
 
 // NewServerWithDeps creates a new Server with injected dependencies.
@@ -90,8 +105,9 @@ func NewServer(addr string) (*Server, error) {
 // If ollamaClient is nil, a default client is created.
 // If sessionManager is nil, a default session manager is created.
 // If imageStorage is nil, a default image storage is created.
+// If cfg is nil, default generation settings are used (steps=4, cfg=1.0, seed=0).
 // Returns an error if templates cannot be parsed.
-func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *conversation.SessionManager, imageStorage *image.Storage) (*Server, error) {
+func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *conversation.SessionManager, imageStorage *image.Storage, cfg *config.Config) (*Server, error) {
 	if addr == "" {
 		addr = DefaultAddr
 	}
@@ -105,6 +121,16 @@ func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *c
 	}
 	if imageStorage == nil {
 		imageStorage = image.NewStorage()
+	}
+
+	// Extract default generation settings from config
+	defaultSteps := 4
+	defaultCFG := 1.0
+	defaultSeed := int64(0)
+	if cfg != nil {
+		defaultSteps = cfg.Steps
+		defaultCFG = cfg.CFG
+		defaultSeed = cfg.Seed
 	}
 
 	// Parse templates from embedded filesystem
@@ -121,6 +147,9 @@ func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *c
 		sessionManager: sessionManager,
 		rateLimiter:    newRateLimiter(),
 		imageStorage:   imageStorage,
+		defaultSteps:   defaultSteps,
+		defaultCFG:     defaultCFG,
+		defaultSeed:    defaultSeed,
 	}
 
 	mux := http.NewServeMux()
@@ -212,7 +241,14 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 
-	if err := s.templates.ExecuteTemplate(w, "index.html", nil); err != nil {
+	// Populate template data with default generation settings from CLI flags
+	data := indexTemplateData{
+		Steps: s.defaultSteps,
+		CFG:   s.defaultCFG,
+		Seed:  s.defaultSeed,
+	}
+
+	if err := s.templates.ExecuteTemplate(w, "index.html", data); err != nil {
 		log.Printf("Failed to execute template: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
@@ -273,14 +309,23 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse generation settings from form data
+	steps := s.parseSteps(r.FormValue("steps"))
+	cfg := s.parseCFG(r.FormValue("cfg"))
+	seed := s.parseSeed(r.FormValue("seed"))
+
+	// Get session and update generation settings
+	session := s.sessionManager.GetSession(sessionID)
+	session.SetGenerationSettings(int(steps), cfg, seed)
+
 	// Get conversation manager for this session
-	manager := s.sessionManager.GetOrCreate(sessionID)
+	manager := session.Manager()
 
 	// Add user message to conversation
 	manager.AddUserMessage(message)
 
-	// Build LLM context with system prompt
-	context := manager.BuildLLMContext(ollama.SystemPrompt)
+	// Build LLM context with system prompt and current generation settings
+	context := manager.BuildLLMContext(ollama.SystemPrompt, int(steps), cfg, seed)
 
 	// Convert conversation messages to ollama messages
 	ollamaMessages := make([]ollama.Message, len(context))
@@ -360,6 +405,32 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Process agent-provided generation settings
+	// Clamp to valid ranges and send update to UI
+	clampedSteps, clampedCFG, clampedSeed, clampedList := clampGenerationSettings(
+		result.Metadata.Steps,
+		result.Metadata.CFG,
+		result.Metadata.Seed,
+	)
+
+	// Update session with clamped values
+	session.SetGenerationSettings(clampedSteps, clampedCFG, clampedSeed)
+
+	// Send settings-update event to UI
+	_ = s.broker.SendEvent(sessionID, EventSettingsUpdate, map[string]interface{}{
+		"steps": clampedSteps,
+		"cfg":   clampedCFG,
+		"seed":  clampedSeed,
+	})
+
+	// If values were clamped, send feedback message via agent-token
+	if feedback := formatClampedFeedback(clampedList); feedback != "" {
+		log.Printf("Settings clamped for session %s: %s", sessionID, feedback)
+		_ = s.broker.SendEvent(sessionID, EventAgentToken, map[string]string{
+			"token": "\n\n[" + feedback + "]",
+		})
+	}
+
 	// Send agent-done event
 	_ = s.broker.SendEvent(sessionID, EventAgentDone, map[string]bool{"done": true})
 
@@ -373,6 +444,90 @@ func (s *Server) sendErrorEvent(sessionID string, message string) {
 	_ = s.broker.SendEvent(sessionID, EventError, map[string]string{
 		"message": message,
 	})
+}
+
+// clampedSetting tracks a single setting that was clamped.
+type clampedSetting struct {
+	name     string
+	original string
+	clamped  string
+	reason   string
+}
+
+// clampGenerationSettings clamps agent-provided values to valid ranges.
+// Returns the clamped values and a list of settings that were adjusted.
+// Valid ranges: steps 1-100, cfg 0-20, seed >= -1
+func clampGenerationSettings(steps int, cfg float64, seed int64) (int, float64, int64, []clampedSetting) {
+	var clamped []clampedSetting
+
+	// Clamp steps (1-100)
+	clampedSteps := steps
+	if steps < 1 {
+		clampedSteps = 1
+		clamped = append(clamped, clampedSetting{
+			name:     "steps",
+			original: fmt.Sprintf("%d", steps),
+			clamped:  "1",
+			reason:   "minimum is 1",
+		})
+	} else if steps > 100 {
+		clampedSteps = 100
+		clamped = append(clamped, clampedSetting{
+			name:     "steps",
+			original: fmt.Sprintf("%d", steps),
+			clamped:  "100",
+			reason:   "maximum is 100",
+		})
+	}
+
+	// Clamp cfg (0-20)
+	clampedCFG := cfg
+	if cfg < 0 {
+		clampedCFG = 0
+		clamped = append(clamped, clampedSetting{
+			name:     "cfg",
+			original: fmt.Sprintf("%.1f", cfg),
+			clamped:  "0.0",
+			reason:   "minimum is 0",
+		})
+	} else if cfg > 20 {
+		clampedCFG = 20
+		clamped = append(clamped, clampedSetting{
+			name:     "cfg",
+			original: fmt.Sprintf("%.1f", cfg),
+			clamped:  "20.0",
+			reason:   "maximum is 20",
+		})
+	}
+
+	// Clamp seed (>= -1)
+	clampedSeed := seed
+	if seed < -1 {
+		clampedSeed = -1
+		clamped = append(clamped, clampedSetting{
+			name:     "seed",
+			original: fmt.Sprintf("%d", seed),
+			clamped:  "-1",
+			reason:   "minimum is -1",
+		})
+	}
+
+	return clampedSteps, clampedCFG, clampedSeed, clamped
+}
+
+// formatClampedFeedback builds a feedback message for clamped settings.
+// Returns empty string if nothing was clamped.
+func formatClampedFeedback(clamped []clampedSetting) string {
+	if len(clamped) == 0 {
+		return ""
+	}
+
+	parts := make([]string, len(clamped))
+	for i, c := range clamped {
+		parts[i] = fmt.Sprintf("%s %s→%s (%s)", c.name, c.original, c.clamped, c.reason)
+	}
+
+	return "Settings adjusted: " + strings.Join(parts, ", ")
 }
 
 // compactContext compacts conversation history into a single system message
@@ -675,7 +830,8 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get conversation manager for this session
-	manager := s.sessionManager.GetOrCreate(sessionID)
+	session := s.sessionManager.GetSession(sessionID)
+	manager := session.Manager()
 
 	// Update the prompt (this sets the edited flag if changed)
 	manager.UpdatePrompt(prompt)
@@ -716,8 +872,9 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get conversation manager for this session
-	manager := s.sessionManager.GetOrCreate(sessionID)
+	// Get session for this request
+	session := s.sessionManager.GetSession(sessionID)
+	manager := session.Manager()
 
 	// Get prompt from request, fall back to stored prompt
 	// The request includes the prompt to avoid race conditions when the
@@ -759,18 +916,33 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		manager.UpdatePrompt(prompt)
 	}
 
+	// Parse generation settings from form data
+	steps := s.parseSteps(r.FormValue("steps"))
+	cfg := s.parseCFG(r.FormValue("cfg"))
+	seed := s.parseSeed(r.FormValue("seed"))
+
+	// Store settings in session for consistency
+	session.SetGenerationSettings(int(steps), cfg, seed)
+
+	log.Printf("Generation settings for session %s: steps=%d, cfg=%.2f, seed=%d",
+		sessionID, steps, cfg, seed)
+
 	// Generate unique request ID
 	reqID := atomic.AddUint64(&s.requestID, 1)
 
 	// Create protocol request
-	// Use reasonable defaults for now (TODO: make these configurable)
 	// 768x768 balances quality and VRAM usage; 1024x1024 causes OOM during VAE decode
 	width, height := uint32(768), uint32(768)
-	steps := uint32(4)
-	cfgScale := float32(1.0)
-	seed := uint64(0) // 0 = random
+	cfgScale := float32(cfg)
 
-	protoReq, err := protocol.NewSD35GenerateRequest(reqID, prompt, width, height, steps, cfgScale, seed)
+	// Convert seed to uint64 for protocol
+	// seed=-1 means random (use 0 in protocol)
+	seedValue := uint64(0)
+	if seed != -1 {
+		seedValue = uint64(seed)
+	}
+
+	protoReq, err := protocol.NewSD35GenerateRequest(reqID, prompt, width, height, steps, cfgScale, seedValue)
 	if err != nil {
 		log.Printf("Failed to create protocol request for session %s: %v", sessionID, err)
 		s.sendErrorEvent(sessionID, "Failed to create generation request: invalid prompt")
@@ -969,4 +1141,51 @@ func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 // This is only used in tests to inject mock implementations.
 func (s *Server) setOllamaClientForTesting(client ollamaClient) {
 	s.ollamaClient = client
+}
+
+// parseSteps parses the steps value from form data.
+// Returns the parsed value if valid (1-100), otherwise returns default.
+func (s *Server) parseSteps(value string) uint32 {
+	if value == "" {
+		return uint32(s.defaultSteps)
+	}
+
+	// Parse as int64 first to handle negative values
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < 1 || parsed > 100 {
+		return uint32(s.defaultSteps)
+	}
+
+	return uint32(parsed)
+}
+
+// parseCFG parses the CFG scale value from form data.
+// Returns the parsed value if valid (0-20), otherwise returns default.
+func (s *Server) parseCFG(value string) float64 {
+	if value == "" {
+		return s.defaultCFG
+	}
+
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil || parsed < 0 || parsed > 20 {
+		return s.defaultCFG
+	}
+
+	return parsed
+}
+
+// parseSeed parses the seed value from form data.
+// Returns the parsed value if valid (>= -1), otherwise returns default.
+// -1 means random, 0+ are deterministic seeds.
+func (s *Server) parseSeed(value string) int64 {
+	if value == "" {
+		return s.defaultSeed
+	}
+
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < -1 {
+		return s.defaultSeed
+	}
+
+	return parsed
 }

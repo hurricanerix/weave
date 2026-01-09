@@ -80,6 +80,22 @@ const (
 	RoleAssistant = ollama.RoleAssistant
 )
 
+// GenerationSettings holds the current generation parameters for a session.
+// These settings control how images are generated (quality, speed, reproducibility).
+type GenerationSettings struct {
+	// Steps controls the number of generation steps (1-100).
+	// Higher values produce more detailed images but take longer.
+	Steps int
+
+	// CFG (Classifier-Free Guidance) controls prompt adherence (0-20).
+	// Higher values make the image follow the prompt more strictly.
+	CFG float64
+
+	// Seed controls reproducibility.
+	// -1 means random (new seed each time), 0+ means deterministic.
+	Seed int64
+}
+
 // Conversation holds the state for a single conversation session.
 // It tracks the message history, current prompt, and whether the user
 // has edited the prompt since the last agent update.

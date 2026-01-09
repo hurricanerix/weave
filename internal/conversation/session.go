@@ -18,10 +18,14 @@ const (
 	MaxSessions = 1000
 )
 
-// sessionInfo tracks a session and its last activity time.
-type sessionInfo struct {
+// Session tracks a session, its conversation manager, generation settings,
+// and last activity time.
+type Session struct {
 	manager      *Manager
 	lastActivity time.Time
+	// settings stores the current generation settings for this session.
+	// nil means settings have not been set yet (use server defaults).
+	settings *GenerationSettings
 }
 
 // SessionManager provides thread-safe management of conversation sessions.
@@ -38,7 +42,7 @@ type sessionInfo struct {
 // is evicted.
 type SessionManager struct {
 	mu            sync.RWMutex
-	sessions      map[string]*sessionInfo
+	sessions      map[string]*Session
 	cancelCleanup context.CancelFunc
 	cleanupDone   chan struct{}
 }
@@ -49,7 +53,7 @@ func NewSessionManager() *SessionManager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	sm := &SessionManager{
-		sessions:      make(map[string]*sessionInfo),
+		sessions:      make(map[string]*Session),
 		cancelCleanup: cancel,
 		cleanupDone:   make(chan struct{}),
 	}
@@ -60,24 +64,24 @@ func NewSessionManager() *SessionManager {
 	return sm
 }
 
-// GetOrCreate returns the Manager for the given session ID.
-// If the session does not exist, a new Manager is created and stored.
+// GetSession returns the Session for the given session ID.
+// If the session does not exist, a new Session is created and stored.
 // Updates the last activity time for the session.
 //
 // This method is thread-safe and can be called concurrently from multiple
 // goroutines.
-func (sm *SessionManager) GetOrCreate(sessionID string) *Manager {
+func (sm *SessionManager) GetSession(sessionID string) *Session {
 	now := time.Now()
 
 	// Try read lock first for existing sessions (fast path)
 	sm.mu.RLock()
-	if info, ok := sm.sessions[sessionID]; ok {
+	if session, ok := sm.sessions[sessionID]; ok {
 		sm.mu.RUnlock()
 		// Update last activity time
 		sm.mu.Lock()
-		info.lastActivity = now
+		session.lastActivity = now
 		sm.mu.Unlock()
-		return info.manager
+		return session
 	}
 	sm.mu.RUnlock()
 
@@ -87,9 +91,9 @@ func (sm *SessionManager) GetOrCreate(sessionID string) *Manager {
 
 	// Double-check after acquiring write lock (another goroutine may have
 	// created the session while we were waiting for the lock)
-	if info, ok := sm.sessions[sessionID]; ok {
-		info.lastActivity = now
-		return info.manager
+	if session, ok := sm.sessions[sessionID]; ok {
+		session.lastActivity = now
+		return session
 	}
 
 	// Check if we need to evict LRU session
@@ -99,11 +103,24 @@ func (sm *SessionManager) GetOrCreate(sessionID string) *Manager {
 
 	// Create new session
 	manager := NewManager()
-	sm.sessions[sessionID] = &sessionInfo{
+	session := &Session{
 		manager:      manager,
 		lastActivity: now,
 	}
-	return manager
+	sm.sessions[sessionID] = session
+	return session
+}
+
+// GetOrCreate returns the Manager for the given session ID.
+// If the session does not exist, a new Manager is created and stored.
+// Updates the last activity time for the session.
+//
+// This method is thread-safe and can be called concurrently from multiple
+// goroutines.
+//
+// Deprecated: Use GetSession() instead to access both Manager and settings.
+func (sm *SessionManager) GetOrCreate(sessionID string) *Manager {
+	return sm.GetSession(sessionID).manager
 }
 
 // Get returns the Manager for the given session ID, or nil if it doesn't exist.
@@ -181,6 +198,31 @@ func (sm *SessionManager) cleanupInactiveSessions() {
 	if removed > 0 {
 		log.Printf("Cleaned up %d inactive sessions (total: %d)", removed, len(sm.sessions))
 	}
+}
+
+// Manager returns the conversation manager for this session.
+func (s *Session) Manager() *Manager {
+	return s.manager
+}
+
+// SetGenerationSettings updates the generation settings for this session.
+// This stores the current values so they can be retrieved later.
+func (s *Session) SetGenerationSettings(steps int, cfg float64, seed int64) {
+	s.settings = &GenerationSettings{
+		Steps: steps,
+		CFG:   cfg,
+		Seed:  seed,
+	}
+}
+
+// GetGenerationSettings retrieves the current generation settings for this session.
+// If settings have not been set yet, hasSettings will be false and the caller
+// should use server defaults. The returned values are only valid when hasSettings is true.
+func (s *Session) GetGenerationSettings() (steps int, cfg float64, seed int64, hasSettings bool) {
+	if s.settings == nil {
+		return 0, 0, 0, false
+	}
+	return s.settings.Steps, s.settings.CFG, s.settings.Seed, true
 }
 
 // evictLRU removes the least recently used session.

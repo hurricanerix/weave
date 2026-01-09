@@ -135,6 +135,22 @@ func TestParse_CustomFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "seed -1 for random",
+			args: []string{"--seed", "-1"},
+			wantCfg: &Config{
+				Port:        defaultPort,
+				Steps:       defaultSteps,
+				CFG:         defaultCFG,
+				Width:       defaultWidth,
+				Height:      defaultHeight,
+				Seed:        -1,
+				LLMSeed:     defaultLLMSeed,
+				OllamaURL:   defaultOllamaURL,
+				OllamaModel: defaultOllamaModel,
+				LogLevel:    defaultLogLevel,
+			},
+		},
+		{
 			name: "custom ollama settings",
 			args: []string{"--ollama-url", "http://localhost:12345", "--ollama-model", "llama3.2:3b"},
 			wantCfg: &Config{
@@ -277,8 +293,8 @@ func TestParse_Validation(t *testing.T) {
 			wantErr: ErrInvalidHeight,
 		},
 		{
-			name:    "negative seed",
-			args:    []string{"--seed", "-1"},
+			name:    "seed too low",
+			args:    []string{"--seed", "-2"},
 			wantErr: ErrInvalidSeed,
 		},
 		{

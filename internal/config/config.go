@@ -21,7 +21,7 @@ const (
 	defaultCFG         = 1.0
 	defaultWidth       = 1024
 	defaultHeight      = 1024
-	defaultSeed        = 0
+	defaultSeed        = -1
 	defaultLLMSeed     = 0
 	defaultOllamaURL   = "http://localhost:11434"
 	defaultOllamaModel = "mistral:7b"
@@ -41,7 +41,7 @@ const (
 	widthStep  = 64
 	heightStep = 64
 	minLLMSeed = 0
-	minSeed    = 0
+	minSeed    = -1
 )
 
 var (
@@ -55,8 +55,8 @@ var (
 	ErrInvalidWidth = errors.New("width must be between 64 and 2048 and a multiple of 64")
 	// ErrInvalidHeight is returned when height is invalid
 	ErrInvalidHeight = errors.New("height must be between 64 and 2048 and a multiple of 64")
-	// ErrInvalidSeed is returned when seed is negative
-	ErrInvalidSeed = errors.New("seed must be >= 0")
+	// ErrInvalidSeed is returned when seed is less than -1
+	ErrInvalidSeed = errors.New("seed must be >= -1 (use -1 for random)")
 	// ErrInvalidLLMSeed is returned when llm-seed is negative
 	ErrInvalidLLMSeed = errors.New("llm-seed must be >= 0")
 	// ErrInvalidLogLevel is returned when log level is not recognized
@@ -110,7 +110,7 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 	fs.Float64Var(&c.CFG, "cfg", defaultCFG, "CFG (Classifier Free Guidance) scale")
 	fs.IntVar(&c.Width, "width", defaultWidth, "Image width in pixels")
 	fs.IntVar(&c.Height, "height", defaultHeight, "Image height in pixels")
-	fs.Int64Var(&c.Seed, "seed", defaultSeed, "Image generation seed (0 = random)")
+	fs.Int64Var(&c.Seed, "seed", defaultSeed, "Image generation seed (-1 = random)")
 
 	// LLM flags
 	fs.Int64Var(&c.LLMSeed, "llm-seed", defaultLLMSeed, "LLM seed for deterministic responses (0 = random)")
@@ -176,7 +176,7 @@ func (c *Config) validate() error {
 		return ErrInvalidHeight
 	}
 
-	// Validate seed
+	// Validate seed (-1 means random, any value >= -1 is valid)
 	if c.Seed < minSeed {
 		return ErrInvalidSeed
 	}
@@ -210,7 +210,7 @@ FLAGS:
     --cfg <CFG>                CFG scale (default: %.1f)
     --width <WIDTH>            Image width in pixels (default: %d)
     --height <HEIGHT>          Image height in pixels (default: %d)
-    --seed <SEED>              Image generation seed, 0 = random (default: %d)
+    --seed <SEED>              Image generation seed, -1 = random (default: %d)
     --llm-seed <SEED>          LLM seed for deterministic responses, 0 = random (default: %d)
     --ollama-url <URL>         Ollama API endpoint (default: %s)
     --ollama-model <MODEL>     Ollama model name (default: %s)

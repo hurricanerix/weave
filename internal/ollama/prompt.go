@@ -17,7 +17,7 @@ var (
 	ErrInvalidJSON = errors.New("invalid JSON after delimiter")
 
 	// ErrMissingFields indicates the JSON is valid but missing required fields.
-	// Both "prompt" and "ready" fields must be present in the metadata.
+	// All required fields (prompt, ready, steps, cfg, seed) must be present in the metadata.
 	ErrMissingFields = errors.New("JSON missing required fields")
 )
 
@@ -27,12 +27,12 @@ var (
 //
 //	[conversational text]
 //	---
-//	{"prompt": "...", "ready": true/false}
+//	{"prompt": "...", "ready": true/false, "steps": N, "cfg": X.X, "seed": N}
 //
 // WHY THIS FORMAT:
 // This structured format allows us to:
 // 1. Display conversational text in the chat UI (user sees friendly dialog)
-// 2. Extract structured metadata (prompt, ready flag) for automation
+// 2. Extract structured metadata (prompt, ready flag, generation settings) for automation
 // 3. Detect format errors reliably (missing delimiter or invalid JSON)
 //
 // WHY THREE ERROR TYPES:
@@ -47,7 +47,8 @@ var (
 //
 // ErrMissingFields - The JSON is valid but missing required fields.
 // This means the LLM generated syntactically correct JSON but didn't include
-// "prompt" or "ready" fields. This violates the schema. Recoverable via retry.
+// all required fields (prompt, ready, steps, cfg, seed). This violates the schema.
+// Recoverable via retry.
 //
 // WHY SEARCH FROM END:
 // We search for the delimiter from the end of the response because the
@@ -55,13 +56,13 @@ var (
 // ASCII art, etc.). The LAST occurrence of "---" on its own line is the delimiter.
 //
 // WHY VALIDATE FIELD PRESENCE:
-// Go's json.Unmarshal sets missing fields to zero values (empty string, false).
+// Go's json.Unmarshal sets missing fields to zero values (empty string, false, 0).
 // We need to distinguish between:
-// - {"prompt": "", "ready": false} - Valid (LLM is asking questions)
+// - {"prompt": "", "ready": false, "steps": 0, "cfg": 0.0, "seed": 0} - Valid (explicit zero values)
 // - {} - Invalid (missing required fields)
 //
 // Without the map check, both would unmarshal successfully but have different
-// semantics. The map check ensures the LLM explicitly provided both fields.
+// semantics. The map check ensures the LLM explicitly provided all five fields.
 func parseResponse(response string) (string, LLMMetadata, error) {
 	// Find the delimiter that separates conversational text from JSON.
 	// WHY SPLIT BY NEWLINES: The delimiter must be on its own line to avoid
@@ -114,7 +115,7 @@ func parseResponse(response string) (string, LLMMetadata, error) {
 	// Validate that the JSON contains the required fields.
 	// WHY DOUBLE UNMARSHAL: Go's json.Unmarshal sets missing fields to zero values.
 	// We need to distinguish between:
-	// - {"prompt": "", "ready": false} - Valid (LLM explicitly provided fields)
+	// - {"prompt": "", "ready": false, "steps": 0, "cfg": 0.0, "seed": 0} - Valid (LLM explicitly provided fields)
 	// - {"other": "data"} - Invalid (missing required fields, but unmarshals to zero values)
 	//
 	// The map check tells us which fields were actually present in the JSON,
@@ -126,14 +127,18 @@ func parseResponse(response string) (string, LLMMetadata, error) {
 		return "", LLMMetadata{}, ErrInvalidJSON
 	}
 
-	// Check that both required fields are present in the JSON
-	// WHY REQUIRE BOTH FIELDS: The "ready" flag tells us if the LLM has enough
+	// Check that all required fields are present in the JSON
+	// WHY REQUIRE ALL FIELDS: The "ready" flag tells us if the LLM has enough
 	// information to generate. The "prompt" field contains the generation prompt
-	// (empty if not ready yet). Both are required for the system to function.
-	// Missing either field means the LLM didn't follow the schema.
+	// (empty if not ready yet). The "steps", "cfg", and "seed" fields specify
+	// generation settings. All five fields are required for the system to function.
+	// Missing any field means the LLM didn't follow the schema.
 	_, hasPrompt := rawMap["prompt"]
 	_, hasReady := rawMap["ready"]
-	if !hasPrompt || !hasReady {
+	_, hasSteps := rawMap["steps"]
+	_, hasCFG := rawMap["cfg"]
+	_, hasSeed := rawMap["seed"]
+	if !hasPrompt || !hasReady || !hasSteps || !hasCFG || !hasSeed {
 		return "", LLMMetadata{}, ErrMissingFields
 	}
 
