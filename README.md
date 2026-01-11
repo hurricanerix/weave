@@ -4,7 +4,9 @@
 
 Diffusion-based image generation through conversation rather than configuration.
 
-:warning: This project is an early prototype.  There are no gurantees that it works correctly.  See the [docs](./docs) for more details about the project.
+:warning: This project is an early prototype :warning:
+
+There are no gurantees that it works correctly.  See the [docs](./docs) for more details about the project.
 
 ## Design Principles
 
