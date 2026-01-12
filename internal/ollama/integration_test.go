@@ -78,7 +78,7 @@ func TestIntegrationChatStreaming(t *testing.T) {
 	}
 
 	// Verify metadata was parsed
-	t.Logf("Metadata: ready=%v, prompt=%q", result.Metadata.Ready, result.Metadata.Prompt)
+	t.Logf("Metadata: prompt=%q", result.Metadata.Prompt)
 }
 
 func TestIntegrationMultiTurnConversation(t *testing.T) {
@@ -135,12 +135,12 @@ func TestIntegrationPromptExtraction(t *testing.T) {
 	}
 
 	t.Logf("Response: %s", result.Response)
-	t.Logf("Metadata: ready=%v, prompt=%q", result.Metadata.Ready, result.Metadata.Prompt)
+	t.Logf("Metadata: prompt=%q", result.Metadata.Prompt)
 
 	// The agent might ask questions or provide a prompt
 	// This test verifies metadata parsing works
-	if result.Metadata.Ready && result.Metadata.Prompt != "" {
-		t.Logf("Agent is ready with prompt: %q", result.Metadata.Prompt)
+	if result.Metadata.Prompt != "" {
+		t.Logf("Agent provided prompt: %q", result.Metadata.Prompt)
 		// Verify prompt is reasonable length (should be under 200 chars per system prompt)
 		if len(result.Metadata.Prompt) > 200 {
 			t.Errorf("Prompt too long: %d chars (max 200)", len(result.Metadata.Prompt))
@@ -178,7 +178,7 @@ func TestIntegrationSeedDeterminism(t *testing.T) {
 	if result1.Response != result2.Response {
 		t.Errorf("Expected identical responses with same seed:\n  Response 1: %q\n  Response 2: %q", result1.Response, result2.Response)
 	}
-	if result1.Metadata.Prompt != result2.Metadata.Prompt || result1.Metadata.Ready != result2.Metadata.Ready {
+	if result1.Metadata.Prompt != result2.Metadata.Prompt {
 		t.Errorf("Expected identical metadata with same seed")
 	}
 }
@@ -360,14 +360,14 @@ func TestIntegrationMistral7BMultiTurn(t *testing.T) {
 
 				// Verify JSON parsed successfully (this is implicit - if parsing failed,
 				// Chat() would have returned an error, but we verify metadata is populated)
-				t.Logf("Turn %d metadata: ready=%v, prompt=%q",
-					i+1, result.Metadata.Ready, result.Metadata.Prompt)
+				t.Logf("Turn %d metadata: generate_image=%v, prompt=%q",
+					i+1, result.Metadata.GenerateImage, result.Metadata.Prompt)
 
 				// Verify conversational text excludes JSON portion
 				if strings.Contains(result.Response, "{") || strings.Contains(result.Response, "}") {
 					// This might be legitimate if the LLM uses braces in conversational text,
 					// but check that it's not the JSON metadata
-					if strings.Contains(result.Response, "\"prompt\"") || strings.Contains(result.Response, "\"ready\"") {
+					if strings.Contains(result.Response, "\"prompt\"") || false {
 						t.Errorf("Turn %d: conversational text contains JSON metadata\nResponse: %s",
 							i+1, result.Response)
 					}
@@ -380,7 +380,7 @@ func TestIntegrationMistral7BMultiTurn(t *testing.T) {
 				}
 
 				// Check if we got a ready prompt
-				if result.Metadata.Ready && result.Metadata.Prompt != "" {
+				if result.Metadata.Prompt != "" {
 					foundReadyPrompt = true
 					t.Logf("Turn %d: Agent ready with prompt: %q", i+1, result.Metadata.Prompt)
 
@@ -465,10 +465,10 @@ func TestIntegrationMistral7BDelimiterConsistency(t *testing.T) {
 			}
 
 			// Verify JSON parsed successfully
-			t.Logf("Metadata: ready=%v, prompt=%q", result.Metadata.Ready, result.Metadata.Prompt)
+			t.Logf("Metadata: prompt=%q", result.Metadata.Prompt)
 
 			// Verify conversational text doesn't include JSON
-			if strings.Contains(result.Response, "\"prompt\"") || strings.Contains(result.Response, "\"ready\"") {
+			if strings.Contains(result.Response, "\"prompt\"") || false {
 				t.Errorf("Conversational text contains JSON metadata\nResponse: %s", result.Response)
 			}
 		})
@@ -503,9 +503,9 @@ func TestIntegrationMistral7BPromptExtraction(t *testing.T) {
 			t.Fatalf("Turn %d failed: %v", i+1, err)
 		}
 
-		t.Logf("Turn %d: ready=%v, prompt=%q", i+1, result.Metadata.Ready, result.Metadata.Prompt)
+		t.Logf("Turn %d: prompt=%q", i+1, result.Metadata.Prompt)
 
-		if result.Metadata.Ready && result.Metadata.Prompt != "" {
+		if result.Metadata.Prompt != "" {
 			// Success! Got a ready prompt
 			break
 		}
@@ -518,13 +518,13 @@ func TestIntegrationMistral7BPromptExtraction(t *testing.T) {
 	}
 
 	// Verify we eventually got a ready prompt
-	if !result.Metadata.Ready || result.Metadata.Prompt == "" {
+	if result.Metadata.Prompt == "" {
 		t.Skipf("LLM did not produce ready prompt in %d turns (non-deterministic behavior)", maxTurns)
 	}
 
 	// Verify prompt characteristics
 	if len(result.Metadata.Prompt) == 0 {
-		t.Error("Prompt is empty despite ready=true")
+		t.Error("Prompt is empty")
 	}
 	if len(result.Metadata.Prompt) > 200 {
 		t.Errorf("Prompt exceeds 200 chars: %d chars", len(result.Metadata.Prompt))

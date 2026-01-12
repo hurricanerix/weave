@@ -412,7 +412,7 @@ func TestChatSuccess(t *testing.T) {
 			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: " there"}, Done: false},
 			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "!\n"}, Done: false},
 			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "---\n"}, Done: false},
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "a test prompt", "ready": true, "steps": 28, "cfg": 7.5, "seed": 42}`}, Done: true},
+			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "a test prompt", "generate_image": true, "steps": 28, "cfg": 7.5, "seed": 42}`}, Done: true},
 		}
 
 		for _, resp := range responses {
@@ -452,16 +452,13 @@ func TestChatSuccess(t *testing.T) {
 	}
 
 	// Check metadata
-	if !result.Metadata.Ready {
-		t.Error("Metadata.Ready = false, want true")
-	}
 	expectedPrompt := "a test prompt"
 	if result.Metadata.Prompt != expectedPrompt {
 		t.Errorf("Metadata.Prompt = %q, want %q", result.Metadata.Prompt, expectedPrompt)
 	}
 
 	// Check RawResponse includes full response (text + delimiter + JSON)
-	expectedRawResponse := "Hello there!\n---\n{\"prompt\": \"a test prompt\", \"ready\": true, \"steps\": 28, \"cfg\": 7.5, \"seed\": 42}"
+	expectedRawResponse := "Hello there!\n---\n{\"prompt\": \"a test prompt\", \"generate_image\": true, \"steps\": 28, \"cfg\": 7.5, \"seed\": 42}"
 	if result.RawResponse != expectedRawResponse {
 		t.Errorf("RawResponse = %q, want %q", result.RawResponse, expectedRawResponse)
 	}
@@ -496,7 +493,7 @@ func TestChatWithSeed(t *testing.T) {
 		// Send minimal response with delimiter and JSON
 		responses := []ChatResponse{
 			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "ok\n---\n"}, Done: false},
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "", "ready": false, "steps": 20, "cfg": 7.0, "seed": 0}`}, Done: true},
+			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "", "generate_image": false, "steps": 20, "cfg": 7.0, "seed": 0}`}, Done: true},
 		}
 		for _, resp := range responses {
 			data, _ := json.Marshal(resp)
@@ -544,7 +541,7 @@ func TestChatWithoutSeed(t *testing.T) {
 		// Send minimal response with delimiter and JSON
 		responses := []ChatResponse{
 			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "ok\n---\n"}, Done: false},
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "", "ready": false, "steps": 20, "cfg": 7.0, "seed": 0}`}, Done: true},
+			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "", "generate_image": false, "steps": 20, "cfg": 7.0, "seed": 0}`}, Done: true},
 		}
 		for _, resp := range responses {
 			data, _ := json.Marshal(resp)
@@ -757,7 +754,7 @@ func TestChatNilCallback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		responses := []ChatResponse{
 			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "ok\n---\n"}, Done: false},
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "test", "ready": true, "steps": 28, "cfg": 7.5, "seed": 42}`}, Done: true},
+			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "test", "generate_image": true, "steps": 28, "cfg": 7.5, "seed": 42}`}, Done: true},
 		}
 		for _, resp := range responses {
 			data, _ := json.Marshal(resp)
@@ -784,15 +781,12 @@ func TestChatNilCallback(t *testing.T) {
 	if result.Response != "ok" {
 		t.Errorf("Chat() response = %q, want %q", result.Response, "ok")
 	}
-	if !result.Metadata.Ready {
-		t.Error("Metadata.Ready = false, want true")
-	}
 	if result.Metadata.Prompt != "test" {
 		t.Errorf("Metadata.Prompt = %q, want %q", result.Metadata.Prompt, "test")
 	}
 
 	// Verify RawResponse contains full response
-	expectedRaw := "ok\n---\n{\"prompt\": \"test\", \"ready\": true, \"steps\": 28, \"cfg\": 7.5, \"seed\": 42}"
+	expectedRaw := "ok\n---\n{\"prompt\": \"test\", \"generate_image\": true, \"steps\": 28, \"cfg\": 7.5, \"seed\": 42}"
 	if result.RawResponse != expectedRaw {
 		t.Errorf("RawResponse = %q, want %q", result.RawResponse, expectedRaw)
 	}
@@ -970,18 +964,18 @@ func TestParseStreamingResponseDelimiterDetection(t *testing.T) {
 			name: "delimiter at token boundary",
 			input: `{"model":"test","message":{"role":"assistant","content":"Hello there"},"done":false}
 {"model":"test","message":{"role":"assistant","content":"---"},"done":false}
-{"model":"test","message":{"role":"assistant","content":"{\"prompt\":\"\",\"ready\":false}"},"done":true}
+{"model":"test","message":{"role":"assistant","content":"{\"prompt\":\"\",\"generate_image\":false}"},"done":true}
 `,
-			wantResponse: "Hello there---{\"prompt\":\"\",\"ready\":false}",
+			wantResponse: "Hello there---{\"prompt\":\"\",\"generate_image\":false}",
 			wantTokens:   []string{"Hello there"}, // Callback stops before delimiter
 			wantErr:      false,
 		},
 		{
 			name: "delimiter in middle of token",
 			input: `{"model":"test","message":{"role":"assistant","content":"Hello"},"done":false}
-{"model":"test","message":{"role":"assistant","content":" there\n---\n{\"prompt\":\"\",\"ready\":false}"},"done":true}
+{"model":"test","message":{"role":"assistant","content":" there\n---\n{\"prompt\":\"\",\"generate_image\":false}"},"done":true}
 `,
-			wantResponse: "Hello there\n---\n{\"prompt\":\"\",\"ready\":false}",
+			wantResponse: "Hello there\n---\n{\"prompt\":\"\",\"generate_image\":false}",
 			wantTokens:   []string{"Hello", " there\n"}, // Callback stops at delimiter boundary
 			wantErr:      false,
 		},
@@ -999,9 +993,9 @@ func TestParseStreamingResponseDelimiterDetection(t *testing.T) {
 			input: `{"model":"test","message":{"role":"assistant","content":"Ready to generate!\n"},"done":false}
 {"model":"test","message":{"role":"assistant","content":"---"},"done":false}
 {"model":"test","message":{"role":"assistant","content":"\n"},"done":false}
-{"model":"test","message":{"role":"assistant","content":"{\"prompt\":\"a cat\",\"ready\":true}"},"done":true}
+{"model":"test","message":{"role":"assistant","content":"{\"prompt\":\"a cat\",\"generate_image\":true}"},"done":true}
 `,
-			wantResponse: "Ready to generate!\n---\n{\"prompt\":\"a cat\",\"ready\":true}",
+			wantResponse: "Ready to generate!\n---\n{\"prompt\":\"a cat\",\"generate_image\":true}",
 			wantTokens:   []string{"Ready to generate!\n"}, // Stops before delimiter
 			wantErr:      false,
 		},
@@ -1084,7 +1078,7 @@ func TestParseStreamingResponseDelimiterWithCallback(t *testing.T) {
 {"model":"test","message":{"role":"assistant","content":"Let me help.\n"},"done":false}
 {"model":"test","message":{"role":"assistant","content":"---"},"done":false}
 {"model":"test","message":{"role":"assistant","content":"\n{\"prompt\":\"a test\","},"done":false}
-{"model":"test","message":{"role":"assistant","content":"\"ready\":true}"},"done":true}
+{"model":"test","message":{"role":"assistant","content":"\"generate_image\":true}"},"done":true}
 `
 
 	var tokens []string
@@ -1106,7 +1100,7 @@ func TestParseStreamingResponseDelimiterWithCallback(t *testing.T) {
 	}
 
 	// Full response should include everything
-	expectedResponse := "Sure! Let me help.\n---\n{\"prompt\":\"a test\",\"ready\":true}"
+	expectedResponse := "Sure! Let me help.\n---\n{\"prompt\":\"a test\",\"generate_image\":true}"
 	if response != expectedResponse {
 		t.Errorf("response = %q, want %q", response, expectedResponse)
 	}

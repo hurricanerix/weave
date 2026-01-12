@@ -388,9 +388,9 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract prompt from metadata (only if ready and non-empty)
+	// Extract prompt from metadata (only if non-empty)
 	prompt := ""
-	if result.Metadata.Ready && result.Metadata.Prompt != "" {
+	if result.Metadata.Prompt != "" {
 		prompt = result.Metadata.Prompt
 	}
 
@@ -429,6 +429,31 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		_ = s.broker.SendEvent(sessionID, EventAgentToken, map[string]string{
 			"token": "\n\n[" + feedback + "]",
 		})
+	}
+
+	// Trigger generation if agent requested it
+	if result.Metadata.GenerateImage {
+		log.Printf("Agent requested auto-generation for session %s", sessionID)
+
+		// Check generation rate limit before triggering
+		if !s.rateLimiter.allowGenerate(sessionID) {
+			log.Printf("Rate limit exceeded for session %s (agent-triggered generation)", sessionID)
+			s.sendErrorEvent(sessionID, "Too many generation requests. Please wait a moment.")
+		} else {
+			// Use session's current prompt and settings
+			currentPrompt := session.Manager().GetCurrentPrompt()
+			if currentPrompt != "" {
+				// Notify UI that generation is starting
+				_ = s.broker.SendEvent(sessionID, EventGenerationStarted, map[string]string{
+					"source": "agent",
+				})
+				// Ignore error return - errors are already sent via SSE events
+				_ = s.generateImage(r.Context(), sessionID, currentPrompt, clampedSteps, clampedCFG, clampedSeed)
+			} else {
+				log.Printf("Skipping auto-generation for session %s: empty prompt", sessionID)
+				s.sendErrorEvent(sessionID, "Cannot generate: no prompt available")
+			}
+		}
 	}
 
 	// Send agent-done event
@@ -632,7 +657,7 @@ Respond with ONLY JSON (no conversational text before the delimiter).
 Use this exact format:
 
 ---
-{"prompt": "detailed image generation prompt based on user's request", "ready": true}
+{"prompt": "detailed image generation prompt based on user's request", "generate_image": true, "steps": 4, "cfg": 1.0, "seed": -1}
 
 CRITICAL: Your response must be ONLY the delimiter "---" followed by the JSON.
 Do not include any conversational text before the delimiter.`, content)
@@ -693,12 +718,12 @@ You MUST end EVERY response with "---" on its own line, followed by JSON metadat
 CORRECT EXAMPLE:
 What kind of cat? What style of hat?
 ---
-{"prompt": "", "ready": false}
+{"prompt": "", "generate_image": false}
 
 ANOTHER CORRECT EXAMPLE:
 Perfect! Generating your image now.
 ---
-{"prompt": "tabby cat wearing wizard hat", "ready": true}
+{"prompt": "tabby cat wearing wizard hat", "generate_image": true}
 
 Please respond again with the correct format.`
 
@@ -844,9 +869,172 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `{"status":"ok","session_id":"%s"}`, sessionID)
 }
 
+// generateImage performs image generation using the compute daemon.
+// It handles the entire generation flow: protocol request creation, daemon communication,
+// response handling, and SSE event sending. This method is called from both handleGenerate
+// (manual button click) and handleChat (agent-triggered generation).
+//
+// Parameters:
+//   - ctx: Context for cancellation and timeout
+//   - sessionID: Session ID for SSE event routing
+//   - prompt: Image generation prompt (already validated and truncated)
+//   - steps: Number of inference steps (1-100)
+//   - cfg: CFG scale (0-20)
+//   - seed: Random seed (-1 for random, >= 0 for deterministic)
+//
+// Returns:
+//   - error: Connection or generation error (for HTTP status code handling in handleGenerate)
+func (s *Server) generateImage(ctx context.Context, sessionID string, prompt string, steps int, cfg float64, seed int64) error {
+	// Truncate prompt if it exceeds maximum length
+	// This works around the CLIP/T5 token mismatch bug in stable-diffusion.cpp
+	// where T5 producing more tokens than CLIP causes GGML assertion failures.
+	// See docs/bugs/003-long-prompt-crash.md for details.
+	promptBytes := []byte(prompt)
+	if len(promptBytes) > int(protocol.SD35MaxPromptLen) {
+		originalLen := len(promptBytes)
+
+		// Truncate at UTF-8 character boundary to avoid corrupting multi-byte characters
+		maxLen := int(protocol.SD35MaxPromptLen)
+		for maxLen > 0 && !utf8.RuneStart(promptBytes[maxLen]) {
+			maxLen--
+		}
+
+		prompt = string(promptBytes[:maxLen])
+		log.Printf("Truncated prompt from %d to %d bytes for session %s",
+			originalLen, len(prompt), sessionID)
+	}
+
+	log.Printf("Generation settings for session %s: steps=%d, cfg=%.2f, seed=%d",
+		sessionID, steps, cfg, seed)
+
+	// Generate unique request ID
+	reqID := atomic.AddUint64(&s.requestID, 1)
+
+	// Create protocol request
+	// 768x768 balances quality and VRAM usage; 1024x1024 causes OOM during VAE decode
+	width, height := uint32(768), uint32(768)
+	cfgScale := float32(cfg)
+
+	// Convert seed to uint64 for protocol
+	// seed=-1 means random (use 0 in protocol)
+	seedValue := uint64(0)
+	if seed != -1 {
+		seedValue = uint64(seed)
+	}
+
+	protoReq, err := protocol.NewSD35GenerateRequest(reqID, prompt, width, height, uint32(steps), cfgScale, seedValue)
+	if err != nil {
+		log.Printf("Failed to create protocol request for session %s: %v", sessionID, err)
+		s.sendErrorEvent(sessionID, "Failed to create generation request: invalid prompt")
+		return fmt.Errorf("failed to create protocol request: %w", err)
+	}
+
+	// Encode request
+	requestData, err := protocol.EncodeSD35GenerateRequest(protoReq)
+	if err != nil {
+		log.Printf("Failed to encode protocol request for session %s: %v", sessionID, err)
+		s.sendErrorEvent(sessionID, "Failed to encode generation request")
+		return fmt.Errorf("failed to encode request: %w", err)
+	}
+
+	// Connect to compute daemon
+	genCtx, cancel := context.WithTimeout(ctx, 120*time.Second) // 2 min timeout for generation
+	defer cancel()
+
+	conn, err := client.Connect(genCtx)
+	if err != nil {
+		log.Printf("Failed to connect to compute daemon for session %s: %v", sessionID, err)
+		if errors.Is(err, client.ErrDaemonNotRunning) {
+			s.sendErrorEvent(sessionID, "Image generation is not available (weave-compute not running)")
+		} else if errors.Is(err, client.ErrXDGNotSet) {
+			s.sendErrorEvent(sessionID, "Image generation is not available (XDG_RUNTIME_DIR not set)")
+		} else {
+			s.sendErrorEvent(sessionID, "Failed to connect to image generation service")
+		}
+		return fmt.Errorf("failed to connect to daemon: %w", err)
+	}
+	defer conn.Close()
+
+	// Send request and receive response
+	responseData, err := conn.Send(genCtx, requestData)
+	if err != nil {
+		log.Printf("Failed to send request to compute daemon for session %s: %v", sessionID, err)
+		if errors.Is(err, client.ErrConnectionClosed) {
+			s.sendErrorEvent(sessionID, "Connection to image generation service was closed")
+		} else if errors.Is(err, client.ErrReadTimeout) {
+			s.sendErrorEvent(sessionID, "Image generation timed out. Try a simpler prompt.")
+		} else {
+			s.sendErrorEvent(sessionID, "Failed to generate image")
+		}
+		return fmt.Errorf("failed to send request: %w", err)
+	}
+
+	// Decode response
+	response, err := protocol.DecodeResponse(responseData)
+	if err != nil {
+		log.Printf("Failed to decode response for session %s: %v", sessionID, err)
+		s.sendErrorEvent(sessionID, "Failed to decode image generation response")
+		return fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	// Handle response type
+	switch resp := response.(type) {
+	case *protocol.SD35GenerateResponse:
+		// Success - convert raw pixels to PNG
+		var format image.PixelFormat
+		if resp.Channels == 3 {
+			format = image.FormatRGB
+		} else {
+			format = image.FormatRGBA
+		}
+
+		pngData, err := image.EncodePNG(int(resp.ImageWidth), int(resp.ImageHeight), resp.ImageData, format)
+		if err != nil {
+			log.Printf("Failed to encode PNG for session %s: %v", sessionID, err)
+			s.sendErrorEvent(sessionID, "Failed to encode generated image")
+			return fmt.Errorf("failed to encode PNG: %w", err)
+		}
+
+		// Store image
+		imageID, err := s.imageStorage.Store(pngData, int(resp.ImageWidth), int(resp.ImageHeight))
+		if err != nil {
+			log.Printf("Failed to store image for session %s: %v", sessionID, err)
+			if errors.Is(err, image.ErrImageTooLarge) {
+				s.sendErrorEvent(sessionID, "Image is too large to store")
+			} else {
+				s.sendErrorEvent(sessionID, "Failed to store image. Please try again.")
+			}
+			return fmt.Errorf("failed to store image: %w", err)
+		}
+
+		log.Printf("Generated image for session %s: %dx%d in %dms",
+			sessionID, resp.ImageWidth, resp.ImageHeight, resp.GenerationTime)
+
+		// Send image-ready event
+		_ = s.broker.SendEvent(sessionID, EventImageReady, map[string]interface{}{
+			"url":    fmt.Sprintf("/images/%s.png", imageID),
+			"width":  resp.ImageWidth,
+			"height": resp.ImageHeight,
+		})
+
+	case *protocol.ErrorResponse:
+		log.Printf("Compute daemon error for session %s: code=%d, msg=%s",
+			sessionID, resp.ErrorCode, resp.ErrorMessage)
+		s.sendErrorEvent(sessionID, fmt.Sprintf("Image generation failed: %s", resp.ErrorMessage))
+		return fmt.Errorf("daemon error: %s", resp.ErrorMessage)
+
+	default:
+		log.Printf("Unexpected response type for session %s: %T", sessionID, response)
+		s.sendErrorEvent(sessionID, "Unexpected response from image generation service")
+		return fmt.Errorf("unexpected response type: %T", response)
+	}
+
+	return nil
+}
+
 // handleGenerate handles image generation requests.
-// It reads the current prompt from the conversation manager and sends a request
-// to the compute daemon. The response (image or error) is sent via SSE.
+// It reads the current prompt from the conversation manager and triggers generation
+// using the shared generateImage helper. The response (image or error) is sent via SSE.
 func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	sessionID := GetSessionID(r.Context())
 
@@ -896,26 +1084,6 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Truncate prompt if it exceeds maximum length
-	// This works around the CLIP/T5 token mismatch bug in stable-diffusion.cpp
-	// where T5 producing more tokens than CLIP causes GGML assertion failures.
-	// See docs/bugs/003-long-prompt-crash.md for details.
-	promptBytes := []byte(prompt)
-	if len(promptBytes) > int(protocol.SD35MaxPromptLen) {
-		originalLen := len(promptBytes)
-
-		// Truncate at UTF-8 character boundary to avoid corrupting multi-byte characters
-		maxLen := int(protocol.SD35MaxPromptLen)
-		for maxLen > 0 && !utf8.RuneStart(promptBytes[maxLen]) {
-			maxLen--
-		}
-
-		prompt = string(promptBytes[:maxLen])
-		log.Printf("Truncated prompt from %d to %d bytes for session %s",
-			originalLen, len(prompt), sessionID)
-		manager.UpdatePrompt(prompt)
-	}
-
 	// Parse generation settings from form data
 	steps := s.parseSteps(r.FormValue("steps"))
 	cfg := s.parseCFG(r.FormValue("cfg"))
@@ -924,156 +1092,20 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	// Store settings in session for consistency
 	session.SetGenerationSettings(int(steps), cfg, seed)
 
-	log.Printf("Generation settings for session %s: steps=%d, cfg=%.2f, seed=%d",
-		sessionID, steps, cfg, seed)
-
-	// Generate unique request ID
-	reqID := atomic.AddUint64(&s.requestID, 1)
-
-	// Create protocol request
-	// 768x768 balances quality and VRAM usage; 1024x1024 causes OOM during VAE decode
-	width, height := uint32(768), uint32(768)
-	cfgScale := float32(cfg)
-
-	// Convert seed to uint64 for protocol
-	// seed=-1 means random (use 0 in protocol)
-	seedValue := uint64(0)
-	if seed != -1 {
-		seedValue = uint64(seed)
-	}
-
-	protoReq, err := protocol.NewSD35GenerateRequest(reqID, prompt, width, height, steps, cfgScale, seedValue)
+	// Call shared generation logic
+	err := s.generateImage(r.Context(), sessionID, prompt, int(steps), cfg, seed)
 	if err != nil {
-		log.Printf("Failed to create protocol request for session %s: %v", sessionID, err)
-		s.sendErrorEvent(sessionID, "Failed to create generation request: invalid prompt")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		fmt.Fprintf(w, `{"status":"error","message":"invalid prompt"}`)
-		return
-	}
-
-	// Encode request
-	requestData, err := protocol.EncodeSD35GenerateRequest(protoReq)
-	if err != nil {
-		log.Printf("Failed to encode protocol request for session %s: %v", sessionID, err)
-		s.sendErrorEvent(sessionID, "Failed to encode generation request")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, `{"status":"error","message":"encoding failed"}`)
-		return
-	}
-
-	// Connect to compute daemon
-	ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second) // 2 min timeout for generation
-	defer cancel()
-
-	conn, err := client.Connect(ctx)
-	if err != nil {
-		log.Printf("Failed to connect to compute daemon for session %s: %v", sessionID, err)
-		if errors.Is(err, client.ErrDaemonNotRunning) {
-			s.sendErrorEvent(sessionID, "Image generation is not available (weave-compute not running)")
-		} else if errors.Is(err, client.ErrXDGNotSet) {
-			s.sendErrorEvent(sessionID, "Image generation is not available (XDG_RUNTIME_DIR not set)")
+		// Error already sent via SSE and logged
+		// Determine appropriate HTTP status code based on error type
+		var statusCode int
+		if errors.Is(err, client.ErrDaemonNotRunning) || errors.Is(err, client.ErrXDGNotSet) {
+			statusCode = http.StatusServiceUnavailable
 		} else {
-			s.sendErrorEvent(sessionID, "Failed to connect to image generation service")
+			statusCode = http.StatusInternalServerError
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprintf(w, `{"status":"error","message":"daemon not available"}`)
-		return
-	}
-	defer conn.Close()
-
-	// Send request and receive response
-	responseData, err := conn.Send(ctx, requestData)
-	if err != nil {
-		log.Printf("Failed to send request to compute daemon for session %s: %v", sessionID, err)
-		if errors.Is(err, client.ErrConnectionClosed) {
-			s.sendErrorEvent(sessionID, "Connection to image generation service was closed")
-		} else if errors.Is(err, client.ErrReadTimeout) {
-			s.sendErrorEvent(sessionID, "Image generation timed out. Try a simpler prompt.")
-		} else {
-			s.sendErrorEvent(sessionID, "Failed to generate image")
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(statusCode)
 		fmt.Fprintf(w, `{"status":"error","message":"generation failed"}`)
-		return
-	}
-
-	// Decode response
-	response, err := protocol.DecodeResponse(responseData)
-	if err != nil {
-		log.Printf("Failed to decode response for session %s: %v", sessionID, err)
-		s.sendErrorEvent(sessionID, "Failed to decode image generation response")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, `{"status":"error","message":"decode failed"}`)
-		return
-	}
-
-	// Handle response type
-	switch resp := response.(type) {
-	case *protocol.SD35GenerateResponse:
-		// Success! Convert raw pixels to PNG
-		var format image.PixelFormat
-		if resp.Channels == 3 {
-			format = image.FormatRGB
-		} else {
-			format = image.FormatRGBA
-		}
-
-		pngData, err := image.EncodePNG(int(resp.ImageWidth), int(resp.ImageHeight), resp.ImageData, format)
-		if err != nil {
-			log.Printf("Failed to encode PNG for session %s: %v", sessionID, err)
-			s.sendErrorEvent(sessionID, "Failed to encode generated image")
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprintf(w, `{"status":"error","message":"encoding failed"}`)
-			return
-		}
-
-		// Store image
-		imageID, err := s.imageStorage.Store(pngData, int(resp.ImageWidth), int(resp.ImageHeight))
-		if err != nil {
-			log.Printf("Failed to store image for session %s: %v", sessionID, err)
-			if errors.Is(err, image.ErrImageTooLarge) {
-				s.sendErrorEvent(sessionID, "Image is too large to store")
-			} else {
-				s.sendErrorEvent(sessionID, "Failed to store image. Please try again.")
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusInternalServerError)
-			fmt.Fprintf(w, `{"status":"error","message":"storage failed"}`)
-			return
-		}
-
-		log.Printf("Generated image for session %s: %dx%d in %dms",
-			sessionID, resp.ImageWidth, resp.ImageHeight, resp.GenerationTime)
-
-		// Send image-ready event
-		imageURL := fmt.Sprintf("/images/%s.png", imageID)
-		s.broker.SendEvent(sessionID, EventImageReady, map[string]interface{}{
-			"url":    imageURL,
-			"width":  resp.ImageWidth,
-			"height": resp.ImageHeight,
-		})
-
-	case *protocol.ErrorResponse:
-		log.Printf("Compute daemon error for session %s: code=%d, msg=%s",
-			sessionID, resp.ErrorCode, resp.ErrorMessage)
-		s.sendErrorEvent(sessionID, fmt.Sprintf("Image generation failed: %s", resp.ErrorMessage))
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, `{"status":"error","message":"generation failed"}`)
-		return
-
-	default:
-		log.Printf("Unexpected response type for session %s: %T", sessionID, response)
-		s.sendErrorEvent(sessionID, "Unexpected response from image generation service")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, `{"status":"error","message":"unexpected response"}`)
 		return
 	}
 

@@ -43,6 +43,12 @@ const (
 	// Example: {"steps": 20, "cfg": 5.0, "seed": -1}
 	EventSettingsUpdate = "settings-update"
 
+	// EventGenerationStarted indicates image generation has started.
+	// Sent before agent-triggered generation so the UI can show progress.
+	// Data schema: {"source": string}
+	// Example: {"source": "agent"} or {"source": "manual"}
+	EventGenerationStarted = "generation-started"
+
 	// MaxConnections is the maximum number of concurrent SSE connections.
 	MaxConnections = 1000
 )

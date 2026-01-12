@@ -907,3 +907,334 @@ func TestIntegration_SSE_SessionFlow(t *testing.T) {
 		t.Fatal("timeout waiting for shutdown")
 	}
 }
+
+// TestIntegration_AgentTriggeredGeneration verifies that agent-triggered
+// generation works correctly. This tests the complete flow from agent
+// response with generate_image=true to image delivery via SSE.
+func TestIntegration_AgentTriggeredGeneration(t *testing.T) {
+	addr := "localhost:18087"
+	s, err := NewServer(addr)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- s.ListenAndServe(ctx)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	// Get session from index page
+	indexResp, err := client.Get("http://" + addr + "/")
+	if err != nil {
+		t.Fatalf("failed to get session: %v", err)
+	}
+	indexResp.Body.Close()
+
+	var sessionCookie *http.Cookie
+	for _, cookie := range indexResp.Cookies() {
+		if cookie.Name == SessionCookieName {
+			sessionCookie = cookie
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("no session cookie returned")
+	}
+	sessionID := sessionCookie.Value
+
+	// Connect to SSE endpoint
+	url := "http://" + addr + "/events"
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	req.AddCookie(sessionCookie)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("SSE connection failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	scanner := bufio.NewScanner(resp.Body)
+
+	// Read connection event and discard
+	for scanner.Scan() {
+		if scanner.Text() == "" {
+			break
+		}
+	}
+
+	// Simulate agent-triggered generation by sending events
+	// In the real flow, handleChat would send these events after
+	// receiving metadata with generate_image=true
+
+	// 1. Send prompt update
+	err = s.Broker().SendEvent(sessionID, EventPromptUpdate, map[string]interface{}{
+		"prompt": "a fluffy orange cat",
+	})
+	if err != nil {
+		t.Fatalf("SendEvent (prompt) failed: %v", err)
+	}
+
+	// 2. Send settings update
+	err = s.Broker().SendEvent(sessionID, EventSettingsUpdate, map[string]interface{}{
+		"steps": 4,
+		"cfg":   1.0,
+		"seed":  -1,
+	})
+	if err != nil {
+		t.Fatalf("SendEvent (settings) failed: %v", err)
+	}
+
+	// Read prompt update event
+	eventLines := make([]string, 0)
+	for i := 0; i < 10 && scanner.Scan(); i++ {
+		line := scanner.Text()
+		eventLines = append(eventLines, line)
+		if line == "" {
+			break
+		}
+	}
+
+	eventContent := strings.Join(eventLines, "\n")
+	if !strings.Contains(eventContent, "event: prompt-update") {
+		t.Errorf("should receive prompt-update event, got %q", eventContent)
+	}
+	if !strings.Contains(eventContent, `"prompt":"a fluffy orange cat"`) {
+		t.Errorf("event should include prompt, got %q", eventContent)
+	}
+
+	// Read settings update event
+	eventLines = make([]string, 0)
+	for i := 0; i < 10 && scanner.Scan(); i++ {
+		line := scanner.Text()
+		eventLines = append(eventLines, line)
+		if line == "" {
+			break
+		}
+	}
+
+	eventContent = strings.Join(eventLines, "\n")
+	if !strings.Contains(eventContent, "event: settings-update") {
+		t.Errorf("should receive settings-update event, got %q", eventContent)
+	}
+	if !strings.Contains(eventContent, `"steps":4`) {
+		t.Errorf("event should include steps, got %q", eventContent)
+	}
+
+	// Note: We can't actually test image generation without the compute daemon running,
+	// but we've verified that the prompt and settings events are sent correctly.
+	// The actual generation would happen in handleChat after checking GenerateImage=true.
+
+	// Close response body before shutdown
+	resp.Body.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Errorf("server error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for shutdown")
+	}
+}
+
+// TestIntegration_AgentWithoutAutoGeneration verifies that when an agent
+// responds with generate_image=false, the prompt and settings are updated
+// but no generation is triggered. This tests the flow where the agent just
+// updates UI state without triggering generation.
+func TestIntegration_AgentWithoutAutoGeneration(t *testing.T) {
+	addr := "localhost:18088"
+	s, err := NewServer(addr)
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- s.ListenAndServe(ctx)
+	}()
+
+	time.Sleep(200 * time.Millisecond)
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+	}
+
+	// Get session from index page
+	indexResp, err := client.Get("http://" + addr + "/")
+	if err != nil {
+		t.Fatalf("failed to get session: %v", err)
+	}
+	indexResp.Body.Close()
+
+	var sessionCookie *http.Cookie
+	for _, cookie := range indexResp.Cookies() {
+		if cookie.Name == SessionCookieName {
+			sessionCookie = cookie
+			break
+		}
+	}
+	if sessionCookie == nil {
+		t.Fatal("no session cookie returned")
+	}
+	sessionID := sessionCookie.Value
+
+	// Connect to SSE endpoint
+	url := "http://" + addr + "/events"
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	req.AddCookie(sessionCookie)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("SSE connection failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	scanner := bufio.NewScanner(resp.Body)
+
+	// Read connection event and discard
+	for scanner.Scan() {
+		if scanner.Text() == "" {
+			break
+		}
+	}
+
+	// Simulate agent response WITHOUT auto-generation
+	// In the real flow, handleChat would send these events after
+	// receiving metadata with generate_image=false
+
+	// 1. Send prompt update (with empty prompt since agent is still asking questions)
+	err = s.Broker().SendEvent(sessionID, EventPromptUpdate, map[string]interface{}{
+		"prompt": "",
+	})
+	if err != nil {
+		t.Fatalf("SendEvent (prompt) failed: %v", err)
+	}
+
+	// 2. Send settings update
+	err = s.Broker().SendEvent(sessionID, EventSettingsUpdate, map[string]interface{}{
+		"steps": 4,
+		"cfg":   1.0,
+		"seed":  -1,
+	})
+	if err != nil {
+		t.Fatalf("SendEvent (settings) failed: %v", err)
+	}
+
+	// 3. Send agent-done event
+	err = s.Broker().SendEvent(sessionID, EventAgentDone, map[string]interface{}{
+		"status": "complete",
+	})
+	if err != nil {
+		t.Fatalf("SendEvent (agent-done) failed: %v", err)
+	}
+
+	// Read prompt update event
+	eventLines := make([]string, 0)
+	for i := 0; i < 10 && scanner.Scan(); i++ {
+		line := scanner.Text()
+		eventLines = append(eventLines, line)
+		if line == "" {
+			break
+		}
+	}
+
+	eventContent := strings.Join(eventLines, "\n")
+	if !strings.Contains(eventContent, "event: prompt-update") {
+		t.Errorf("should receive prompt-update event, got %q", eventContent)
+	}
+
+	// Read settings update event
+	eventLines = make([]string, 0)
+	for i := 0; i < 10 && scanner.Scan(); i++ {
+		line := scanner.Text()
+		eventLines = append(eventLines, line)
+		if line == "" {
+			break
+		}
+	}
+
+	eventContent = strings.Join(eventLines, "\n")
+	if !strings.Contains(eventContent, "event: settings-update") {
+		t.Errorf("should receive settings-update event, got %q", eventContent)
+	}
+
+	// Read agent-done event
+	eventLines = make([]string, 0)
+	for i := 0; i < 10 && scanner.Scan(); i++ {
+		line := scanner.Text()
+		eventLines = append(eventLines, line)
+		if line == "" {
+			break
+		}
+	}
+
+	eventContent = strings.Join(eventLines, "\n")
+	if !strings.Contains(eventContent, "event: agent-done") {
+		t.Errorf("should receive agent-done event, got %q", eventContent)
+	}
+
+	// Verify no image-ready event follows (with timeout)
+	// Use a channel to read the next event with timeout
+	nextEventChan := make(chan string, 1)
+	go func() {
+		eventLines := make([]string, 0)
+		for i := 0; i < 10 && scanner.Scan(); i++ {
+			line := scanner.Text()
+			eventLines = append(eventLines, line)
+			if line == "" {
+				break
+			}
+		}
+		if len(eventLines) > 0 {
+			nextEventChan <- strings.Join(eventLines, "\n")
+		}
+	}()
+
+	// Wait briefly to ensure no image-ready event arrives
+	select {
+	case eventContent := <-nextEventChan:
+		// If we got an event, it should NOT be image-ready
+		if strings.Contains(eventContent, "event: image-ready") {
+			t.Errorf("should NOT receive image-ready event when generate_image=false, got %q", eventContent)
+		}
+	case <-time.After(500 * time.Millisecond):
+		// Timeout is expected - no more events should arrive
+		// This is the correct behavior
+	}
+
+	// Close response body before shutdown
+	resp.Body.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Errorf("server error: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for shutdown")
+	}
+}

@@ -14,7 +14,7 @@ const (
 	// ResponseDelimiter is the delimiter that separates conversational text
 	// from JSON metadata in LLM responses. The LLM is instructed to end
 	// every message with this delimiter followed by JSON containing prompt
-	// and ready status.
+	// and generation settings.
 	ResponseDelimiter = "---"
 )
 
@@ -42,14 +42,33 @@ const SystemPrompt = `You help users create images. Ask clarifying questions, th
 FORMAT REQUIRED: End EVERY response with "---" on its own line, then JSON with these fields:
 
 - "prompt" (string): Generation prompt (empty if still asking questions)
-- "ready" (boolean): true if ready to generate, false if clarifying
+- "generate_image" (boolean): true to automatically trigger generation, false to just update prompt/settings
 - "steps" (integer, 1-100): Inference steps. Controls quality/speed tradeoff. Higher = more detailed but slower.
 - "cfg" (float, 0-20): Classifier-free guidance. Controls prompt adherence. Higher = stricter.
 - "seed" (integer): Random seed. -1 for random, 0+ for deterministic/reproducible results.
 
 Keep prompts SHORT (under 200 chars). Ask about: style, subject details, setting, mood. Preserve user edits marked "[user edited prompt to: ...]".
 
-If user rejects after ready=true, set ready back to false and continue asking.
+AUTO-GENERATION BEHAVIOR:
+
+The "generate_image" field controls whether generation automatically triggers:
+- generate_image: true → Backend automatically generates the image (same as user clicking generate button)
+- generate_image: false → Just updates prompt/settings in UI, no automatic generation (user can still click manually)
+
+Users can specify their auto-generation preference conversationally. Track and respect these preferences:
+
+- "generate every time" or "show me previews as you go" → Set generate_image: true for all prompt updates
+- "never auto-generate" or "I'll generate manually" → Set generate_image: false always (just update prompt/settings)
+- "generate every 3 tweaks" or "every few changes" → Track iterations, set generate_image: true every N updates
+- "use your judgment" or no preference stated → Default behavior: set generate_image: true when prompt is ready, false when asking questions
+
+If no preference is stated, use your judgment. Typically:
+- generate_image: false when asking clarifying questions (just exploring)
+- generate_image: true when you have a complete prompt and expect user wants to see results
+- generate_image: true when user explicitly asks to see something ("show me", "let me see")
+- generate_image: false when making small tweaks unless user asked for previews
+
+Remember user preferences throughout the conversation. If user says "generate every time", honor that for all subsequent updates.
 
 GENERATION SETTINGS GUIDANCE:
 
@@ -73,41 +92,59 @@ Seed:
 
 Invalid values will be clamped to valid ranges and you will receive feedback.
 
-CORRECT:
-User: cat in hat
-Assistant: What kind of cat? Hat style? Setting? Realistic or cartoon?
----
-{"prompt": "", "ready": false, "steps": 4, "cfg": 1.0, "seed": -1}
+CRITICAL RULES:
+1. Generate ONLY your response - never generate fake user messages or continue conversations
+2. Wait for the user to respond before generating your next message
+3. Each response you generate is ONE assistant turn only
 
-User: tabby, wizard hat, library, realistic
-Assistant: Perfect! Generating now.
----
-{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "ready": true, "steps": 4, "cfg": 1.0, "seed": -1}
+EXAMPLE RESPONSES (these show what YOU should output given user input):
 
-User: make it more detailed
-Assistant: I'll increase the quality settings for more detail.
+Given "cat in hat":
+What kind of cat? Hat style? Setting? Realistic or cartoon?
 ---
-{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "ready": true, "steps": 28, "cfg": 1.0, "seed": -1}
+{"prompt": "", "generate_image": false, "steps": 4, "cfg": 1.0, "seed": -1}
 
-User: I want to reproduce the last one exactly
-Assistant: Setting a fixed seed so you get the same result.
+Given "tabby, wizard hat, library, realistic":
+Perfect! Generating now.
 ---
-{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "ready": true, "steps": 28, "cfg": 1.0, "seed": 42}
+{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "generate_image": true, "steps": 4, "cfg": 1.0, "seed": -1}
 
-WRONG - Missing delimiter/JSON:
-Assistant: What kind of cat?
-
-WRONG - No text before delimiter:
+Given "make it more detailed":
+I'll increase the quality settings for more detail.
 ---
-{"prompt": "", "ready": false, "steps": 4, "cfg": 1.0, "seed": -1}
+{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "generate_image": true, "steps": 28, "cfg": 1.0, "seed": -1}
 
-WRONG - Prompt too long:
+Given "I want to reproduce the last one exactly":
+Setting a fixed seed so you get the same result.
 ---
-{"prompt": "A majestic tabby cat with striking amber eyes gracefully perched upon an antique desk wearing an elaborate wizard hat adorned with stars and moons surrounded by towering bookshelves...", "ready": true, "steps": 4, "cfg": 1.0, "seed": -1}
+{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "generate_image": true, "steps": 28, "cfg": 1.0, "seed": 42}
 
-WRONG - Missing required fields:
+Given "generate every time you change something":
+I'll automatically generate a preview with every update.
 ---
-{"prompt": "cat in hat", "ready": true}`
+{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "generate_image": true, "steps": 28, "cfg": 1.0, "seed": 42}
+
+Given "actually never auto-generate, I'll do it manually":
+Got it, I'll just update the prompt and settings without triggering generation.
+---
+{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "generate_image": false, "steps": 28, "cfg": 1.0, "seed": 42}
+
+WRONG RESPONSES:
+
+Missing delimiter/JSON:
+What kind of cat?
+
+No text before delimiter:
+---
+{"prompt": "", "generate_image": false, "steps": 4, "cfg": 1.0, "seed": -1}
+
+Prompt too long:
+---
+{"prompt": "A majestic tabby cat with striking amber eyes gracefully perched upon an antique desk wearing an elaborate wizard hat adorned with stars and moons surrounded by towering bookshelves...", "generate_image": true, "steps": 4, "cfg": 1.0, "seed": -1}
+
+Missing required fields:
+---
+{"prompt": "cat in hat", "generate_image": true}`
 
 // Message represents a single message in a conversation.
 type Message struct {
@@ -177,9 +214,11 @@ type LLMMetadata struct {
 	// asking questions and not ready to generate.
 	Prompt string `json:"prompt"`
 
-	// Ready indicates whether the LLM has enough information to generate.
-	// When true and Prompt is non-empty, the prompt should be used for generation.
-	Ready bool `json:"ready"`
+	// GenerateImage controls whether to automatically trigger image generation.
+	// When true, the backend invokes generation directly (same path as POST /generate).
+	// When false, no automatic generation occurs (user can still click manually).
+	// Defaults to false if the field is missing in the JSON.
+	GenerateImage bool `json:"generate_image"`
 
 	// Steps is the number of inference steps to use for generation.
 	// The web layer clamps this to valid ranges for the selected model.
@@ -204,7 +243,7 @@ type ChatResult struct {
 	Response string
 
 	// Metadata is the parsed JSON metadata from the end of the response.
-	// Contains the extracted prompt and ready status.
+	// Contains the extracted prompt and generation settings.
 	Metadata LLMMetadata
 
 	// RawResponse is the full LLM response including conversational text,

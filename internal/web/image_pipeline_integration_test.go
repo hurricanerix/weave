@@ -12,6 +12,7 @@ import (
 	"github.com/hurricanerix/weave/internal/conversation"
 	"github.com/hurricanerix/weave/internal/image"
 	"github.com/hurricanerix/weave/internal/logging"
+	"github.com/hurricanerix/weave/internal/ollama"
 )
 
 // TestImagePipeline_EndToEnd tests the complete image pipeline:
@@ -25,7 +26,6 @@ func TestImagePipeline_EndToEnd(t *testing.T) {
 		response: "test response",
 		metadata: ollama.LLMMetadata{
 			Prompt: "test prompt",
-			Ready:  true,
 		},
 	}
 	server, err := NewServerWithDeps("", mockOllama, sessionMgr, storage, nil)
@@ -94,7 +94,6 @@ func TestImagePipeline_FullWorkflow(t *testing.T) {
 		response: "test response",
 		metadata: ollama.LLMMetadata{
 			Prompt: "A beautiful sunset",
-			Ready:  true,
 		},
 	}
 	server, err := NewServerWithDeps("", mockOllama, sessionMgr, storage, nil)

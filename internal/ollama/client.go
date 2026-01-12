@@ -248,7 +248,7 @@ const maxResponseSize = 1024 * 1024
 //
 //	[conversational text]
 //	---
-//	{"prompt": "...", "ready": true/false}
+//	{"prompt": "...", "steps": N, "cfg": X.X, "seed": N}
 //
 // WHY DELIMITER DETECTION:
 // We want to preserve the streaming UX (live typing effect) for conversational
@@ -256,7 +256,7 @@ const maxResponseSize = 1024 * 1024
 // to stop displaying tokens and start buffering JSON.
 //
 // WHY STREAMING STOPS AT DELIMITER:
-// The JSON portion contains structured metadata (prompt, ready flag) that should
+// The JSON portion contains structured metadata (prompt, generation settings) that should
 // not be displayed in the chat UI. By stopping the callback when we detect "---",
 // we ensure the user sees only conversational text. The JSON is buffered silently
 // and parsed after the stream completes.

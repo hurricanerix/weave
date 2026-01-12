@@ -755,8 +755,8 @@ func TestChatWithRetry_FormatReminderAfterParseError(t *testing.T) {
 					{err: tt.initialError}, // First attempt fails
 					{result: ollama.ChatResult{ // Retry succeeds
 						Response:    "Perfect! Generating now.",
-						Metadata:    ollama.LLMMetadata{Prompt: "test prompt", Ready: true},
-						RawResponse: "Perfect! Generating now.\n---\n{\"prompt\":\"test prompt\",\"ready\":true}",
+						Metadata:    ollama.LLMMetadata{Prompt: "test prompt"},
+						RawResponse: "Perfect! Generating now.\n---\n{\"prompt\":\"test prompt\",\"generate_image\":true}",
 					}},
 				},
 			}
@@ -799,8 +799,8 @@ func TestChatWithRetry_ContextCompactionAfterTwoRetries(t *testing.T) {
 			{err: ollama.ErrMissingDelimiter}, // Second retry fails
 			{result: ollama.ChatResult{ // Compaction retry succeeds
 				Response:    "Perfect!",
-				Metadata:    ollama.LLMMetadata{Prompt: "compacted prompt", Ready: true},
-				RawResponse: "Perfect!\n---\n{\"prompt\":\"compacted prompt\",\"ready\":true}",
+				Metadata:    ollama.LLMMetadata{Prompt: "compacted prompt"},
+				RawResponse: "Perfect!\n---\n{\"prompt\":\"compacted prompt\",\"generate_image\":true}",
 			}},
 		},
 	}
@@ -876,14 +876,14 @@ func TestChatWithRetry_RetryCountResetsOnSuccess(t *testing.T) {
 		responses: []mockResponse{
 			{result: ollama.ChatResult{ // First request succeeds
 				Response:    "What kind of cat?",
-				Metadata:    ollama.LLMMetadata{Prompt: "", Ready: false},
-				RawResponse: "What kind of cat?\n---\n{\"prompt\":\"\",\"ready\":false}",
+				Metadata:    ollama.LLMMetadata{Prompt: ""},
+				RawResponse: "What kind of cat?\n---\n{\"prompt\":\"\",\"generate_image\":false}",
 			}},
 			{err: ollama.ErrMissingDelimiter}, // Second request fails
 			{result: ollama.ChatResult{ // Retry succeeds
 				Response:    "Perfect!",
-				Metadata:    ollama.LLMMetadata{Prompt: "tabby cat", Ready: true},
-				RawResponse: "Perfect!\n---\n{\"prompt\":\"tabby cat\",\"ready\":true}",
+				Metadata:    ollama.LLMMetadata{Prompt: "tabby cat"},
+				RawResponse: "Perfect!\n---\n{\"prompt\":\"tabby cat\",\"generate_image\":true}",
 			}},
 		},
 	}
@@ -974,7 +974,7 @@ func TestCompactContext_CorrectFormat(t *testing.T) {
 	messages := []ollama.Message{
 		{Role: ollama.RoleSystem, Content: ollama.SystemPrompt},
 		{Role: ollama.RoleUser, Content: "I want a cat in a hat"},
-		{Role: ollama.RoleAssistant, Content: "What kind of cat?\n---\n{\"prompt\":\"\",\"ready\":false}"},
+		{Role: ollama.RoleAssistant, Content: "What kind of cat?\n---\n{\"prompt\":\"\",\"generate_image\":false}"},
 		{Role: ollama.RoleUser, Content: "A tabby cat wearing a wizard hat"},
 		{Role: ollama.RoleUser, Content: "Make it realistic"},
 	}
@@ -1020,8 +1020,8 @@ func TestCompactContext_CorrectFormat(t *testing.T) {
 		t.Errorf("compacted content missing JSON format example, got: %s", content)
 	}
 
-	if !strings.Contains(content, `"ready": true`) {
-		t.Errorf("compacted content missing 'ready' field example, got: %s", content)
+	if !strings.Contains(content, `"generate_image": true`) {
+		t.Errorf("compacted content missing 'generate_image' field example, got: %s", content)
 	}
 }
 

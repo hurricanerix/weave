@@ -17,7 +17,7 @@ var (
 	ErrInvalidJSON = errors.New("invalid JSON after delimiter")
 
 	// ErrMissingFields indicates the JSON is valid but missing required fields.
-	// All required fields (prompt, ready, steps, cfg, seed) must be present in the metadata.
+	// All required fields (prompt, steps, cfg, seed) must be present in the metadata.
 	ErrMissingFields = errors.New("JSON missing required fields")
 )
 
@@ -27,7 +27,7 @@ var (
 //
 //	[conversational text]
 //	---
-//	{"prompt": "...", "ready": true/false, "steps": N, "cfg": X.X, "seed": N}
+//	{"prompt": "...", "steps": N, "cfg": X.X, "seed": N}
 //
 // WHY THIS FORMAT:
 // This structured format allows us to:
@@ -47,7 +47,7 @@ var (
 //
 // ErrMissingFields - The JSON is valid but missing required fields.
 // This means the LLM generated syntactically correct JSON but didn't include
-// all required fields (prompt, ready, steps, cfg, seed). This violates the schema.
+// all required fields (prompt, steps, cfg, seed). This violates the schema.
 // Recoverable via retry.
 //
 // WHY SEARCH FROM END:
@@ -56,13 +56,13 @@ var (
 // ASCII art, etc.). The LAST occurrence of "---" on its own line is the delimiter.
 //
 // WHY VALIDATE FIELD PRESENCE:
-// Go's json.Unmarshal sets missing fields to zero values (empty string, false, 0).
+// Go's json.Unmarshal sets missing fields to zero values (empty string, 0).
 // We need to distinguish between:
-// - {"prompt": "", "ready": false, "steps": 0, "cfg": 0.0, "seed": 0} - Valid (explicit zero values)
+// - {"prompt": "", "steps": 0, "cfg": 0.0, "seed": 0} - Valid (explicit zero values)
 // - {} - Invalid (missing required fields)
 //
 // Without the map check, both would unmarshal successfully but have different
-// semantics. The map check ensures the LLM explicitly provided all five fields.
+// semantics. The map check ensures the LLM explicitly provided all four fields.
 func parseResponse(response string) (string, LLMMetadata, error) {
 	// Find the delimiter that separates conversational text from JSON.
 	// WHY SPLIT BY NEWLINES: The delimiter must be on its own line to avoid
@@ -128,17 +128,15 @@ func parseResponse(response string) (string, LLMMetadata, error) {
 	}
 
 	// Check that all required fields are present in the JSON
-	// WHY REQUIRE ALL FIELDS: The "ready" flag tells us if the LLM has enough
-	// information to generate. The "prompt" field contains the generation prompt
-	// (empty if not ready yet). The "steps", "cfg", and "seed" fields specify
-	// generation settings. All five fields are required for the system to function.
+	// WHY REQUIRE ALL FIELDS: The "prompt" field contains the generation prompt
+	// (empty if still asking questions). The "steps", "cfg", and "seed" fields specify
+	// generation settings. All four fields are required for the system to function.
 	// Missing any field means the LLM didn't follow the schema.
 	_, hasPrompt := rawMap["prompt"]
-	_, hasReady := rawMap["ready"]
 	_, hasSteps := rawMap["steps"]
 	_, hasCFG := rawMap["cfg"]
 	_, hasSeed := rawMap["seed"]
-	if !hasPrompt || !hasReady || !hasSteps || !hasCFG || !hasSeed {
+	if !hasPrompt || !hasSteps || !hasCFG || !hasSeed {
 		return "", LLMMetadata{}, ErrMissingFields
 	}
 

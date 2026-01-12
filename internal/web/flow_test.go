@@ -234,7 +234,6 @@ func TestUserFlow_ChatStreaming(t *testing.T) {
 		response: "Here's a prompt for your cat",
 		metadata: ollama.LLMMetadata{
 			Prompt: "a fluffy orange cat",
-			Ready:  true,
 		},
 		tokens: []string{
 			"Here's ", "a ", "prompt ", "for ", "your ", "cat",
