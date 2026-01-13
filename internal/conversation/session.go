@@ -20,7 +20,12 @@ const (
 
 // Session tracks a session, its conversation manager, generation settings,
 // and last activity time.
+//
+// Session is thread-safe. All access to the manager and settings is protected
+// by a mutex. This allows multiple HTTP requests for the same session to be
+// handled concurrently without data races.
 type Session struct {
+	mu           sync.Mutex // protects all fields below
 	manager      *Manager
 	lastActivity time.Time
 	// settings stores the current generation settings for this session.
@@ -201,13 +206,18 @@ func (sm *SessionManager) cleanupInactiveSessions() {
 }
 
 // Manager returns the conversation manager for this session.
+// The returned Manager is thread-safe and can be used concurrently.
 func (s *Session) Manager() *Manager {
+	// No lock needed - manager itself is thread-safe and the pointer is immutable.
 	return s.manager
 }
 
 // SetGenerationSettings updates the generation settings for this session.
 // This stores the current values so they can be retrieved later.
 func (s *Session) SetGenerationSettings(steps int, cfg float64, seed int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	s.settings = &GenerationSettings{
 		Steps: steps,
 		CFG:   cfg,
@@ -219,6 +229,9 @@ func (s *Session) SetGenerationSettings(steps int, cfg float64, seed int64) {
 // If settings have not been set yet, hasSettings will be false and the caller
 // should use server defaults. The returned values are only valid when hasSettings is true.
 func (s *Session) GetGenerationSettings() (steps int, cfg float64, seed int64, hasSettings bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.settings == nil {
 		return 0, 0, 0, false
 	}

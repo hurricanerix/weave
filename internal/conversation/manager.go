@@ -1,6 +1,9 @@
 package conversation
 
-import "fmt"
+import (
+	"fmt"
+	"sync"
+)
 
 const (
 	// MaxHistorySize is the maximum number of messages allowed in conversation history.
@@ -13,9 +16,10 @@ const (
 // It wraps a Conversation and provides methods for adding messages,
 // tracking prompt state, and constructing LLM context.
 //
-// Manager is not thread-safe. For concurrent access across HTTP requests,
-// use SessionManager which provides per-session locking.
+// Manager is thread-safe. All methods are protected by a mutex to allow
+// concurrent access from multiple HTTP request handlers.
 type Manager struct {
+	mu   sync.Mutex
 	conv *Conversation
 }
 
@@ -29,11 +33,14 @@ func NewManager() *Manager {
 // AddUserMessage adds a user message to the conversation history.
 // If the history exceeds MaxHistorySize, the oldest messages are removed.
 func (m *Manager) AddUserMessage(content string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	m.conv.messages = append(m.conv.messages, Message{
 		Role:    RoleUser,
 		Content: content,
 	})
-	m.trimHistory()
+	m.trimHistoryLocked()
 }
 
 // AddAssistantMessage adds an assistant message to the conversation history
@@ -43,6 +50,9 @@ func (m *Manager) AddUserMessage(content string) {
 // response. If empty, the current prompt is unchanged.
 // If the history exceeds MaxHistorySize, the oldest messages are removed.
 func (m *Manager) AddAssistantMessage(content string, prompt string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	m.conv.messages = append(m.conv.messages, Message{
 		Role:    RoleAssistant,
 		Content: content,
@@ -56,12 +66,15 @@ func (m *Manager) AddAssistantMessage(content string, prompt string) {
 		m.conv.currentPrompt = prompt
 	}
 
-	m.trimHistory()
+	m.trimHistoryLocked()
 }
 
 // GetHistory returns a copy of the message history.
 // The returned slice is safe to modify without affecting the conversation.
 func (m *Manager) GetHistory() []Message {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if len(m.conv.messages) == 0 {
 		return nil
 	}
@@ -73,6 +86,9 @@ func (m *Manager) GetHistory() []Message {
 
 // GetCurrentPrompt returns the current image generation prompt.
 func (m *Manager) GetCurrentPrompt() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return m.conv.currentPrompt
 }
 
@@ -83,6 +99,9 @@ func (m *Manager) GetCurrentPrompt() string {
 // in active sessions. For sessions that have grown very large, consider
 // creating a new Manager instead.
 func (m *Manager) Clear() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	m.conv.messages = m.conv.messages[:0]
 	m.conv.currentPrompt = ""
 	m.conv.previousPrompt = ""
@@ -96,6 +115,9 @@ func (m *Manager) Clear() {
 // This flag is used by NotifyPromptEdited to inject a notification into
 // the conversation history so the agent knows the user made changes.
 func (m *Manager) UpdatePrompt(newPrompt string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if newPrompt != m.conv.currentPrompt {
 		m.conv.previousPrompt = m.conv.currentPrompt
 		m.conv.currentPrompt = newPrompt
@@ -106,6 +128,9 @@ func (m *Manager) UpdatePrompt(newPrompt string) {
 // IsPromptEdited returns true if the user has edited the prompt since
 // the last call to NotifyPromptEdited.
 func (m *Manager) IsPromptEdited() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	return m.conv.promptEdited
 }
 
@@ -129,6 +154,9 @@ func (m *Manager) IsPromptEdited() bool {
 // After injection, the edited flag is cleared.
 // If the history exceeds MaxHistorySize, the oldest messages are removed.
 func (m *Manager) NotifyPromptEdited() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.conv.promptEdited {
 		return
 	}
@@ -144,13 +172,15 @@ func (m *Manager) NotifyPromptEdited() {
 	// Clear the edited flag
 	m.conv.promptEdited = false
 
-	m.trimHistory()
+	m.trimHistoryLocked()
 }
 
-// trimHistory removes the oldest messages if the history exceeds MaxHistorySize.
+// trimHistoryLocked removes the oldest messages if the history exceeds MaxHistorySize.
 // This prevents unbounded memory growth in long-running sessions.
 // Messages are removed from the beginning of the slice (oldest first).
-func (m *Manager) trimHistory() {
+//
+// This method must be called while holding the mutex (hence the Locked suffix).
+func (m *Manager) trimHistoryLocked() {
 	if len(m.conv.messages) <= MaxHistorySize {
 		return
 	}
@@ -197,6 +227,9 @@ func (m *Manager) trimHistory() {
 //	[user] Make it orange
 //	[user] [current prompt: "a fluffy cat"]
 func (m *Manager) BuildLLMContext(systemPrompt string, currentSteps int, currentCFG float64, currentSeed int64) []Message {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	// Pre-allocate exact capacity to avoid slice growth during appends.
 	// Capacity = history + optional system prompt + optional settings + optional trailing context.
 	capacity := len(m.conv.messages)

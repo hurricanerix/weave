@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -134,6 +135,8 @@ func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	b.addConnection(conn)
 	defer b.removeConnection(sessionID, conn)
 
+	log.Printf("DEBUG: SSE connection established for session %s", sessionID)
+
 	// Send initial connection event
 	b.sendToConnection(conn, Event{
 		Type: "connected",
@@ -157,10 +160,15 @@ func (b *Broker) SendEvent(sessionID string, eventType string, data interface{})
 	b.mu.RUnlock()
 
 	if !ok {
+		log.Printf("DEBUG: SendEvent failed - session %s not connected (have %d connections)", sessionID, b.ConnectionCount())
 		return fmt.Errorf("session %s not connected", sessionID)
 	}
 
-	return b.sendToConnection(conn, Event{Type: eventType, Data: data})
+	err := b.sendToConnection(conn, Event{Type: eventType, Data: data})
+	if err != nil {
+		log.Printf("DEBUG: SendEvent failed for session %s, event %s: %v", sessionID, eventType, err)
+	}
+	return err
 }
 
 // SendEventToAll sends an event to all connected sessions.
@@ -217,6 +225,7 @@ func (b *Broker) addConnection(conn *connection) {
 	// 4. Thread B: Deletes map entry (would be wrong!)
 	// The identity check in removeConnection prevents step 4.
 	if existing, ok := b.connections[conn.sessionID]; ok {
+		log.Printf("DEBUG: SSE replacing existing connection for session %s", conn.sessionID)
 		close(existing.done)
 	}
 
@@ -232,6 +241,7 @@ func (b *Broker) removeConnection(sessionID string, conn *connection) {
 	// Only delete if this connection is still the registered one
 	if current, ok := b.connections[sessionID]; ok && current == conn {
 		delete(b.connections, sessionID)
+		log.Printf("DEBUG: SSE connection closed for session %s", sessionID)
 	}
 }
 

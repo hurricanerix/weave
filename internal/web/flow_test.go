@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hurricanerix/weave/internal/conversation"
 	"github.com/hurricanerix/weave/internal/ollama"
 )
 
@@ -257,25 +256,22 @@ func TestUserFlow_ChatStreaming(t *testing.T) {
 		t.Errorf("chat status code = %d, want %d", chatRec.Code, http.StatusOK)
 	}
 
-	// Verify conversation state - user message should be added
+	// Verify conversation state - messages should NOT be added when streaming fails
+	// This is the correct behavior after the message duplication fix:
+	// - User message is only added AFTER successful chatWithRetry
+	// - If streaming fails (client disconnects), no messages are added
+	// - This prevents orphaned user messages without responses
 	manager := s.sessionManager.Get(sessionID)
 	if manager == nil {
 		t.Fatal("session manager not found")
 	}
 
 	history := manager.GetHistory()
-	// Without SSE connection, streaming aborts early so only user message is added
-	if len(history) < 1 {
-		t.Fatalf("history length = %d, want at least 1 (user message)", len(history))
+	// Without SSE connection, streaming aborts and NO messages are added
+	// This is correct behavior - canceling a request should not leave partial state
+	if len(history) != 0 {
+		t.Errorf("history length = %d, want 0 (client disconnected, no messages should be saved)", len(history))
 	}
-
-	// Verify user message was added
-	if history[0].Role != conversation.RoleUser || history[0].Content != "I want a cat" {
-		t.Errorf("first message = {%s, %s}, want {user, I want a cat}", history[0].Role, history[0].Content)
-	}
-
-	// Note: Assistant message is NOT added because streaming aborted due to no SSE connection
-	// This is correct behavior - if client disconnects, we stop processing
 }
 
 // mockOllamaClient is a mock implementation of ollama.Client for testing.

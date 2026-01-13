@@ -50,10 +50,12 @@ var (
 // all required fields (prompt, steps, cfg, seed). This violates the schema.
 // Recoverable via retry.
 //
-// WHY SEARCH FROM END:
-// We search for the delimiter from the end of the response because the
-// conversational text might legitimately contain "---" (markdown horizontal rule,
-// ASCII art, etc.). The LAST occurrence of "---" on its own line is the delimiter.
+// WHY SEARCH FROM START:
+// We search for the delimiter from the start of the response because some
+// LLMs generate multiple conversation turns with multiple "---" delimiters.
+// The FIRST occurrence gives us the agent's actual response, not hallucinated
+// continuations. If conversational text contains "---" before the delimiter,
+// the LLM should escape it or use a different format.
 //
 // WHY VALIDATE FIELD PRESENCE:
 // Go's json.Unmarshal sets missing fields to zero values (empty string, 0).
@@ -71,20 +73,23 @@ func parseResponse(response string) (string, LLMMetadata, error) {
 	lines := strings.Split(response, "\n")
 	delimiterLineIndex := -1
 
-	// Find the LAST line that is exactly the delimiter (with whitespace trimmed).
-	// WHY SEARCH FROM END: Conversational text might legitimately contain "---"
-	// (markdown horizontal rules, ASCII art, separator lines). For example:
+	// Find the FIRST line that is exactly the delimiter (with whitespace trimmed).
+	// WHY SEARCH FROM START: The LLM sometimes generates multiple conversation turns
+	// in a single response, with multiple "---" delimiters. For example:
 	//
-	//   "Here are your options:
-	//    Option A: cats
+	//   "What style of cat?
 	//    ---
-	//    Option B: dogs
-	//    ---
-	//    {"prompt": "...", "ready": true}"
+	//    {"prompt": "", ...}
 	//
-	// We want the LAST "---" to be the delimiter, not earlier ones that are
-	// part of the conversational text.
-	for i := len(lines) - 1; i >= 0; i-- {
+	//    Given "tabby"
+	//    Perfect!
+	//    ---
+	//    {"prompt": "tabby cat", ...}"
+	//
+	// The system prompt explicitly forbids this ("Generate ONLY your response"),
+	// but some models do it anyway. Using the FIRST delimiter ensures we get
+	// the agent's actual response, not the hallucinated continuation.
+	for i := 0; i < len(lines); i++ {
 		trimmed := strings.TrimSpace(lines[i])
 		if trimmed == ResponseDelimiter {
 			delimiterLineIndex = i

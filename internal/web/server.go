@@ -74,9 +74,11 @@ type Server struct {
 	imageStorage *image.Storage
 
 	// Default generation settings from CLI flags
-	defaultSteps int
-	defaultCFG   float64
-	defaultSeed  int64
+	defaultSteps  int
+	defaultCFG    float64
+	defaultSeed   int64
+	defaultWidth  int
+	defaultHeight int
 
 	// Request ID counter for compute daemon requests
 	requestID uint64
@@ -85,9 +87,11 @@ type Server struct {
 // indexTemplateData holds data passed to the index.html template.
 // It contains default values for generation settings that populate the UI controls.
 type indexTemplateData struct {
-	Steps int
-	CFG   float64
-	Seed  int64
+	Steps  int
+	CFG    float64
+	Seed   int64
+	Width  int
+	Height int
 }
 
 // NewServer creates a new Server listening on the given address.
@@ -127,10 +131,14 @@ func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *c
 	defaultSteps := 4
 	defaultCFG := 1.0
 	defaultSeed := int64(0)
+	defaultWidth := 1024
+	defaultHeight := 1024
 	if cfg != nil {
 		defaultSteps = cfg.Steps
 		defaultCFG = cfg.CFG
 		defaultSeed = cfg.Seed
+		defaultWidth = cfg.Width
+		defaultHeight = cfg.Height
 	}
 
 	// Parse templates from embedded filesystem
@@ -150,6 +158,8 @@ func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *c
 		defaultSteps:   defaultSteps,
 		defaultCFG:     defaultCFG,
 		defaultSeed:    defaultSeed,
+		defaultWidth:   defaultWidth,
+		defaultHeight:  defaultHeight,
 	}
 
 	mux := http.NewServeMux()
@@ -189,6 +199,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /chat", s.handleChat)
 	mux.HandleFunc("POST /prompt", s.handlePrompt)
 	mux.HandleFunc("POST /generate", s.handleGenerate)
+	mux.HandleFunc("POST /new-chat", s.handleNewChat)
 
 	// Image serving endpoint
 	mux.HandleFunc("GET /images/{id}", s.handleImage)
@@ -243,9 +254,11 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 	// Populate template data with default generation settings from CLI flags
 	data := indexTemplateData{
-		Steps: s.defaultSteps,
-		CFG:   s.defaultCFG,
-		Seed:  s.defaultSeed,
+		Steps:  s.defaultSteps,
+		CFG:    s.defaultCFG,
+		Seed:   s.defaultSeed,
+		Width:  s.defaultWidth,
+		Height: s.defaultHeight,
 	}
 
 	if err := s.templates.ExecuteTemplate(w, "index.html", data); err != nil {
@@ -321,11 +334,26 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// Get conversation manager for this session
 	manager := session.Manager()
 
-	// Add user message to conversation
-	manager.AddUserMessage(message)
-
-	// Build LLM context with system prompt and current generation settings
+	// Build LLM context with system prompt and current generation settings.
+	// We do NOT call AddUserMessage yet - only add to history after successful response.
+	// This prevents orphaned user messages when chatWithRetry fails or is interrupted.
 	context := manager.BuildLLMContext(ollama.SystemPrompt, int(steps), cfg, seed)
+
+	// Append the new user message to the context (but not to history yet)
+	context = append(context, conversation.Message{
+		Role:    conversation.RoleUser,
+		Content: message,
+	})
+
+	// DEBUG: Log the context being sent to LLM
+	log.Printf("DEBUG: Sending %d messages to LLM for session %s:", len(context), sessionID)
+	for i, msg := range context {
+		contentPreview := msg.Content
+		if len(contentPreview) > 200 {
+			contentPreview = contentPreview[:200] + "..."
+		}
+		log.Printf("DEBUG:   [%d] %s: %s", i, msg.Role, contentPreview)
+	}
 
 	// Convert conversation messages to ollama messages
 	ollamaMessages := make([]ollama.Message, len(context))
@@ -337,9 +365,15 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Stream response from ollama with automatic retry on format errors
+	tokenCount := 0
 	result, err := s.chatWithRetry(r.Context(), ollamaMessages, nil, func(token ollama.StreamToken) error {
 		// Send each token via SSE
 		if token.Content != "" {
+			tokenCount++
+			// Log first few tokens to debug truncation issues
+			if tokenCount <= 10 {
+				log.Printf("DEBUG: Token %d for session %s: %q", tokenCount, sessionID, token.Content)
+			}
 			// Check for send errors to detect client disconnection
 			if err := s.broker.SendEvent(sessionID, EventAgentToken, map[string]string{
 				"token": token.Content,
@@ -394,9 +428,19 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		prompt = result.Metadata.Prompt
 	}
 
-	// Add assistant message to conversation (with prompt if found)
-	// Use full response (conversational text + delimiter + JSON) for storage
-	manager.AddAssistantMessage(result.RawResponse, prompt)
+	// DEBUG: Log what we got from the LLM
+	log.Printf("DEBUG: LLM result for session %s: Response=%q, Prompt=%q, GenerateImage=%v",
+		sessionID, result.Response, result.Metadata.Prompt, result.Metadata.GenerateImage)
+
+	// Add both user and assistant messages to conversation history.
+	// We add them together AFTER success to ensure atomic updates.
+	// This prevents orphaned user messages when chatWithRetry fails.
+	manager.AddUserMessage(message)
+
+	// Use conversational text only (Response), not the full protocol format (RawResponse).
+	// Storing RawResponse would pollute history with delimiter and JSON metadata,
+	// which confuses the LLM on subsequent turns.
+	manager.AddAssistantMessage(result.Response, prompt)
 
 	// Send prompt-update event if prompt was extracted
 	if prompt != "" {
@@ -431,6 +475,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Send agent-done event BEFORE generation starts
+	// This finalizes the agent's message bubble so generation indicator appears separately
+	_ = s.broker.SendEvent(sessionID, EventAgentDone, map[string]bool{"done": true})
+
 	// Trigger generation if agent requested it
 	if result.Metadata.GenerateImage {
 		log.Printf("Agent requested auto-generation for session %s", sessionID)
@@ -455,9 +503,6 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-
-	// Send agent-done event
-	_ = s.broker.SendEvent(sessionID, EventAgentDone, map[string]bool{"done": true})
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -767,11 +812,13 @@ Please respond again with the correct format.`
 			// We have retries left - append format reminder and try again
 			log.Printf("Format error on attempt %d, retrying with format reminder: %v", attempt+1, err)
 
-			// Append system message with format reminder
+			// Append user message with format reminder
 			// WHY APPEND TO COPY: We append to messagesCopy (not messages) so the
 			// reminder is transient. The caller's conversation history remains clean.
+			// WHY RoleUser: Ollama requires system messages to be first in conversation.
+			// Using RoleUser for format reminders avoids the "system message must be first" error.
 			messagesCopy = append(messagesCopy, ollama.Message{
-				Role:    ollama.RoleSystem,
+				Role:    ollama.RoleUser,
 				Content: formatReminder,
 			})
 
@@ -863,6 +910,23 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 
 	// Notify that the prompt was edited (injects system message if changed)
 	manager.NotifyPromptEdited()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `{"status":"ok","session_id":"%s"}`, sessionID)
+}
+
+// handleNewChat clears the conversation history for the current session.
+// This allows users to start a fresh conversation without stale context.
+func (s *Server) handleNewChat(w http.ResponseWriter, r *http.Request) {
+	sessionID := GetSessionID(r.Context())
+
+	// Get session and clear its conversation
+	session := s.sessionManager.GetSession(sessionID)
+	manager := session.Manager()
+	manager.Clear()
+
+	log.Printf("Cleared conversation for session %s", sessionID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
