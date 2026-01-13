@@ -2,7 +2,7 @@
 
 > Thread by thread, the image emerges — not from your hand alone, nor the machine's, but from the space between where meaning is made.
 
-Diffusion-based image generation through conversation rather than configuration.
+Weave is an open-source, local-first image generation system that replaces complex configuration interfaces with natural conversation.
 
 :warning: This project is an early prototype :warning:
 
