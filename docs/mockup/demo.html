@@ -1,0 +1,1897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Weave - Demo</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <style>
+/* ==========================================================================
+   FONT FACE
+   ========================================================================== */
+
+@font-face {
+  font-family: 'MarckScript';
+  src: url('MarckScript-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+
+/* ==========================================================================
+   CSS CUSTOM PROPERTIES
+   ========================================================================== */
+
+:root {
+  /* Colors - Warm & Inviting Palette */
+  --color-bg-primary: #faf8f5;
+  --color-bg-secondary: #fffdf9;
+  --color-bg-tertiary: #f2ede6;
+  --color-bg-hover: #e8e0d5;
+  --color-text-primary: #2c241c;
+  --color-text-secondary: #5c4d3d;
+  --color-text-muted: #8a7a68;
+  --color-border: #e0d6c8;
+  --color-border-strong: #c9baa6;
+  --color-accent: #b8864e;
+  --color-accent-hover: #a0733d;
+  --color-accent-subtle: #f5ede2;
+  --color-error: #c45a3b;
+  --color-error-bg: #fdf2ef;
+  --color-success: #5a8a5a;
+  --color-success-bg: #f2f8f2;
+  --color-warning: #b8860b;
+  --color-warning-bg: #fdf8eb;
+  --color-image-bg: #f5f2ed;
+
+  /* Typography */
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-md: 1.125rem;
+  --font-size-lg: 1.5rem;
+
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, 'Cascadia Code', Consolas, monospace;
+  --font-display: 'MarckScript', 'Snell Roundhand', 'Segoe Script', cursive;
+
+  --line-height-tight: 1.25;
+  --line-height-base: 1.5;
+
+  /* Spacing */
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+
+  /* Border & Radius */
+  --border-width: 1px;
+  --border-radius: 8px;
+  --border-radius-lg: 12px;
+  --border-radius-full: 9999px;
+
+  /* Layout */
+  --sidebar-width: 280px;
+  --chat-width: 400px;
+  --header-height: 48px;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07);
+  --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.1);
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-base: 200ms ease;
+}
+
+/* Dark Mode - Warm & Inviting */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg-primary: #12100e;
+    --color-bg-secondary: #1a1714;
+    --color-bg-tertiary: #242019;
+    --color-bg-hover: #2e2820;
+    --color-text-primary: #f5efe6;
+    --color-text-secondary: #b8a992;
+    --color-text-muted: #7a6f60;
+    --color-border: #2e2820;
+    --color-border-strong: #3d352a;
+    --color-accent: #d4a574;
+    --color-accent-hover: #e4bb8a;
+    --color-accent-subtle: #2a2118;
+    --color-error: #e07a5f;
+    --color-error-bg: #231815;
+    --color-success: #8fbc8f;
+    --color-success-bg: #182018;
+    --color-warning: #daa520;
+    --color-warning-bg: #231f12;
+    --color-image-bg: #161412;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.6);
+  }
+}
+
+
+/* ==========================================================================
+   RESET & BASE
+   ========================================================================== */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* Scrollbar Styling */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-strong);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-text-muted);
+}
+
+html {
+  font-size: 16px;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-primary);
+  min-height: 100dvh;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+
+/* ==========================================================================
+   LAYOUT - APP SHELL
+   ========================================================================== */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.app-header {
+  height: var(--header-height);
+  background-color: var(--color-bg-secondary);
+  border-bottom: var(--border-width) solid var(--color-border);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-md);
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+.app-header-title {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: var(--font-size-lg);
+  flex: 1;
+  letter-spacing: 0.02em;
+}
+
+
+.app-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+
+@media (max-width: 1024px) {
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: var(--header-height);
+    height: calc(100% - var(--header-height));
+    z-index: 50;
+    box-shadow: var(--shadow-lg);
+    margin-left: 0;
+    transition: transform var(--transition-base), visibility var(--transition-base);
+  }
+
+  .sidebar.collapsed {
+    transform: translateX(-100%);
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .main {
+    flex-direction: column;
+  }
+}
+
+
+/* ==========================================================================
+   SIDEBAR
+   ========================================================================== */
+
+.sidebar {
+  width: var(--sidebar-width);
+  background-color: var(--color-bg-secondary);
+  border-right: var(--border-width) solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  transition: margin-left var(--transition-base), visibility var(--transition-base);
+}
+
+.sidebar.collapsed {
+  margin-left: calc(-1 * var(--sidebar-width));
+  visibility: hidden;
+}
+
+.sidebar-footer {
+  padding: var(--space-sm);
+  border-top: var(--border-width) solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.sidebar-settings-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--border-radius);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+
+  &:hover {
+    background-color: var(--color-bg-hover);
+    color: var(--color-text-primary);
+  }
+
+  & svg {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+.sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-sm);
+}
+
+.conversation-item {
+  padding: var(--space-sm);
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+  display: flex;
+  gap: var(--space-sm);
+  text-decoration: none;
+  color: inherit;
+
+  &:hover {
+    background-color: var(--color-bg-hover);
+  }
+
+  &.active {
+    background-color: var(--color-accent-subtle);
+  }
+}
+
+.conversation-item-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background-color: var(--color-bg-tertiary);
+
+  & img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+.conversation-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.conversation-item-title {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conversation-item-preview {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.conversation-item-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: var(--space-xs);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.conversation-item-date {
+  font-family: var(--font-mono);
+}
+
+
+/* ==========================================================================
+   CHAT PANEL
+   ========================================================================== */
+
+.chat-panel {
+  width: var(--chat-width);
+  min-width: 250px;
+  background-color: var(--color-bg-secondary);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  position: relative;
+}
+
+@media (max-width: 768px) {
+  .chat-panel {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    order: 2;
+    flex: 1;
+  }
+}
+
+
+/* ==========================================================================
+   MESSAGES
+   ========================================================================== */
+
+.message {
+  max-width: 100%;
+}
+
+.message-user {
+  align-self: flex-end;
+}
+
+.message-assistant {
+  align-self: flex-start;
+}
+
+.message-sender {
+  font-family: var(--font-display);
+  font-size: var(--font-size-md);
+  font-weight: 400;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-xs);
+}
+
+.message-bubble {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--border-radius-lg);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-base);
+}
+
+.message-user .message-bubble {
+  background-color: var(--color-accent);
+  color: #1a1410;
+  border-bottom-right-radius: var(--space-xs);
+}
+
+.message-assistant .message-bubble {
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+  border-bottom-left-radius: var(--space-xs);
+}
+
+/* Message with options list */
+.message-options {
+  margin-top: var(--space-sm);
+  padding-left: var(--space-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+.message-options li {
+  margin-bottom: var(--space-xs);
+}
+
+/* Message with images */
+.message-images {
+  display: flex;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.thumbnail {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: var(--border-radius);
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color var(--transition-fast), transform var(--transition-fast);
+  background: none;
+  padding: 0;
+
+  &:hover {
+    transform: scale(1.05);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  &.selected {
+    border-color: var(--color-accent);
+  }
+
+  & img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+.thumbnail-number {
+  position: absolute;
+  top: var(--space-xs);
+  left: var(--space-xs);
+  width: 20px;
+  height: 20px;
+  background-color: rgba(0, 0, 0, 0.7);
+  color: white;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.thumbnail-save {
+  position: absolute;
+  top: var(--space-xs);
+  right: var(--space-xs);
+  width: 24px;
+  height: 24px;
+  background-color: rgba(0, 0, 0, 0.6);
+  border-radius: var(--border-radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  border: none;
+  cursor: pointer;
+
+  .thumbnail:hover & {
+    opacity: 1;
+  }
+
+  & svg {
+    width: 14px;
+    height: 14px;
+    color: white;
+  }
+}
+
+/* Progress message */
+.message-progress {
+  position: relative;
+  padding: var(--space-sm) var(--space-md);
+  background-color: var(--color-bg-tertiary);
+  border-radius: var(--border-radius-lg);
+  overflow: hidden;
+}
+
+.progress-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background-color: var(--color-accent);
+  opacity: 0.2;
+  transition: width var(--transition-base);
+}
+
+.progress-text {
+  position: relative;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.progress-text.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-text-muted) 0%,
+    var(--color-text-primary) 50%,
+    var(--color-text-muted) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* System message */
+.message-system {
+  align-self: center;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  padding: var(--space-xs) var(--space-sm);
+}
+
+/* Jump to end */
+.jump-to-end {
+  position: sticky;
+  bottom: var(--space-md);
+  align-self: center;
+  padding: var(--space-sm) var(--space-md);
+  background-color: var(--color-bg-secondary);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--border-radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  box-shadow: var(--shadow-md);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--transition-base), visibility var(--transition-base);
+  cursor: pointer;
+
+  &.visible {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  &:hover {
+    background-color: var(--color-bg-tertiary);
+  }
+
+  & svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+
+/* ==========================================================================
+   CHAT INPUT
+   ========================================================================== */
+
+.chat-input-container {
+  padding: var(--space-md);
+  border-top: var(--border-width) solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.chat-input-wrapper {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: flex-end;
+}
+
+.chat-input {
+  flex: 1;
+  padding: var(--space-sm) var(--space-md);
+  background-color: var(--color-bg-tertiary);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--border-radius-lg);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  resize: none;
+  min-height: 40px;
+  max-height: 120px;
+
+  &:focus {
+    outline: none;
+    border-color: var(--color-accent);
+  }
+
+  &::placeholder {
+    color: var(--color-text-muted);
+  }
+}
+
+.chat-send {
+  width: 40px;
+  height: 40px;
+  background-color: var(--color-accent);
+  border-radius: var(--border-radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color var(--transition-fast);
+  flex-shrink: 0;
+
+  &:hover {
+    background-color: var(--color-accent-hover);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  & svg {
+    width: 20px;
+    height: 20px;
+    color: white;
+  }
+}
+
+.chat-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin-top: var(--space-xs);
+  text-align: center;
+}
+
+
+/* ==========================================================================
+   IMAGE PANEL
+   ========================================================================== */
+
+.image-panel {
+  flex: 1;
+  background-color: var(--color-image-bg);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  min-width: 0;
+}
+
+.image-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+  position: relative;
+  min-height: 0;
+}
+
+.image-main {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow-lg);
+}
+
+.image-actions-overlay {
+  position: absolute;
+  top: calc(var(--space-lg) + var(--space-sm));
+  right: calc(var(--space-lg) + var(--space-sm));
+  display: flex;
+  gap: var(--space-sm);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+
+  .image-container:hover & {
+    opacity: 1;
+  }
+}
+
+.image-action-btn {
+  width: 36px;
+  height: 36px;
+  background-color: rgba(0, 0, 0, 0.6);
+  border-radius: var(--border-radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border: none;
+  transition: background-color var(--transition-fast);
+
+  &:hover {
+    background-color: rgba(0, 0, 0, 0.8);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  & svg {
+    width: 20px;
+    height: 20px;
+    color: white;
+  }
+}
+
+.image-info {
+  padding: var(--space-sm) var(--space-lg);
+  background-color: var(--color-bg-secondary);
+  border-top: var(--border-width) solid var(--color-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.image-meta {
+  display: flex;
+  gap: var(--space-md);
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono);
+  color: var(--color-text-secondary);
+}
+
+.image-meta-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.image-meta-label {
+  color: var(--color-text-muted);
+}
+
+.image-actions {
+  display: flex;
+  gap: var(--space-sm);
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--space-xl);
+}
+
+.empty-state-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto var(--space-md);
+  opacity: 0.5;
+  color: var(--color-text-muted);
+}
+
+.empty-state-text {
+  font-size: var(--font-size-md);
+  margin-bottom: var(--space-xs);
+}
+
+.empty-state-hint {
+  font-size: var(--font-size-sm);
+}
+
+@media (max-width: 768px) {
+  .image-panel {
+    order: 1;
+    flex: 0 0 auto;
+    height: 40dvh;
+    min-height: 200px;
+  }
+}
+
+
+/* ==========================================================================
+   SETTINGS PANEL
+   ========================================================================== */
+
+.settings-panel {
+  width: 360px;
+  min-width: 280px;
+  background-color: var(--color-bg-secondary);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  margin-right: -360px;
+  visibility: hidden;
+  transition: margin-right var(--transition-base), visibility var(--transition-base);
+
+  &.open {
+    margin-right: 0;
+    visibility: visible;
+  }
+}
+
+@media (max-width: 1024px) {
+  .settings-panel {
+    position: fixed;
+    top: var(--header-height);
+    right: 0;
+    height: calc(100% - var(--header-height));
+    z-index: 50;
+    box-shadow: var(--shadow-lg);
+    margin-right: 0;
+    transform: translateX(100%);
+    transition: transform var(--transition-base), visibility var(--transition-base);
+
+    &.open {
+      transform: translateX(0);
+      margin-right: 0;
+    }
+  }
+}
+
+.settings-header {
+  height: var(--header-height);
+  padding: 0 var(--space-md);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: var(--border-width) solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.settings-title {
+  font-weight: 600;
+}
+
+.settings-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-md);
+}
+
+.settings-section {
+  margin-bottom: var(--space-lg);
+}
+
+.settings-section-title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--space-sm);
+}
+
+
+/* ==========================================================================
+   ICON BUTTON
+   ========================================================================== */
+
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--border-radius);
+  transition: background-color var(--transition-fast);
+  cursor: pointer;
+  background: none;
+  border: none;
+
+  &:hover {
+    background-color: var(--color-bg-hover);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  & svg {
+    width: 20px;
+    height: 20px;
+    color: var(--color-text-secondary);
+  }
+}
+
+
+/* ==========================================================================
+   BUTTONS
+   ========================================================================== */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  line-height: var(--line-height-tight);
+  text-decoration: none;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--border-radius);
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+
+  &:hover {
+    background-color: var(--color-bg-hover);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+.btn--primary {
+  background-color: var(--color-accent);
+  color: white;
+  border-color: var(--color-accent);
+
+  &:hover {
+    background-color: var(--color-accent-hover);
+    border-color: var(--color-accent-hover);
+  }
+}
+
+.btn--ghost {
+  background-color: transparent;
+  border-color: transparent;
+
+  &:hover {
+    background-color: var(--color-bg-hover);
+    border-color: var(--color-border);
+  }
+}
+
+.btn--sm {
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-size-xs);
+}
+
+
+/* ==========================================================================
+   FORM ELEMENTS
+   ========================================================================== */
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+}
+
+.form-label {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.form-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.form-input {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background-color: var(--color-bg-tertiary);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--border-radius);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+
+  &:focus {
+    outline: none;
+    border-color: var(--color-accent);
+  }
+}
+
+.form-select {
+  padding: var(--space-sm) var(--space-md);
+  padding-right: var(--space-xl);
+  background-color: var(--color-bg-tertiary);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--border-radius);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-sm) center;
+
+  &:focus {
+    outline: none;
+    border-color: var(--color-accent);
+  }
+}
+
+.form-textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.textarea-wrapper {
+  position: relative;
+}
+
+.textarea-wrapper .form-textarea {
+  width: 100%;
+}
+
+.textarea-copy {
+  position: absolute;
+  top: var(--space-xs);
+  right: var(--space-xs);
+  width: 28px;
+  height: 28px;
+  background-color: var(--color-bg-secondary);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--border-radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition-fast), background-color var(--transition-fast);
+
+  .textarea-wrapper:hover & {
+    opacity: 1;
+  }
+
+  &:hover {
+    background-color: var(--color-bg-hover);
+  }
+
+  &:focus-visible {
+    opacity: 1;
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  & svg {
+    width: 16px;
+    height: 16px;
+    color: var(--color-text-secondary);
+  }
+}
+
+.form-range {
+  width: 100%;
+  height: 6px;
+  background-color: var(--color-bg-tertiary);
+  border-radius: var(--border-radius-full);
+  appearance: none;
+  cursor: pointer;
+
+  &::-webkit-slider-thumb {
+    width: 18px;
+    height: 18px;
+    background-color: var(--color-accent);
+    border: none;
+    border-radius: 50%;
+    appearance: none;
+    cursor: grab;
+  }
+
+  &::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    background-color: var(--color-accent);
+    border: none;
+    border-radius: 50%;
+    cursor: grab;
+  }
+}
+
+.form-range-wrapper {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.form-range-value {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  min-width: 4ch;
+  text-align: right;
+}
+
+
+/* ==========================================================================
+   UTILITIES
+   ========================================================================== */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.flex { display: flex; }
+.gap-sm { gap: var(--space-sm); }
+.gap-md { gap: var(--space-md); }
+
+
+/* ==========================================================================
+   RESIZE HANDLES
+   ========================================================================== */
+
+.resize-handle {
+  width: 4px;
+  background-color: transparent;
+  cursor: col-resize;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+  transition: background-color var(--transition-fast);
+
+  &::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -4px;
+    right: -4px;
+    bottom: 0;
+  }
+
+  &:hover,
+  &.dragging {
+    background-color: var(--color-accent);
+  }
+}
+
+.main.resizing {
+  user-select: none;
+  cursor: col-resize;
+}
+
+#resize-settings {
+  visibility: hidden;
+  margin-right: -4px;
+  transition: visibility var(--transition-base), margin-right var(--transition-base);
+}
+
+.main:has(.settings-panel.open) #resize-settings {
+  visibility: visible;
+  margin-right: 0;
+}
+
+
+/* ==========================================================================
+   MODAL
+   ========================================================================== */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--transition-base), visibility var(--transition-base);
+
+  &.open {
+    opacity: 1;
+    visibility: visible;
+  }
+}
+
+.modal {
+  background-color: var(--color-bg-secondary);
+  border-radius: var(--border-radius-lg);
+  box-shadow: var(--shadow-lg);
+  width: 90%;
+  max-width: 500px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  transform: scale(0.95);
+  transition: transform var(--transition-base);
+
+  .modal-backdrop.open & {
+    transform: scale(1);
+  }
+}
+
+.modal-header {
+  padding: var(--space-md) var(--space-lg);
+  border-bottom: var(--border-width) solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.modal-title {
+  font-weight: 600;
+  font-size: var(--font-size-md);
+}
+
+.modal-content {
+  padding: var(--space-lg);
+  overflow-y: auto;
+  flex: 1;
+}
+
+.modal-footer {
+  padding: var(--space-md) var(--space-lg);
+  border-top: var(--border-width) solid var(--color-border);
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+  flex-shrink: 0;
+}
+  </style>
+</head>
+<body>
+
+  <div class="app">
+
+    <!-- ================================================================
+         APP HEADER
+         ================================================================ -->
+    <header class="app-header">
+      <button class="icon-btn" aria-label="Toggle history" onclick="toggleSidebar()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <path d="M9 3v18"/>
+        </svg>
+      </button>
+      <h1 class="app-header-title">Weave</h1>
+      <button class="icon-btn" aria-label="Toggle settings" onclick="toggleSettings()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <rect x="3" y="3" width="18" height="18" rx="2"/>
+          <path d="M15 3v18"/>
+        </svg>
+      </button>
+    </header>
+
+    <div class="app-body">
+
+    <!-- ================================================================
+         SIDEBAR - Conversation History
+         ================================================================ -->
+    <aside class="sidebar" id="sidebar">
+      <nav class="sidebar-content" style="padding-bottom: var(--space-sm);">
+        <a href="#" class="conversation-item active"
+           hx-get="/api/conversation/1" hx-target=".chat-messages" hx-swap="innerHTML">
+          <div class="conversation-item-thumb">
+            <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Cdefs%3E%3ClinearGradient id='sky' x1='0%25' y1='0%25' x2='0%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%234a0080'/%3E%3Cstop offset='100%25' style='stop-color:%23ffd700'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23sky)' width='96' height='96'/%3E%3Cellipse fill='%23ff6347' cx='48' cy='40' rx='18' ry='14'/%3E%3Crect fill='%232d1f3d' x='30' y='55' width='36' height='20'/%3E%3C/svg%3E" alt="">
+          </div>
+          <div class="conversation-item-content">
+            <div class="conversation-item-title">Dragon on Castle Tower</div>
+            <div class="conversation-item-preview">Final version with fire breath and sunset colors</div>
+            <div class="conversation-item-meta">
+              <span class="conversation-item-date">12:34</span>
+              <span>8 images</span>
+            </div>
+          </div>
+        </a>
+        <a href="#" class="conversation-item"
+           hx-get="/api/conversation/2" hx-target=".chat-messages" hx-swap="innerHTML">
+          <div class="conversation-item-thumb">
+            <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Crect fill='%23f5e6d3' width='96' height='96'/%3E%3Ccircle fill='%23d4a574' cx='48' cy='40' r='20'/%3E%3Crect fill='%23c9463d' x='38' y='60' width='20' height='25' rx='2'/%3E%3C/svg%3E" alt="">
+          </div>
+          <div class="conversation-item-content">
+            <div class="conversation-item-title">Portrait Series</div>
+            <div class="conversation-item-preview">Watercolor style portraits</div>
+            <div class="conversation-item-meta">
+              <span class="conversation-item-date">Yesterday</span>
+              <span>12 images</span>
+            </div>
+          </div>
+        </a>
+        <a href="#" class="conversation-item"
+           hx-get="/api/conversation/3" hx-target=".chat-messages" hx-swap="innerHTML">
+          <div class="conversation-item-thumb">
+            <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Crect fill='%231a1a2e' width='96' height='96'/%3E%3Cpath fill='%236366f1' d='M48 20 L68 48 L48 76 L28 48 Z'/%3E%3Ccircle fill='%23fff' cx='48' cy='48' r='8'/%3E%3C/svg%3E" alt="">
+          </div>
+          <div class="conversation-item-content">
+            <div class="conversation-item-title">Logo Concepts</div>
+            <div class="conversation-item-preview">Minimalist tech startup logos</div>
+            <div class="conversation-item-meta">
+              <span class="conversation-item-date">Jan 9</span>
+              <span>6 images</span>
+            </div>
+          </div>
+        </a>
+        <a href="#" class="conversation-item"
+           hx-get="/api/conversation/4" hx-target=".chat-messages" hx-swap="innerHTML">
+          <div class="conversation-item-thumb">
+            <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Cdefs%3E%3ClinearGradient id='sky2' x1='0%25' y1='0%25' x2='0%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%2387ceeb'/%3E%3Cstop offset='100%25' style='stop-color:%23228b22'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23sky2)' width='96' height='96'/%3E%3Cellipse fill='%23006400' cx='30' cy='60' rx='25' ry='30'/%3E%3Cellipse fill='%23228b22' cx='70' cy='55' rx='20' ry='25'/%3E%3Crect fill='%23654321' x='25' y='50' width='6' height='20'/%3E%3C/svg%3E" alt="">
+          </div>
+          <div class="conversation-item-content">
+            <div class="conversation-item-title">Fantasy Landscapes</div>
+            <div class="conversation-item-preview">Floating islands and mystical forests</div>
+            <div class="conversation-item-meta">
+              <span class="conversation-item-date">Jan 7</span>
+              <span>15 images</span>
+            </div>
+          </div>
+        </a>
+      </nav>
+      <footer class="sidebar-footer">
+        <button class="sidebar-settings-btn" onclick="openAppSettings()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>
+          </svg>
+          Settings
+        </button>
+      </footer>
+    </aside>
+
+    <main class="main">
+
+      <!-- ================================================================
+           CHAT PANEL
+           ================================================================ -->
+      <section class="chat-panel">
+        <div class="chat-messages" id="chat-messages">
+
+          <!-- System: Session Start -->
+          <div class="message message-system">Today, 12:15 PM</div>
+
+          <!-- User Message 1 -->
+          <div class="message message-user">
+            <div class="message-bubble">a dragon perched on a castle tower</div>
+          </div>
+
+          <!-- Ara Response 1 -->
+          <div class="message message-assistant">
+            <div class="message-sender">Ara</div>
+            <div class="message-bubble">Here are two directions—which feels closer?</div>
+            <ol class="message-options">
+              <li>Western dragon, dark and imposing</li>
+              <li>Eastern dragon, serpentine and elegant</li>
+            </ol>
+            <div class="message-images">
+              <button class="thumbnail" onclick="selectThumbnail(this)">
+                <span class="thumbnail-number">1</span>
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Crect fill='%231a1a2e' width='200' height='200'/%3E%3Crect fill='%2316213e' x='60' y='80' width='80' height='60' rx='5'/%3E%3Cpolygon fill='%230f3460' points='100,40 130,80 70,80'/%3E%3Ccircle fill='%23e94560' cx='85' cy='100' r='5'/%3E%3Ccircle fill='%23e94560' cx='115' cy='100' r='5'/%3E%3C/svg%3E" alt="Western dragon">
+                <button class="thumbnail-save" aria-label="Save">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                </button>
+              </button>
+              <button class="thumbnail" onclick="selectThumbnail(this)">
+                <span class="thumbnail-number">2</span>
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Cdefs%3E%3ClinearGradient id='esky' x1='0%25' y1='0%25' x2='0%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%23e8d5b7'/%3E%3Cstop offset='100%25' style='stop-color:%23f5e6d0'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23esky)' width='200' height='200'/%3E%3Cpath d='M30,170 Q50,140 70,150 Q90,160 100,130 Q110,100 130,110 Q150,120 160,90 Q170,60 180,50' stroke='%23c9463d' stroke-width='12' fill='none' stroke-linecap='round'/%3E%3Cpath d='M30,170 Q50,140 70,150 Q90,160 100,130 Q110,100 130,110 Q150,120 160,90 Q170,60 180,50' stroke='%23e07a5f' stroke-width='6' fill='none' stroke-linecap='round'/%3E%3Ccircle fill='%23c9463d' cx='180' cy='50' r='10'/%3E%3Ccircle fill='%23ffd93d' cx='183' cy='47' r='3'/%3E%3Cpath d='M175,45 L165,35 M175,55 L165,60' stroke='%23c9463d' stroke-width='2'/%3E%3Ccircle fill='%23f5deb3' cx='50' cy='40' r='20' opacity='0.6'/%3E%3C/svg%3E" alt="Eastern dragon">
+                <button class="thumbnail-save" aria-label="Save">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                </button>
+              </button>
+            </div>
+          </div>
+
+          <!-- User Message 2 -->
+          <div class="message message-user">
+            <div class="message-bubble">1, but make it more colorful</div>
+          </div>
+
+          <!-- Ara Response 2 -->
+          <div class="message message-assistant">
+            <div class="message-sender">Ara</div>
+            <div class="message-bubble">Added more color. Which palette?</div>
+            <ol class="message-options">
+              <li>Jewel tones—emerald scales, ruby accents</li>
+              <li>Sunset colors—orange, gold, deep purple</li>
+            </ol>
+            <div class="message-images">
+              <button class="thumbnail" onclick="selectThumbnail(this)">
+                <span class="thumbnail-number">1</span>
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Crect fill='%231a1a2e' width='200' height='200'/%3E%3Crect fill='%2350c878' x='60' y='80' width='80' height='60' rx='5'/%3E%3Cpolygon fill='%2300755e' points='100,40 130,80 70,80'/%3E%3Ccircle fill='%23e0115f' cx='85' cy='100' r='6'/%3E%3Ccircle fill='%23e0115f' cx='115' cy='100' r='6'/%3E%3C/svg%3E" alt="Jewel tones">
+                <button class="thumbnail-save" aria-label="Save">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                </button>
+              </button>
+              <button class="thumbnail selected" onclick="selectThumbnail(this)">
+                <span class="thumbnail-number">2</span>
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Cdefs%3E%3ClinearGradient id='sunset' x1='0%25' y1='0%25' x2='0%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%234a0080'/%3E%3Cstop offset='50%25' style='stop-color:%23ff6b35'/%3E%3Cstop offset='100%25' style='stop-color:%23ffd700'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23sunset)' width='200' height='200'/%3E%3Crect fill='%23ff8c00' x='60' y='80' width='80' height='60' rx='5'/%3E%3Cpolygon fill='%23ff6347' points='100,40 130,80 70,80'/%3E%3Ccircle fill='%23ffd700' cx='85' cy='100' r='6'/%3E%3Ccircle fill='%23ffd700' cx='115' cy='100' r='6'/%3E%3C/svg%3E" alt="Sunset colors">
+                <button class="thumbnail-save" aria-label="Save">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                </button>
+              </button>
+            </div>
+          </div>
+
+          <!-- User Message 3 -->
+          <div class="message message-user">
+            <div class="message-bubble">2 is great. can you make it breathing fire?</div>
+          </div>
+
+          <!-- Ara Response 3 -->
+          <div class="message message-assistant">
+            <div class="message-sender">Ara</div>
+            <div class="message-bubble">Added fire breath. Want me to render a final high-quality version, or keep iterating?</div>
+            <div class="message-images">
+              <button class="thumbnail" onclick="selectThumbnail(this)">
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Cdefs%3E%3ClinearGradient id='sunset2' x1='0%25' y1='0%25' x2='0%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%234a0080'/%3E%3Cstop offset='50%25' style='stop-color:%23ff6b35'/%3E%3Cstop offset='100%25' style='stop-color:%23ffd700'/%3E%3C/linearGradient%3E%3ClinearGradient id='fire' x1='0%25' y1='100%25' x2='100%25' y2='0%25'%3E%3Cstop offset='0%25' style='stop-color:%23ff0000'/%3E%3Cstop offset='50%25' style='stop-color:%23ff6600'/%3E%3Cstop offset='100%25' style='stop-color:%23ffff00'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23sunset2)' width='200' height='200'/%3E%3Crect fill='%23ff8c00' x='60' y='80' width='80' height='60' rx='5'/%3E%3Cpolygon fill='%23ff6347' points='100,40 130,80 70,80'/%3E%3Ccircle fill='%23ffd700' cx='85' cy='100' r='6'/%3E%3Ccircle fill='%23ffd700' cx='115' cy='100' r='6'/%3E%3Cpath fill='url(%23fire)' d='M140,95 Q160,80 175,60 Q165,85 180,70 Q170,95 155,100 Q165,105 155,110 Z'/%3E%3C/svg%3E" alt="Dragon with fire">
+                <button class="thumbnail-save" aria-label="Save">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                </button>
+              </button>
+            </div>
+          </div>
+
+          <!-- User Message 4 -->
+          <div class="message message-user">
+            <div class="message-bubble">final version</div>
+          </div>
+
+          <!-- Ara Response 4 - Final -->
+          <div class="message message-assistant">
+            <div class="message-sender">Ara</div>
+            <div class="message-bubble">Here's the full-quality render. I used the slower SDXL model for finer detail on the scales and fire effects.</div>
+            <div class="message-images">
+              <button class="thumbnail selected" onclick="selectThumbnail(this)" style="width: 160px;">
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='160' viewBox='0 0 320 160'%3E%3Cdefs%3E%3ClinearGradient id='sky3' x1='0%25' y1='0%25' x2='0%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%234a0080'/%3E%3Cstop offset='40%25' style='stop-color:%23ff4500'/%3E%3Cstop offset='70%25' style='stop-color:%23ff8c00'/%3E%3Cstop offset='100%25' style='stop-color:%23ffd700'/%3E%3C/linearGradient%3E%3ClinearGradient id='fire3' x1='0%25' y1='50%25' x2='100%25' y2='50%25'%3E%3Cstop offset='0%25' style='stop-color:%23ff0000'/%3E%3Cstop offset='50%25' style='stop-color:%23ff6600'/%3E%3Cstop offset='100%25' style='stop-color:%23ffff99'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23sky3)' width='320' height='160'/%3E%3Crect fill='%232d1f3d' x='100' y='100' width='120' height='60'/%3E%3Crect fill='%233d2952' x='115' y='85' width='35' height='75'/%3E%3Crect fill='%233d2952' x='170' y='75' width='40' height='85'/%3E%3Cellipse fill='%23ff6347' cx='160' cy='65' rx='35' ry='28'/%3E%3Cellipse fill='%23ff8c00' cx='160' cy='62' rx='28' ry='22'/%3E%3Cpolygon fill='%23cc4125' points='160,35 175,55 145,55'/%3E%3Ccircle fill='%23ffd700' cx='152' cy='60' r='4'/%3E%3Ccircle fill='%23ffd700' cx='168' cy='60' r='4'/%3E%3Cpath fill='url(%23fire3)' d='M190,58 Q220,50 250,40 Q230,55 260,42 Q240,62 225,65 Q235,70 225,75 Q210,70 195,68 Z' opacity='0.9'/%3E%3Ccircle fill='%23ffd700' cx='40' cy='25' r='15' opacity='0.8'/%3E%3C/svg%3E" alt="Final dragon render">
+                <button class="thumbnail-save" aria-label="Save">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+                </button>
+              </button>
+            </div>
+          </div>
+
+          <!-- Jump to end (hidden by default) -->
+          <button class="jump-to-end" id="jump-to-end" onclick="scrollToEnd()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M12 5v14M19 12l-7 7-7-7"/>
+            </svg>
+            Jump to end
+          </button>
+
+        </div>
+
+        <!-- Chat Input -->
+        <div class="chat-input-container">
+          <form hx-post="/api/chat" hx-target="#chat-messages" hx-swap="beforeend">
+            <div class="chat-input-wrapper">
+              <textarea class="chat-input" name="message" placeholder="Describe what you want to create..." rows="1"></textarea>
+              <button type="submit" class="chat-send" aria-label="Send">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+                </svg>
+              </button>
+            </div>
+            <div class="chat-hint">Drop images here to use as reference</div>
+          </form>
+        </div>
+      </section>
+
+      <!-- Resize handle: Chat | Image -->
+      <div class="resize-handle" id="resize-chat" data-resize="chat"></div>
+
+      <!-- ================================================================
+           IMAGE PANEL
+           ================================================================ -->
+      <section class="image-panel">
+        <div class="image-container" id="canvas-display">
+          <img class="image-main"
+               src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='800' height='400' viewBox='0 0 400 200'%3E%3Cdefs%3E%3ClinearGradient id='sky4' x1='0%25' y1='0%25' x2='0%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%234a0080'/%3E%3Cstop offset='40%25' style='stop-color:%23ff4500'/%3E%3Cstop offset='70%25' style='stop-color:%23ff8c00'/%3E%3Cstop offset='100%25' style='stop-color:%23ffd700'/%3E%3C/linearGradient%3E%3ClinearGradient id='fire4' x1='0%25' y1='50%25' x2='100%25' y2='50%25'%3E%3Cstop offset='0%25' style='stop-color:%23ff0000'/%3E%3Cstop offset='30%25' style='stop-color:%23ff6600'/%3E%3Cstop offset='60%25' style='stop-color:%23ffcc00'/%3E%3Cstop offset='100%25' style='stop-color:%23ffff99'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23sky4)' width='400' height='200'/%3E%3Crect fill='%232d1f3d' x='120' y='130' width='160' height='70'/%3E%3Crect fill='%233d2952' x='140' y='110' width='40' height='90'/%3E%3Crect fill='%233d2952' x='220' y='100' width='50' height='100'/%3E%3Crect fill='%234a3663' x='180' y='120' width='30' height='80'/%3E%3Cellipse fill='%23ff6347' cx='200' cy='85' rx='45' ry='35'/%3E%3Cellipse fill='%23ff8c00' cx='200' cy='80' rx='35' ry='28'/%3E%3Cpolygon fill='%23cc4125' points='200,45 220,70 180,70'/%3E%3Cpolygon fill='%23cc4125' points='170,60 180,75 160,75'/%3E%3Cpolygon fill='%23cc4125' points='230,60 240,75 220,75'/%3E%3Ccircle fill='%23ffd700' cx='188' cy='78' r='5'/%3E%3Ccircle fill='%23ffd700' cx='212' cy='78' r='5'/%3E%3Ccircle fill='%23000' cx='188' cy='78' r='2'/%3E%3Ccircle fill='%23000' cx='212' cy='78' r='2'/%3E%3Cpath fill='url(%23fire4)' d='M235,75 Q280,65 320,50 Q290,70 330,55 Q300,80 280,85 Q300,90 280,95 Q260,90 240,88 Z' opacity='0.9'/%3E%3Cpath fill='%23ffff99' d='M235,80 Q260,75 285,65 Q270,80 250,82 Z' opacity='0.7'/%3E%3Ccircle fill='%23ffd700' cx='50' cy='30' r='20' opacity='0.8'/%3E%3C/svg%3E"
+               alt="Dragon perched on castle tower breathing fire at sunset">
+          <div class="image-actions-overlay">
+            <button class="image-action-btn" aria-label="Open in new tab" onclick="openImageInNewTab()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3"/>
+              </svg>
+            </button>
+            <button class="image-action-btn" aria-label="Save image">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Resize handle: Image | Settings -->
+      <div class="resize-handle" id="resize-settings" data-resize="settings"></div>
+
+      <!-- ================================================================
+           SETTINGS PANEL
+           ================================================================ -->
+      <aside class="settings-panel" id="settings-panel">
+        <header class="settings-header">
+          <span class="settings-title">Image Details</span>
+        </header>
+        <div class="settings-content">
+
+          <div class="settings-section">
+            <div class="form-group">
+              <label class="form-label">Resolved Prompt</label>
+              <div class="textarea-wrapper">
+                <textarea class="form-input form-textarea" id="resolved-prompt" readonly style="font-family: var(--font-mono); font-size: var(--font-size-xs); height: 160px; resize: none;">A majestic Western dragon with sunset-colored scales (orange, gold, deep purple) perched atop a medieval castle tower, breathing a stream of fire, dramatic sunset lighting, epic fantasy art, highly detailed scales, volumetric lighting, 8k</textarea>
+                <button class="textarea-copy" aria-label="Copy to clipboard" onclick="copyText('resolved-prompt')">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2"/>
+                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Negative Prompt</label>
+              <div class="textarea-wrapper">
+                <textarea class="form-input form-textarea" id="negative-prompt" style="font-family: var(--font-mono); font-size: var(--font-size-xs); height: 40px; resize: none;">blurry, low quality, distorted, deformed, ugly, bad anatomy, watermark</textarea>
+                <button class="textarea-copy" aria-label="Copy to clipboard" onclick="copyText('negative-prompt')">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2"/>
+                    <path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/>
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3 class="settings-section-title">Parameters</h3>
+            <div class="form-group">
+              <label class="form-label">Model</label>
+              <select class="form-select form-input">
+                <option>Stable Diffusion 1.5</option>
+                <option selected>Stable Diffusion XL</option>
+                <option>FLUX.1</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Sampler</label>
+              <select class="form-select form-input">
+                <option>Euler A</option>
+                <option selected>DPM++ 2M Karras</option>
+                <option>DDIM</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">CFG Scale</label>
+              <div class="form-range-wrapper">
+                <input type="range" class="form-range" min="1" max="20" value="7.5" step="0.5">
+                <span class="form-range-value">7.5</span>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Steps</label>
+              <div class="form-range-wrapper">
+                <input type="range" class="form-range" min="10" max="100" value="50" step="5">
+                <span class="form-range-value">50</span>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Seed</label>
+              <input type="text" class="form-input" value="3847291056" style="font-family: var(--font-mono);">
+              <span class="form-hint">Use -1 for random</span>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3 class="settings-section-title">Dimensions</h3>
+            <div class="flex gap-md">
+              <div class="form-group" style="flex: 1;">
+                <label class="form-label">Width</label>
+                <input type="number" class="form-input" value="1024" step="64">
+              </div>
+              <div class="form-group" style="flex: 1;">
+                <label class="form-label">Height</label>
+                <input type="number" class="form-input" value="512" step="64">
+              </div>
+            </div>
+          </div>
+
+          <div class="flex gap-sm">
+            <button class="btn btn--primary" hx-post="/api/regenerate" hx-target="#canvas-display" hx-swap="innerHTML">Regenerate</button>
+            <button class="btn">Copy Settings</button>
+          </div>
+
+        </div>
+      </aside>
+
+    </main>
+    </div><!-- .app-body -->
+  </div>
+
+  <!-- ================================================================
+       APP SETTINGS MODAL
+       ================================================================ -->
+  <div class="modal-backdrop" id="app-settings-modal" onclick="closeAppSettings(event)">
+    <div class="modal" onclick="event.stopPropagation()">
+      <header class="modal-header">
+        <h2 class="modal-title">App Settings</h2>
+        <button class="icon-btn" aria-label="Close" onclick="closeAppSettings()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </header>
+      <div class="modal-content">
+        <div class="settings-section">
+          <h3 class="settings-section-title">Ara Behavior</h3>
+          <div class="form-group">
+            <label class="form-label">Response Style</label>
+            <select class="form-select form-input">
+              <option>Concise - Brief responses, minimal explanation</option>
+              <option selected>Balanced - Clear responses with context</option>
+              <option>Detailed - Thorough explanations and suggestions</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Proactive Suggestions</label>
+            <select class="form-select form-input">
+              <option>Off - Only respond when asked</option>
+              <option selected>Moderate - Occasional suggestions</option>
+              <option>Active - Frequent tips and alternatives</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3 class="settings-section-title">Generation Defaults</h3>
+          <div class="form-group">
+            <label class="form-label">Default Style</label>
+            <select class="form-select form-input">
+              <option selected>None - Let Ara decide</option>
+              <option>Photography</option>
+              <option>Digital Art</option>
+              <option>Illustration</option>
+              <option>Anime</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Default Aspect Ratio</label>
+            <select class="form-select form-input">
+              <option selected>Auto - Based on content</option>
+              <option>1:1 Square</option>
+              <option>16:9 Widescreen</option>
+              <option>9:16 Portrait</option>
+              <option>4:3 Standard</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="settings-section">
+          <h3 class="settings-section-title">Storage</h3>
+          <div class="form-group">
+            <label class="form-label">Save Location</label>
+            <div class="flex gap-sm">
+              <input type="text" class="form-input" value="~/Pictures/Weave" readonly style="flex: 1;">
+              <button class="btn">Browse</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <footer class="modal-footer">
+        <button class="btn" onclick="closeAppSettings()">Cancel</button>
+        <button class="btn btn--primary" onclick="closeAppSettings()">Save</button>
+      </footer>
+    </div>
+  </div>
+
+  <script>
+    // Toggle sidebar
+    function toggleSidebar() {
+      document.getElementById('sidebar').classList.toggle('collapsed');
+    }
+
+    // Toggle settings panel
+    function toggleSettings() {
+      const panel = document.getElementById('settings-panel');
+      const isOpen = panel.classList.contains('open');
+
+      if (isOpen) {
+        // Closing: set margin-right to negative of current width
+        const width = panel.offsetWidth;
+        panel.style.marginRight = -width + 'px';
+        panel.classList.remove('open');
+      } else {
+        // Opening: reset margin-right to 0
+        panel.classList.add('open');
+        panel.style.marginRight = '0';
+      }
+    }
+
+    // Copy text to clipboard
+    function copyText(id) {
+      const textarea = document.getElementById(id);
+      navigator.clipboard.writeText(textarea.value);
+    }
+
+    // Open image in new tab
+    function openImageInNewTab() {
+      const img = document.querySelector('.image-main');
+      if (img && img.src) {
+        window.open(img.src, '_blank');
+      }
+    }
+
+    // App settings modal
+    function openAppSettings() {
+      document.getElementById('app-settings-modal').classList.add('open');
+    }
+
+    function closeAppSettings(event) {
+      if (!event || event.target === event.currentTarget) {
+        document.getElementById('app-settings-modal').classList.remove('open');
+      }
+    }
+
+    // Select thumbnail
+    function selectThumbnail(el) {
+      document.querySelectorAll('.thumbnail').forEach(t => t.classList.remove('selected'));
+      el.classList.add('selected');
+    }
+
+    // Scroll to end
+    function scrollToEnd() {
+      const el = document.getElementById('chat-messages');
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+    }
+
+    // Show/hide jump button on scroll
+    document.getElementById('chat-messages').addEventListener('scroll', function() {
+      const btn = document.getElementById('jump-to-end');
+      const atBottom = this.scrollHeight - this.scrollTop - this.clientHeight < 100;
+      btn.classList.toggle('visible', !atBottom);
+    });
+
+    // Auto-resize textarea
+    document.querySelector('.chat-input').addEventListener('input', function() {
+      this.style.height = 'auto';
+      this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+    });
+
+    // Update range slider values
+    document.querySelectorAll('.form-range').forEach(range => {
+      const wrapper = range.closest('.form-range-wrapper');
+      if (wrapper) {
+        const value = wrapper.querySelector('.form-range-value');
+        if (value) {
+          range.addEventListener('input', () => {
+            value.textContent = range.value;
+          });
+        }
+      }
+    });
+
+    // Panel resize functionality
+    (function() {
+      const mainEl = document.querySelector('.main');
+      const chatPanel = document.querySelector('.chat-panel');
+      const settingsPanel = document.getElementById('settings-panel');
+      const resizeChat = document.getElementById('resize-chat');
+      const resizeSettings = document.getElementById('resize-settings');
+
+      let isResizing = false;
+      let currentHandle = null;
+      let startX = 0;
+      let startWidth = 0;
+
+      function startResize(e, handle) {
+        isResizing = true;
+        currentHandle = handle;
+        startX = e.clientX;
+
+        if (handle === 'chat') {
+          startWidth = chatPanel.offsetWidth;
+        } else if (handle === 'settings') {
+          startWidth = settingsPanel.offsetWidth;
+        }
+
+        mainEl.classList.add('resizing');
+        e.target.classList.add('dragging');
+        e.preventDefault();
+      }
+
+      function doResize(e) {
+        if (!isResizing) return;
+
+        const delta = e.clientX - startX;
+
+        if (currentHandle === 'chat') {
+          const newWidth = Math.max(250, Math.min(600, startWidth + delta));
+          chatPanel.style.width = newWidth + 'px';
+        } else if (currentHandle === 'settings') {
+          const newWidth = Math.max(280, Math.min(500, startWidth - delta));
+          settingsPanel.style.width = newWidth + 'px';
+        }
+      }
+
+      function stopResize() {
+        if (!isResizing) return;
+        isResizing = false;
+        mainEl.classList.remove('resizing');
+        document.querySelectorAll('.resize-handle').forEach(h => h.classList.remove('dragging'));
+        currentHandle = null;
+      }
+
+      resizeChat.addEventListener('mousedown', (e) => startResize(e, 'chat'));
+      resizeSettings.addEventListener('mousedown', (e) => startResize(e, 'settings'));
+      document.addEventListener('mousemove', doResize);
+      document.addEventListener('mouseup', stopResize);
+    })();
+  </script>
+
+</body>
+</html>

@@ -12,6 +12,9 @@
 
 # Weave project source files
 !*.go
+!*.html
+!*.css
+!*.ttf
 !go.sum
 !go.mod
 

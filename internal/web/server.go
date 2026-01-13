@@ -280,6 +280,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	sessionID := GetSessionID(r.Context())
 
+	// Disable write deadline for chat requests since LLM streaming can take a long time.
+	// Without this, the server's WriteTimeout (15s) would kill long-running requests.
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
+
 	// SECURITY: Limit request body size
 	r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodySize)
 
@@ -366,7 +371,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Stream response from ollama with automatic retry on format errors
 	tokenCount := 0
-	result, err := s.chatWithRetry(r.Context(), ollamaMessages, nil, func(token ollama.StreamToken) error {
+	result, err := s.chatWithRetry(r.Context(), sessionID, ollamaMessages, nil, func(token ollama.StreamToken) error {
 		// Send each token via SSE
 		if token.Content != "" {
 			tokenCount++
@@ -751,7 +756,7 @@ Do not include any conversational text before the delimiter.`, content)
 //   - Level 2: 1 retry with compacted context (summarized user intent)
 //   - Maximum 3 total attempts (initial + 2 format reminders + 1 compaction)
 //   - Retry count is per-request, not cumulative across conversation
-func (s *Server) chatWithRetry(ctx context.Context, messages []ollama.Message, seed *int64, callback ollama.StreamCallback) (ollama.ChatResult, error) {
+func (s *Server) chatWithRetry(ctx context.Context, sessionID string, messages []ollama.Message, seed *int64, callback ollama.StreamCallback) (ollama.ChatResult, error) {
 	const maxFormatRetries = 2
 
 	// Format reminder message with example showing correct format.
@@ -812,6 +817,11 @@ Please respond again with the correct format.`
 			// We have retries left - append format reminder and try again
 			log.Printf("Format error on attempt %d, retrying with format reminder: %v", attempt+1, err)
 
+			// Send retry event to UI so it can clear the partial streaming message
+			_ = s.broker.SendEvent(sessionID, EventAgentRetry, map[string]int{
+				"attempt": attempt + 2, // Next attempt number (1-indexed)
+			})
+
 			// Append user message with format reminder
 			// WHY APPEND TO COPY: We append to messagesCopy (not messages) so the
 			// reminder is transient. The caller's conversation history remains clean.
@@ -826,6 +836,11 @@ Please respond again with the correct format.`
 		} else {
 			// Exhausted Level 1 retries - escalate to Level 2 (context compaction)
 			log.Printf("Format error after %d retries, trying context compaction: %v", maxFormatRetries, err)
+
+			// Send retry event to UI so it can clear the partial streaming message
+			_ = s.broker.SendEvent(sessionID, EventAgentRetry, map[string]int{
+				"attempt": maxFormatRetries + 2, // Context compaction attempt
+			})
 
 			// Compact original messages (not messagesCopy with format reminders).
 			// WHY USE ORIGINAL MESSAGES: Level 2 compaction starts fresh with a

@@ -1,0 +1,1868 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Weave - Component Library</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <style>
+/* ==========================================================================
+   FONT FACE
+   ========================================================================== */
+
+@font-face {
+  font-family: 'MarckScript';
+  src: url('MarckScript-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+
+/* ==========================================================================
+   CSS CUSTOM PROPERTIES
+   ========================================================================== */
+
+:root {
+  /* Colors - Warm & Inviting Palette */
+  --color-bg-primary: #faf8f5;
+  --color-bg-secondary: #fffdf9;
+  --color-bg-tertiary: #f2ede6;
+  --color-bg-hover: #e8e0d5;
+  --color-text-primary: #2c241c;
+  --color-text-secondary: #5c4d3d;
+  --color-text-muted: #8a7a68;
+  --color-border: #e0d6c8;
+  --color-border-strong: #c9baa6;
+  --color-accent: #b8864e;
+  --color-accent-hover: #a0733d;
+  --color-accent-subtle: #f5ede2;
+  --color-error: #c45a3b;
+  --color-error-bg: #fdf2ef;
+  --color-success: #5a8a5a;
+  --color-success-bg: #f2f8f2;
+  --color-warning: #b8860b;
+  --color-warning-bg: #fdf8eb;
+  --color-image-bg: #f5f2ed;
+
+  /* Typography Scale - Perfect Fourth (1.333) */
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.875rem;
+  --font-size-base: 1rem;
+  --font-size-md: 1.125rem;
+  --font-size-lg: 1.5rem;
+  --font-size-xl: 2rem;
+  --font-size-xxl: 2.5rem;
+
+  /* Font Families */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, 'Cascadia Code', Consolas, monospace;
+  --font-display: 'MarckScript', 'Snell Roundhand', 'Segoe Script', cursive;
+
+  /* Line Heights */
+  --line-height-tight: 1.25;
+  --line-height-base: 1.5;
+  --line-height-relaxed: 1.75;
+
+  /* Spacing Scale */
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+  --space-xxl: 3rem;
+
+  /* Border & Radius */
+  --border-width: 1px;
+  --border-radius: 8px;
+  --border-radius-lg: 12px;
+  --border-radius-full: 9999px;
+
+  /* Layout */
+  --sidebar-width: 280px;
+  --chat-width: 400px;
+  --header-height: 48px;
+  --max-content-width: 75ch;
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.07);
+  --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.1);
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-base: 200ms ease;
+}
+
+/* Dark Mode - Warm & Inviting */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg-primary: #12100e;
+    --color-bg-secondary: #1a1714;
+    --color-bg-tertiary: #242019;
+    --color-bg-hover: #2e2820;
+    --color-text-primary: #f5efe6;
+    --color-text-secondary: #b8a992;
+    --color-text-muted: #7a6f60;
+    --color-border: #2e2820;
+    --color-border-strong: #3d352a;
+    --color-accent: #d4a574;
+    --color-accent-hover: #e4bb8a;
+    --color-accent-subtle: #2a2118;
+    --color-error: #e07a5f;
+    --color-error-bg: #231815;
+    --color-success: #8fbc8f;
+    --color-success-bg: #182018;
+    --color-warning: #daa520;
+    --color-warning-bg: #231f12;
+    --color-image-bg: #161412;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 10px 25px rgba(0, 0, 0, 0.6);
+  }
+}
+
+
+/* ==========================================================================
+   RESET & BASE STYLES
+   ========================================================================== */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* Scrollbar Styling */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--color-border-strong);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-text-muted);
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-primary);
+  min-height: 100dvh;
+}
+
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+  font-weight: 600;
+  line-height: var(--line-height-tight);
+  margin-block-end: var(--space-sm);
+  color: var(--color-text-primary);
+}
+
+h1 { font-size: var(--font-size-xxl); }
+h2 { font-size: var(--font-size-xl); }
+h3 { font-size: var(--font-size-lg); }
+h4 { font-size: var(--font-size-md); }
+
+p {
+  max-width: var(--max-content-width);
+  margin-block-end: var(--space-md);
+  color: var(--color-text-secondary);
+}
+
+a {
+  color: var(--color-accent);
+  text-decoration: none;
+
+  &:hover {
+    text-decoration: underline;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+code, pre, kbd, samp {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+code {
+  background-color: var(--color-bg-tertiary);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--border-radius);
+}
+
+pre {
+  background-color: var(--color-bg-tertiary);
+  padding: var(--space-md);
+  border-radius: var(--border-radius);
+  overflow-x: auto;
+  max-width: 100%;
+
+  & code {
+    background: none;
+    padding: 0;
+  }
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+
+/* ==========================================================================
+   LAYOUT - APP SHELL
+   ========================================================================== */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.app-header {
+  height: var(--header-height);
+  background-color: var(--color-bg-secondary);
+  border-bottom: var(--border-width) solid var(--color-border);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-md);
+  gap: var(--space-sm);
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+.app-header-title {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: var(--font-size-lg);
+  flex: 1;
+  letter-spacing: 0.02em;
+}
+
+
+.app-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: var(--header-height);
+    height: calc(100% - var(--header-height));
+    z-index: 50;
+    box-shadow: var(--shadow-lg);
+    margin-left: 0;
+    transition: transform var(--transition-base), visibility var(--transition-base);
+  }
+
+  .sidebar.collapsed {
+    transform: translateX(-100%);
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 768px) {
+  .main {
+    flex-direction: column;
+  }
+}
+
+
+/* ==========================================================================
+   SIDEBAR
+   ========================================================================== */
+
+.sidebar {
+  width: var(--sidebar-width);
+  background-color: var(--color-bg-secondary);
+  border-right: var(--border-width) solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  transition: margin-left var(--transition-base), visibility var(--transition-base);
+}
+
+.sidebar.collapsed {
+  margin-left: calc(-1 * var(--sidebar-width));
+  visibility: hidden;
+}
+
+.sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-sm);
+}
+
+.conversation-item {
+  padding: var(--space-sm);
+  border-radius: var(--border-radius);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+  display: flex;
+  gap: var(--space-sm);
+  text-decoration: none;
+  color: inherit;
+
+  &:hover {
+    background-color: var(--color-bg-hover);
+  }
+
+  &.active {
+    background-color: var(--color-accent-subtle);
+  }
+}
+
+.conversation-item-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background-color: var(--color-bg-tertiary);
+
+  & img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+.conversation-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.conversation-item-title {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.conversation-item-preview {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+}
+
+.conversation-item-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: var(--space-xs);
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.conversation-item-date {
+  font-family: var(--font-mono);
+}
+
+
+/* ==========================================================================
+   CHAT PANEL
+   ========================================================================== */
+
+.chat-panel {
+  width: var(--chat-width);
+  max-width: 480px;
+  min-width: 300px;
+  background-color: var(--color-bg-secondary);
+  border-right: var(--border-width) solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  position: relative;
+}
+
+@media (max-width: 768px) {
+  .chat-panel {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    order: 2;
+    flex: 1;
+  }
+}
+
+
+/* ==========================================================================
+   MESSAGES
+   ========================================================================== */
+
+.message {
+  max-width: 100%;
+}
+
+.message-user {
+  align-self: flex-end;
+}
+
+.message-assistant {
+  align-self: flex-start;
+}
+
+.message-sender {
+  font-family: var(--font-display);
+  font-size: var(--font-size-md);
+  font-weight: 400;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-xs);
+}
+
+.message-bubble {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--border-radius-lg);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-base);
+}
+
+.message-user .message-bubble {
+  background-color: var(--color-accent);
+  color: #1a1410;
+  border-bottom-right-radius: var(--space-xs);
+}
+
+.message-assistant .message-bubble {
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text-primary);
+  border-bottom-left-radius: var(--space-xs);
+}
+
+/* Message with images */
+.message-images {
+  display: flex;
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.thumbnail {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: var(--border-radius);
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color var(--transition-fast), transform var(--transition-fast);
+  background: none;
+  padding: 0;
+
+  &:hover {
+    transform: scale(1.05);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  &.selected {
+    border-color: var(--color-accent);
+  }
+
+  & img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+.thumbnail-number {
+  position: absolute;
+  top: var(--space-xs);
+  left: var(--space-xs);
+  width: 20px;
+  height: 20px;
+  background-color: rgba(0, 0, 0, 0.7);
+  color: white;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Progress message */
+.message-progress {
+  position: relative;
+  padding: var(--space-sm) var(--space-md);
+  background-color: var(--color-bg-tertiary);
+  border-radius: var(--border-radius-lg);
+  overflow: hidden;
+}
+
+.progress-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background-color: var(--color-accent);
+  opacity: 0.2;
+  transition: width var(--transition-base);
+}
+
+.progress-text {
+  position: relative;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  white-space: nowrap;
+}
+
+.progress-text.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--color-text-muted) 0%,
+    var(--color-text-primary) 50%,
+    var(--color-text-muted) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* Error message */
+.message-error {
+  padding: var(--space-sm) var(--space-md);
+  background-color: var(--color-error-bg);
+  border: var(--border-width) solid var(--color-error);
+  border-radius: var(--border-radius-lg);
+  color: var(--color-error);
+  font-size: var(--font-size-sm);
+}
+
+.message-error-title {
+  font-weight: 600;
+  margin-bottom: var(--space-xs);
+}
+
+/* Jump to end button */
+.jump-to-end {
+  position: sticky;
+  bottom: var(--space-md);
+  align-self: center;
+  padding: var(--space-sm) var(--space-md);
+  background-color: var(--color-bg-secondary);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--border-radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  box-shadow: var(--shadow-md);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--transition-base), visibility var(--transition-base);
+  cursor: pointer;
+
+  &.visible {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  &:hover {
+    background-color: var(--color-bg-tertiary);
+  }
+
+  & svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+
+/* ==========================================================================
+   CHAT INPUT
+   ========================================================================== */
+
+.chat-input-container {
+  padding: var(--space-md);
+  border-top: var(--border-width) solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.chat-input-wrapper {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: flex-end;
+}
+
+.chat-input {
+  flex: 1;
+  padding: var(--space-sm) var(--space-md);
+  background-color: var(--color-bg-tertiary);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--border-radius-lg);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  resize: none;
+  min-height: 40px;
+  max-height: 120px;
+
+  &:focus {
+    outline: none;
+    border-color: var(--color-accent);
+  }
+
+  &::placeholder {
+    color: var(--color-text-muted);
+  }
+}
+
+.chat-send {
+  width: 40px;
+  height: 40px;
+  background-color: var(--color-accent);
+  border-radius: var(--border-radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color var(--transition-fast);
+  flex-shrink: 0;
+
+  &:hover {
+    background-color: var(--color-accent-hover);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  & svg {
+    width: 20px;
+    height: 20px;
+    color: white;
+  }
+}
+
+.chat-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin-top: var(--space-xs);
+  text-align: center;
+}
+
+
+/* ==========================================================================
+   IMAGE PANEL
+   ========================================================================== */
+
+.image-panel {
+  flex: 1;
+  background-color: var(--color-image-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-width: 0;
+}
+
+.image-container {
+  position: relative;
+  max-width: 100%;
+  max-height: 100%;
+  padding: var(--space-lg);
+}
+
+.image-main {
+  max-width: 100%;
+  max-height: calc(100dvh - var(--space-xl) * 2);
+  border-radius: var(--border-radius);
+  box-shadow: var(--shadow-lg);
+}
+
+.image-save {
+  position: absolute;
+  top: calc(var(--space-lg) + var(--space-sm));
+  right: calc(var(--space-lg) + var(--space-sm));
+  width: 36px;
+  height: 36px;
+  background-color: rgba(0, 0, 0, 0.6);
+  border-radius: var(--border-radius);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+  cursor: pointer;
+
+  .image-container:hover & {
+    opacity: 1;
+  }
+
+  &:hover {
+    background-color: rgba(0, 0, 0, 0.8);
+  }
+
+  & svg {
+    width: 20px;
+    height: 20px;
+    color: white;
+  }
+}
+
+/* Empty state */
+.empty-state {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--space-xl);
+}
+
+.empty-state-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto var(--space-md);
+  opacity: 0.5;
+}
+
+.empty-state-text {
+  font-size: var(--font-size-md);
+  margin-bottom: var(--space-xs);
+}
+
+.empty-state-hint {
+  font-size: var(--font-size-sm);
+}
+
+@media (max-width: 768px) {
+  .image-panel {
+    order: 1;
+    flex: 0 0 auto;
+    height: 40dvh;
+    min-height: 200px;
+  }
+
+  .image-main {
+    max-height: calc(40dvh - var(--space-md) * 2);
+  }
+}
+
+
+/* ==========================================================================
+   SETTINGS PANEL
+   ========================================================================== */
+
+.settings-panel {
+  width: 320px;
+  max-width: 100%;
+  background-color: var(--color-bg-secondary);
+  border-left: var(--border-width) solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  margin-right: -320px;
+  visibility: hidden;
+  transition: margin-right var(--transition-base), visibility var(--transition-base);
+
+  &.open {
+    margin-right: 0;
+    visibility: visible;
+  }
+}
+
+@media (max-width: 1024px) {
+  .settings-panel {
+    position: fixed;
+    top: var(--header-height);
+    right: 0;
+    height: calc(100% - var(--header-height));
+    z-index: 50;
+    box-shadow: var(--shadow-lg);
+    margin-right: 0;
+    transform: translateX(100%);
+    transition: transform var(--transition-base), visibility var(--transition-base);
+
+    &.open {
+      transform: translateX(0);
+      margin-right: 0;
+    }
+  }
+}
+
+.settings-header {
+  height: var(--header-height);
+  padding: 0 var(--space-md);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: var(--border-width) solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.settings-title {
+  font-weight: 600;
+}
+
+.settings-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-md);
+}
+
+.settings-section {
+  margin-bottom: var(--space-lg);
+}
+
+.settings-section-title {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--space-sm);
+}
+
+
+/* ==========================================================================
+   ICON BUTTON
+   ========================================================================== */
+
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--border-radius);
+  transition: background-color var(--transition-fast);
+  cursor: pointer;
+  background: none;
+  border: none;
+
+  &:hover {
+    background-color: var(--color-bg-hover);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  & svg {
+    width: 20px;
+    height: 20px;
+    color: var(--color-text-secondary);
+  }
+}
+
+
+/* ==========================================================================
+   BUTTONS
+   ========================================================================== */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  line-height: var(--line-height-tight);
+  text-decoration: none;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--border-radius);
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+
+  &:hover {
+    background-color: var(--color-bg-hover);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+}
+
+.btn--primary {
+  background-color: var(--color-accent);
+  color: white;
+  border-color: var(--color-accent);
+
+  &:hover {
+    background-color: var(--color-accent-hover);
+    border-color: var(--color-accent-hover);
+  }
+}
+
+.btn--ghost {
+  background-color: transparent;
+  border-color: transparent;
+
+  &:hover {
+    background-color: var(--color-bg-hover);
+    border-color: var(--color-border);
+  }
+}
+
+.btn--danger {
+  background-color: var(--color-error);
+  color: white;
+  border-color: var(--color-error);
+
+  &:hover {
+    opacity: 0.9;
+  }
+}
+
+.btn--sm {
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-size-xs);
+}
+
+
+/* ==========================================================================
+   FORM ELEMENTS
+   ========================================================================== */
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+}
+
+.form-label {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.form-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.form-input {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  background-color: var(--color-bg-tertiary);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--border-radius);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+
+  &:focus {
+    outline: none;
+    border-color: var(--color-accent);
+  }
+
+  &::placeholder {
+    color: var(--color-text-muted);
+  }
+
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  /* Validation */
+  &:invalid:not(:placeholder-shown) {
+    border-color: var(--color-error);
+  }
+
+  &:valid:not(:placeholder-shown) {
+    border-color: var(--color-success);
+  }
+}
+
+.form-select {
+  padding: var(--space-sm) var(--space-md);
+  padding-right: var(--space-xl);
+  background-color: var(--color-bg-tertiary);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--border-radius);
+  font: inherit;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-sm) center;
+
+  &:focus {
+    outline: none;
+    border-color: var(--color-accent);
+  }
+}
+
+.form-textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+
+.form-range {
+  width: 100%;
+  height: 6px;
+  background-color: var(--color-bg-tertiary);
+  border-radius: var(--border-radius-full);
+  appearance: none;
+  cursor: pointer;
+
+  &::-webkit-slider-thumb {
+    width: 18px;
+    height: 18px;
+    background-color: var(--color-accent);
+    border: none;
+    border-radius: 50%;
+    appearance: none;
+    cursor: grab;
+  }
+
+  &::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    background-color: var(--color-accent);
+    border: none;
+    border-radius: 50%;
+    cursor: grab;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 4px;
+  }
+}
+
+.form-range-wrapper {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.form-range-value {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  min-width: 4ch;
+  text-align: right;
+}
+
+/* Checkbox & Radio */
+.form-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  cursor: pointer;
+}
+
+.form-check-input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border: var(--border-width) solid var(--color-border-strong);
+  border-radius: 4px;
+  background-color: var(--color-bg-secondary);
+  cursor: pointer;
+  appearance: none;
+  transition: all var(--transition-fast);
+
+  &:checked {
+    background-color: var(--color-accent);
+    border-color: var(--color-accent);
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3'%3E%3Cpath d='M20 6L9 17l-5-5'/%3E%3C/svg%3E");
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  &[type="radio"] {
+    border-radius: 50%;
+
+    &:checked {
+      background-image: none;
+      box-shadow: inset 0 0 0 4px var(--color-bg-secondary);
+    }
+  }
+}
+
+.form-check-label {
+  font-size: var(--font-size-sm);
+  user-select: none;
+}
+
+/* Validation feedback */
+.form-feedback {
+  font-size: var(--font-size-xs);
+  display: none;
+}
+
+.form-feedback--error {
+  color: var(--color-error);
+}
+
+.form-feedback--success {
+  color: var(--color-success);
+}
+
+.form-input:invalid:not(:placeholder-shown) ~ .form-feedback--error {
+  display: block;
+}
+
+.form-input:valid:not(:placeholder-shown) ~ .form-feedback--success {
+  display: block;
+}
+
+
+/* ==========================================================================
+   ALERTS
+   ========================================================================== */
+
+.alert {
+  padding: var(--space-md);
+  border-radius: var(--border-radius);
+  display: flex;
+  gap: var(--space-md);
+  align-items: flex-start;
+}
+
+.alert--error {
+  background-color: var(--color-error-bg);
+  border: var(--border-width) solid var(--color-error);
+}
+
+.alert--success {
+  background-color: var(--color-success-bg);
+  border: var(--border-width) solid var(--color-success);
+}
+
+.alert--warning {
+  background-color: var(--color-warning-bg);
+  border: var(--border-width) solid var(--color-warning);
+}
+
+.alert--info {
+  background-color: var(--color-accent-subtle);
+  border: var(--border-width) solid var(--color-accent);
+}
+
+.alert-icon {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
+
+.alert-content {
+  flex: 1;
+}
+
+.alert-title {
+  font-weight: 600;
+  margin-bottom: var(--space-xs);
+}
+
+.alert-text {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+
+/* ==========================================================================
+   BADGES
+   ========================================================================== */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-xs) var(--space-sm);
+  font-size: var(--font-size-xs);
+  font-weight: 500;
+  border-radius: var(--border-radius-full);
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+}
+
+.badge--accent {
+  background-color: var(--color-accent-subtle);
+  color: var(--color-accent);
+}
+
+.badge--success {
+  background-color: var(--color-success-bg);
+  color: var(--color-success);
+}
+
+.badge--error {
+  background-color: var(--color-error-bg);
+  color: var(--color-error);
+}
+
+
+/* ==========================================================================
+   LOADING STATES
+   ========================================================================== */
+
+.loading-spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-bg-tertiary) 25%,
+    var(--color-bg-hover) 50%,
+    var(--color-bg-tertiary) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s ease-in-out infinite;
+  border-radius: var(--border-radius);
+}
+
+@keyframes skeleton-loading {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.skeleton-text {
+  height: 1em;
+  margin-bottom: var(--space-sm);
+}
+
+.skeleton-image {
+  aspect-ratio: 1;
+}
+
+
+/* ==========================================================================
+   HTMX STATES
+   ========================================================================== */
+
+.htmx-indicator {
+  display: none;
+}
+
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+  display: inline-flex;
+}
+
+
+/* ==========================================================================
+   UTILITIES
+   ========================================================================== */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.text-muted { color: var(--color-text-muted); }
+.text-sm { font-size: var(--font-size-sm); }
+.text-xs { font-size: var(--font-size-xs); }
+.text-center { text-align: center; }
+.text-mono { font-family: var(--font-mono); }
+
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.flex-wrap { flex-wrap: wrap; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.gap-xs { gap: var(--space-xs); }
+.gap-sm { gap: var(--space-sm); }
+.gap-md { gap: var(--space-md); }
+.gap-lg { gap: var(--space-lg); }
+
+.mt-sm { margin-top: var(--space-sm); }
+.mt-md { margin-top: var(--space-md); }
+.mb-sm { margin-bottom: var(--space-sm); }
+.mb-md { margin-bottom: var(--space-md); }
+
+.p-sm { padding: var(--space-sm); }
+.p-md { padding: var(--space-md); }
+.p-lg { padding: var(--space-lg); }
+
+
+/* ==========================================================================
+   SHOWCASE LAYOUT
+   ========================================================================== */
+
+.showcase {
+  padding: var(--space-xl);
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.showcase-header {
+  margin-bottom: var(--space-xxl);
+  padding-bottom: var(--space-lg);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+
+.showcase-section {
+  margin-bottom: var(--space-xxl);
+}
+
+.showcase-title {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  margin-bottom: var(--space-lg);
+  color: var(--color-text-primary);
+}
+
+.showcase-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--space-lg);
+}
+
+.showcase-item {
+  background-color: var(--color-bg-secondary);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--border-radius-lg);
+  padding: var(--space-lg);
+}
+
+.showcase-item-title {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-md);
+}
+  </style>
+</head>
+<body>
+
+  <div class="showcase">
+    <header class="showcase-header">
+      <h1>Weave Component Library</h1>
+      <p>Modern UI components for Go + HTMX applications. Minimal JavaScript, maximum CSS.</p>
+    </header>
+
+
+    <!-- TYPOGRAPHY -->
+    <section class="showcase-section">
+      <h2 class="showcase-title">Typography</h2>
+      <div class="showcase-grid">
+        <div class="showcase-item">
+          <div class="showcase-item-title">Headings</div>
+          <h1 style="margin-bottom: var(--space-sm);">Heading 1</h1>
+          <h2 style="margin-bottom: var(--space-sm);">Heading 2</h2>
+          <h3 style="margin-bottom: var(--space-sm);">Heading 3</h3>
+          <h4>Heading 4</h4>
+        </div>
+        <div class="showcase-item">
+          <div class="showcase-item-title">Body Text</div>
+          <p>Regular paragraph text with comfortable reading measure. Maximum width is set to 75 characters.</p>
+          <p><strong>Bold text</strong> for emphasis. <em>Italic text</em> for titles. <code>Inline code</code> for technical terms.</p>
+          <p><a href="#">Links</a> are styled with the accent color.</p>
+        </div>
+        <div class="showcase-item">
+          <div class="showcase-item-title">Code Block</div>
+          <pre><code>function generateImage(prompt) {
+  return fetch('/api/generate', {
+    method: 'POST',
+    body: JSON.stringify({ prompt })
+  });
+}</code></pre>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- BUTTONS -->
+    <section class="showcase-section">
+      <h2 class="showcase-title">Buttons</h2>
+      <div class="showcase-grid">
+        <div class="showcase-item">
+          <div class="showcase-item-title">Button Variants</div>
+          <div class="flex flex-wrap gap-sm">
+            <button class="btn">Default</button>
+            <button class="btn btn--primary">Primary</button>
+            <button class="btn btn--ghost">Ghost</button>
+            <button class="btn btn--danger">Danger</button>
+          </div>
+        </div>
+        <div class="showcase-item">
+          <div class="showcase-item-title">Icon Buttons</div>
+          <div class="flex gap-sm">
+            <button class="icon-btn" aria-label="Menu">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 12h18M3 6h18M3 18h18"/>
+              </svg>
+            </button>
+            <button class="icon-btn" aria-label="Settings">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+              </svg>
+            </button>
+            <button class="icon-btn" aria-label="Close">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 6L6 18M6 6l12 12"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+        <div class="showcase-item">
+          <div class="showcase-item-title">With Loading State</div>
+          <button class="btn btn--primary" hx-post="/api/generate" hx-indicator="#btn-loading">
+            Generate
+            <span id="btn-loading" class="htmx-indicator loading-spinner"></span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- FORM ELEMENTS -->
+    <section class="showcase-section">
+      <h2 class="showcase-title">Form Elements</h2>
+      <div class="showcase-grid">
+        <div class="showcase-item">
+          <div class="showcase-item-title">Text Inputs</div>
+          <div class="form-group">
+            <label class="form-label">Default Input</label>
+            <input type="text" class="form-input" placeholder="Enter text...">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Email with Validation</label>
+            <input type="email" class="form-input" placeholder="user@example.com" required>
+            <span class="form-feedback form-feedback--error">Please enter a valid email</span>
+            <span class="form-feedback form-feedback--success">Looks good!</span>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Disabled</label>
+            <input type="text" class="form-input" value="Cannot edit" disabled>
+          </div>
+        </div>
+        <div class="showcase-item">
+          <div class="showcase-item-title">Select & Textarea</div>
+          <div class="form-group">
+            <label class="form-label">Model Selection</label>
+            <select class="form-select form-input">
+              <option>Stable Diffusion XL</option>
+              <option>Stable Diffusion 1.5</option>
+              <option>FLUX.1</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Prompt</label>
+            <textarea class="form-input form-textarea" placeholder="Describe the image..."></textarea>
+            <span class="form-hint">Be specific about style and composition</span>
+          </div>
+        </div>
+        <div class="showcase-item">
+          <div class="showcase-item-title">Checkboxes & Radios</div>
+          <div class="flex flex-col gap-sm">
+            <label class="form-check">
+              <input type="checkbox" class="form-check-input" checked>
+              <span class="form-check-label">High quality mode</span>
+            </label>
+            <label class="form-check">
+              <input type="checkbox" class="form-check-input">
+              <span class="form-check-label">Show previews</span>
+            </label>
+          </div>
+          <div class="flex flex-col gap-sm mt-md">
+            <label class="form-check">
+              <input type="radio" class="form-check-input" name="aspect" checked>
+              <span class="form-check-label">Square (1:1)</span>
+            </label>
+            <label class="form-check">
+              <input type="radio" class="form-check-input" name="aspect">
+              <span class="form-check-label">Landscape (16:9)</span>
+            </label>
+          </div>
+        </div>
+        <div class="showcase-item">
+          <div class="showcase-item-title">Range Slider</div>
+          <div class="form-group">
+            <label class="form-label">CFG Scale</label>
+            <div class="form-range-wrapper">
+              <input type="range" class="form-range" min="1" max="20" value="7">
+              <span class="form-range-value">7.0</span>
+            </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Steps</label>
+            <div class="form-range-wrapper">
+              <input type="range" class="form-range" min="10" max="100" value="30">
+              <span class="form-range-value">30</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- MESSAGES -->
+    <section class="showcase-section">
+      <h2 class="showcase-title">Chat Messages</h2>
+      <div class="showcase-item" style="max-width: 500px;">
+        <div class="showcase-item-title">Conversation Thread</div>
+        <div class="flex flex-col gap-md">
+          <!-- User message -->
+          <div class="message message-user">
+            <div class="message-bubble">a dragon perched on a castle tower</div>
+          </div>
+
+          <!-- Assistant with thumbnails -->
+          <div class="message message-assistant">
+            <div class="message-sender">Ara</div>
+            <div class="message-bubble">Here are two directions—which feels closer?</div>
+            <div class="message-images">
+              <button class="thumbnail">
+                <span class="thumbnail-number">1</span>
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Crect fill='%231e293b' width='160' height='160'/%3E%3C/svg%3E" alt="">
+              </button>
+              <button class="thumbnail selected">
+                <span class="thumbnail-number">2</span>
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Crect fill='%23374151' width='160' height='160'/%3E%3C/svg%3E" alt="">
+              </button>
+            </div>
+          </div>
+
+          <!-- Progress determinate -->
+          <div class="message message-assistant">
+            <div class="message-sender">Ara</div>
+            <div class="message-progress">
+              <div class="progress-fill" style="width: 60%"></div>
+              <span class="progress-text">Step 6 of 10</span>
+            </div>
+          </div>
+
+          <!-- Progress indeterminate -->
+          <div class="message message-assistant">
+            <div class="message-sender">Ara</div>
+            <div class="message-progress">
+              <span class="progress-text shimmer">Generating...</span>
+            </div>
+          </div>
+
+          <!-- Error -->
+          <div class="message message-assistant">
+            <div class="message-error">
+              <div class="message-error-title">Generation failed</div>
+              <div>Out of VRAM. Try reducing image size.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- ALERTS -->
+    <section class="showcase-section">
+      <h2 class="showcase-title">Alerts</h2>
+      <div class="showcase-grid">
+        <div class="showcase-item">
+          <div class="showcase-item-title">Alert Variants</div>
+          <div class="flex flex-col gap-md">
+            <div class="alert alert--info">
+              <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
+              </svg>
+              <div class="alert-content">
+                <div class="alert-title">Tip</div>
+                <div class="alert-text">Drag images into the chat to use as reference.</div>
+              </div>
+            </div>
+            <div class="alert alert--success">
+              <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="var(--color-success)" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/>
+              </svg>
+              <div class="alert-content">
+                <div class="alert-title">Model Downloaded</div>
+                <div class="alert-text">Anime-Style LoRA is ready to use.</div>
+              </div>
+            </div>
+            <div class="alert alert--warning">
+              <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="var(--color-warning)" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><path d="M12 9v4M12 17h.01"/>
+              </svg>
+              <div class="alert-content">
+                <div class="alert-title">Low VRAM</div>
+                <div class="alert-text">Generation may be slower.</div>
+              </div>
+            </div>
+            <div class="alert alert--error">
+              <svg class="alert-icon" viewBox="0 0 24 24" fill="none" stroke="var(--color-error)" stroke-width="2">
+                <circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/>
+              </svg>
+              <div class="alert-content">
+                <div class="alert-title">Connection Lost</div>
+                <div class="alert-text">Unable to reach the backend.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- BADGES -->
+    <section class="showcase-section">
+      <h2 class="showcase-title">Badges</h2>
+      <div class="showcase-item" style="max-width: 400px;">
+        <div class="showcase-item-title">Badge Variants</div>
+        <div class="flex flex-wrap gap-sm">
+          <span class="badge">Default</span>
+          <span class="badge badge--accent">New</span>
+          <span class="badge badge--success">Ready</span>
+          <span class="badge badge--error">Error</span>
+          <span class="badge">SDXL</span>
+          <span class="badge">1024x1024</span>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- LOADING -->
+    <section class="showcase-section">
+      <h2 class="showcase-title">Loading States</h2>
+      <div class="showcase-grid">
+        <div class="showcase-item">
+          <div class="showcase-item-title">Spinner</div>
+          <div class="flex gap-md items-center">
+            <div class="loading-spinner"></div>
+            <span class="text-muted">Generating...</span>
+          </div>
+        </div>
+        <div class="showcase-item">
+          <div class="showcase-item-title">Skeleton</div>
+          <div class="flex flex-col gap-sm">
+            <div class="skeleton skeleton-text" style="width: 80%;"></div>
+            <div class="skeleton skeleton-text" style="width: 60%;"></div>
+            <div class="skeleton skeleton-image" style="width: 100px; height: 100px;"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- CONVERSATION HISTORY -->
+    <section class="showcase-section">
+      <h2 class="showcase-title">Conversation History</h2>
+      <div class="showcase-item" style="max-width: 300px;">
+        <div class="showcase-item-title">History Items with Thumbnails</div>
+        <div class="flex flex-col gap-xs" style="background: var(--color-bg-secondary); padding: var(--space-sm); border-radius: var(--border-radius);">
+          <a href="#" class="conversation-item active">
+            <div class="conversation-item-thumb">
+              <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Cdefs%3E%3ClinearGradient id='sky' x1='0%25' y1='0%25' x2='0%25' y2='100%25'%3E%3Cstop offset='0%25' style='stop-color:%234a0080'/%3E%3Cstop offset='100%25' style='stop-color:%23ffd700'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect fill='url(%23sky)' width='96' height='96'/%3E%3Cellipse fill='%23ff6347' cx='48' cy='40' rx='18' ry='14'/%3E%3Crect fill='%232d1f3d' x='30' y='55' width='36' height='20'/%3E%3C/svg%3E" alt="">
+            </div>
+            <div class="conversation-item-content">
+              <div class="conversation-item-title">Dragon on Castle Tower</div>
+              <div class="conversation-item-preview">Final version with fire breath...</div>
+              <div class="conversation-item-meta">
+                <span class="conversation-item-date">12:34</span>
+                <span>8 images</span>
+              </div>
+            </div>
+          </a>
+          <a href="#" class="conversation-item">
+            <div class="conversation-item-thumb">
+              <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Crect fill='%23f5e6d3' width='96' height='96'/%3E%3Ccircle fill='%23d4a574' cx='48' cy='40' r='20'/%3E%3Crect fill='%23c9463d' x='38' y='60' width='20' height='25' rx='2'/%3E%3C/svg%3E" alt="">
+            </div>
+            <div class="conversation-item-content">
+              <div class="conversation-item-title">Portrait Series</div>
+              <div class="conversation-item-preview">Watercolor style portraits</div>
+              <div class="conversation-item-meta">
+                <span class="conversation-item-date">Yesterday</span>
+                <span>12 images</span>
+              </div>
+            </div>
+          </a>
+          <a href="#" class="conversation-item">
+            <div class="conversation-item-thumb">
+              <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='96' viewBox='0 0 96 96'%3E%3Crect fill='%231a1a2e' width='96' height='96'/%3E%3Cpath fill='%236366f1' d='M48 20 L68 48 L48 76 L28 48 Z'/%3E%3Ccircle fill='%23fff' cx='48' cy='48' r='8'/%3E%3C/svg%3E" alt="">
+            </div>
+            <div class="conversation-item-content">
+              <div class="conversation-item-title">Logo Concepts</div>
+              <div class="conversation-item-preview">Minimalist tech startup logos</div>
+              <div class="conversation-item-meta">
+                <span class="conversation-item-date">Jan 9</span>
+                <span>6 images</span>
+              </div>
+            </div>
+          </a>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- LAYOUT PREVIEW -->
+    <section class="showcase-section">
+      <h2 class="showcase-title">Layout Structure</h2>
+      <div class="showcase-item">
+        <div class="showcase-item-title">Application Grid (Scaled)</div>
+        <div style="border: var(--border-width) solid var(--color-border); border-radius: var(--border-radius-lg); height: 350px; display: flex; flex-direction: column; overflow: hidden;">
+          <!-- Unified Header -->
+          <div style="height: 32px; background: var(--color-bg-secondary); border-bottom: var(--border-width) solid var(--color-border); display: flex; align-items: center; padding: 0 var(--space-sm); gap: var(--space-xs); flex-shrink: 0;">
+            <div style="width: 16px; height: 16px; border: 1px solid var(--color-text-muted); border-radius: 2px;"></div>
+            <div style="font-size: var(--font-size-xs); font-weight: 600; flex: 1;">Weave</div>
+            <div style="font-size: 8px; color: var(--color-text-muted); display: flex; align-items: center; gap: 4px;"><span style="width: 6px; height: 6px; background: var(--color-success); border-radius: 50%;"></span>Ready</div>
+            <div style="width: 16px; height: 16px; border: 1px solid var(--color-text-muted); border-radius: 2px;"></div>
+          </div>
+          <!-- Body -->
+          <div style="flex: 1; display: flex; overflow: hidden;">
+            <!-- Sidebar -->
+            <div style="width: 100px; background: var(--color-bg-secondary); border-right: var(--border-width) solid var(--color-border); display: flex; flex-direction: column;">
+              <div style="padding: var(--space-xs);">
+                <div style="background: var(--color-accent-subtle); padding: var(--space-xs); border-radius: var(--border-radius); font-size: 10px;">Active</div>
+                <div style="padding: var(--space-xs); font-size: 10px; color: var(--color-text-muted);">Chat 2</div>
+              </div>
+            </div>
+            <!-- Chat -->
+            <div style="width: 150px; background: var(--color-bg-secondary); border-right: var(--border-width) solid var(--color-border); display: flex; flex-direction: column;">
+              <div style="flex: 1; padding: var(--space-xs); overflow: hidden;">
+                <div style="background: var(--color-accent); color: white; padding: 4px 8px; border-radius: 8px; font-size: 10px; margin-left: auto; width: fit-content; margin-bottom: 8px;">User msg</div>
+                <div style="background: var(--color-bg-tertiary); padding: 4px 8px; border-radius: 8px; font-size: 10px; width: fit-content;">Ara response</div>
+              </div>
+              <div style="border-top: var(--border-width) solid var(--color-border); padding: var(--space-xs);">
+                <div style="background: var(--color-bg-tertiary); border: var(--border-width) solid var(--color-border); border-radius: 8px; padding: 4px 8px; font-size: 10px; color: var(--color-text-muted);">Input...</div>
+              </div>
+            </div>
+            <!-- Image Panel -->
+            <div style="flex: 1; background: var(--color-image-bg); display: flex; align-items: center; justify-content: center;">
+              <div style="background: var(--color-bg-tertiary); border-radius: var(--border-radius); padding: var(--space-lg); text-align: center; box-shadow: var(--shadow-md);">
+                <div style="font-size: var(--font-size-sm); color: var(--color-text-muted);">Main Image</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+
+    <!-- CSS VARIABLES -->
+    <section class="showcase-section">
+      <h2 class="showcase-title">CSS Custom Properties</h2>
+      <div class="showcase-item">
+        <div class="showcase-item-title">Available Variables</div>
+        <pre><code>/* Colors */
+--color-bg-primary, --color-bg-secondary, --color-bg-tertiary
+--color-text-primary, --color-text-secondary, --color-text-muted
+--color-border, --color-accent, --color-error, --color-success
+
+/* Typography */
+--font-size-xs through --font-size-xxl
+--font-sans, --font-mono
+
+/* Spacing */
+--space-xs through --space-xxl
+
+/* Borders & Radius */
+--border-width, --border-radius, --border-radius-lg
+
+/* Shadows */
+--shadow-sm, --shadow-md, --shadow-lg
+
+/* Layout */
+--sidebar-width, --chat-width, --header-height</code></pre>
+      </div>
+    </section>
+
+
+    <footer style="padding: var(--space-xl) 0; border-top: var(--border-width) solid var(--color-border); margin-top: var(--space-xxl); text-align: center;">
+      <p class="text-muted text-sm">Weave Component Library. Built for Go + HTMX.</p>
+      <p class="text-muted text-xs mt-sm">Firefox ESR 115+ / Chromium 120+. WCAG AA compliant.</p>
+    </footer>
+  </div>
+
+</body>
+</html>

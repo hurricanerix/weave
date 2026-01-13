@@ -50,6 +50,12 @@ const (
 	// Example: {"source": "agent"} or {"source": "manual"}
 	EventGenerationStarted = "generation-started"
 
+	// EventAgentRetry indicates the agent response failed validation and is being retried.
+	// The UI should clear any partial streaming message.
+	// Data schema: {"attempt": int}
+	// Example: {"attempt": 2}
+	EventAgentRetry = "agent-retry"
+
 	// MaxConnections is the maximum number of concurrent SSE connections.
 	MaxConnections = 1000
 )
@@ -132,16 +138,22 @@ func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Register connection
-	b.addConnection(conn)
+	registered := b.addConnection(conn)
 	defer b.removeConnection(sessionID, conn)
 
-	log.Printf("DEBUG: SSE connection established for session %s", sessionID)
+	if registered {
+		log.Printf("SSE: Connection established for session %s", sessionID)
+	} else {
+		log.Printf("SSE: Duplicate connection ignored for session %s (existing connection kept)", sessionID)
+	}
 
-	// Send initial connection event
-	b.sendToConnection(conn, Event{
-		Type: "connected",
-		Data: map[string]string{"session": sessionID},
-	})
+	// Send initial connection event (only if we registered)
+	if registered {
+		b.sendToConnection(conn, Event{
+			Type: "connected",
+			Data: map[string]string{"session": sessionID},
+		})
+	}
 
 	// Keep connection open until client disconnects or context is cancelled
 	select {
@@ -160,13 +172,13 @@ func (b *Broker) SendEvent(sessionID string, eventType string, data interface{})
 	b.mu.RUnlock()
 
 	if !ok {
-		log.Printf("DEBUG: SendEvent failed - session %s not connected (have %d connections)", sessionID, b.ConnectionCount())
+		log.Printf("SSE: SendEvent failed - session %s not connected (no SSE connection)", sessionID)
 		return fmt.Errorf("session %s not connected", sessionID)
 	}
 
 	err := b.sendToConnection(conn, Event{Type: eventType, Data: data})
 	if err != nil {
-		log.Printf("DEBUG: SendEvent failed for session %s, event %s: %v", sessionID, eventType, err)
+		log.Printf("SSE: SendEvent failed for session %s, event %s: %v", sessionID, eventType, err)
 	}
 	return err
 }
@@ -207,29 +219,26 @@ func (b *Broker) ConnectionCount() int {
 }
 
 // addConnection registers a new connection.
-// If a connection already exists for this session, it is closed.
+// Returns true if the connection was registered, false if a connection already exists.
+// If a connection already exists for this session, the new one is ignored.
 // This handles the case where a user opens multiple tabs or reconnects.
-func (b *Broker) addConnection(conn *connection) {
+func (b *Broker) addConnection(conn *connection) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// Close existing connection for this session if any.
-	// This may close a connection that removeConnection is also trying to clean up,
-	// but removeConnection uses identity check (current == conn) to prevent removing
-	// the wrong connection. Since we're about to replace the connection in the map,
-	// removeConnection will see that the old connection is no longer current and
-	// will not delete the map entry. This prevents a race where:
-	// 1. Thread A: addConnection closes existing.done
-	// 2. Thread B: existing's ServeHTTP returns, calls removeConnection
-	// 3. Thread A: Replaces map entry with new connection
-	// 4. Thread B: Deletes map entry (would be wrong!)
-	// The identity check in removeConnection prevents step 4.
-	if existing, ok := b.connections[conn.sessionID]; ok {
-		log.Printf("DEBUG: SSE replacing existing connection for session %s", conn.sessionID)
-		close(existing.done)
+	// If a connection already exists for this session, ignore the new one.
+	// Multiple connection attempts can happen due to browser retries or HTMX
+	// SSE reconnection logic. We keep the existing connection and let the new
+	// one block (it will stay blocked on select until browser closes it).
+	// CRITICAL: Do NOT close conn.done here - that would cause ServeHTTP to
+	// return immediately, which sends an HTTP response to the browser, which
+	// interprets it as connection closure and reconnects, creating an infinite loop.
+	if _, ok := b.connections[conn.sessionID]; ok {
+		return false
 	}
 
 	b.connections[conn.sessionID] = conn
+	return true
 }
 
 // removeConnection unregisters a connection.
@@ -241,7 +250,6 @@ func (b *Broker) removeConnection(sessionID string, conn *connection) {
 	// Only delete if this connection is still the registered one
 	if current, ok := b.connections[sessionID]; ok && current == conn {
 		delete(b.connections, sessionID)
-		log.Printf("DEBUG: SSE connection closed for session %s", sessionID)
 	}
 }
 

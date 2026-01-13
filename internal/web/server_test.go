@@ -770,7 +770,7 @@ func TestChatWithRetry_FormatReminderAfterParseError(t *testing.T) {
 				{Role: ollama.RoleUser, Content: "test message"},
 			}
 
-			result, err := server.chatWithRetry(context.Background(), messages, nil, nil)
+			result, err := server.chatWithRetry(context.Background(), "test-session", messages, nil, nil)
 
 			if err != nil {
 				t.Fatalf("chatWithRetry failed: %v", err)
@@ -817,7 +817,7 @@ func TestChatWithRetry_ContextCompactionAfterTwoRetries(t *testing.T) {
 		{Role: ollama.RoleUser, Content: "A tabby cat"},
 	}
 
-	result, err := server.chatWithRetry(context.Background(), messages, nil, nil)
+	result, err := server.chatWithRetry(context.Background(), "test-session", messages, nil, nil)
 
 	if err != nil {
 		t.Fatalf("chatWithRetry failed: %v", err)
@@ -852,7 +852,7 @@ func TestChatWithRetry_ErrorReturnedAfterAllRetriesFail(t *testing.T) {
 		{Role: ollama.RoleUser, Content: "test message"},
 	}
 
-	_, err = server.chatWithRetry(context.Background(), messages, nil, nil)
+	_, err = server.chatWithRetry(context.Background(), "test-session", messages, nil, nil)
 
 	if err == nil {
 		t.Fatal("expected error after all retries fail, got nil")
@@ -898,7 +898,7 @@ func TestChatWithRetry_RetryCountResetsOnSuccess(t *testing.T) {
 	}
 
 	// First request should succeed without retry
-	result1, err := server.chatWithRetry(context.Background(), messages1, nil, nil)
+	result1, err := server.chatWithRetry(context.Background(), "test-session", messages1, nil, nil)
 	if err != nil {
 		t.Fatalf("first chatWithRetry failed: %v", err)
 	}
@@ -916,7 +916,7 @@ func TestChatWithRetry_RetryCountResetsOnSuccess(t *testing.T) {
 		{Role: ollama.RoleUser, Content: "second message"},
 	}
 
-	result2, err := server.chatWithRetry(context.Background(), messages2, nil, nil)
+	result2, err := server.chatWithRetry(context.Background(), "test-session", messages2, nil, nil)
 	if err != nil {
 		t.Fatalf("second chatWithRetry failed: %v", err)
 	}
@@ -949,7 +949,7 @@ func TestChatWithRetry_NonFormatErrorReturnsImmediately(t *testing.T) {
 		{Role: ollama.RoleUser, Content: "test message"},
 	}
 
-	_, err = server.chatWithRetry(context.Background(), messages, nil, nil)
+	_, err = server.chatWithRetry(context.Background(), "test-session", messages, nil, nil)
 
 	if err == nil {
 		t.Fatal("expected error, got nil")

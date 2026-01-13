@@ -356,10 +356,11 @@ func TestBroker_SendEventToAll(t *testing.T) {
 func TestBroker_MultipleConnectionsSameSession(t *testing.T) {
 	broker := NewBroker()
 
-	// Connect first session
+	// Connect first session using a cancellable context
+	ctx1, cancel1 := context.WithCancel(context.Background())
+	defer cancel1()
 	req1 := httptest.NewRequest("GET", "/events", nil)
-	ctx1 := setSessionID(req1.Context(), "same-session")
-	req1 = req1.WithContext(ctx1)
+	req1 = req1.WithContext(setSessionID(ctx1, "same-session"))
 	w1 := httptest.NewRecorder()
 
 	done1 := make(chan struct{})
@@ -375,10 +376,12 @@ func TestBroker_MultipleConnectionsSameSession(t *testing.T) {
 		t.Errorf("connection count after first connect = %d, want 1", broker.ConnectionCount())
 	}
 
-	// Connect second session with same ID (should replace first)
+	// Connect second session with same ID (should be ignored - first connection stays active)
+	// Use a cancellable context so we can clean up
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
 	req2 := httptest.NewRequest("GET", "/events", nil)
-	ctx2 := setSessionID(req2.Context(), "same-session")
-	req2 = req2.WithContext(ctx2)
+	req2 = req2.WithContext(setSessionID(ctx2, "same-session"))
 	w2 := httptest.NewRecorder()
 
 	done2 := make(chan struct{})
@@ -389,21 +392,20 @@ func TestBroker_MultipleConnectionsSameSession(t *testing.T) {
 
 	time.Sleep(100 * time.Millisecond)
 
-	// First connection should have been closed
+	// First connection should still be active (not closed)
 	select {
 	case <-done1:
-		// First connection closed (expected)
-	case <-time.After(500 * time.Millisecond):
-		t.Error("first connection should have been closed when second connected")
+		t.Error("first connection should NOT have been closed when second connected")
+	default:
+		// First connection still open (expected)
 	}
 
-	// After first connection closes, verify only one connection remains
-	time.Sleep(50 * time.Millisecond)
+	// Second connection is ignored and just blocks - verify only one registered
 	if broker.ConnectionCount() != 1 {
-		t.Errorf("connection count after first closes = %d, want 1", broker.ConnectionCount())
+		t.Errorf("connection count = %d, want 1 (duplicate should be ignored)", broker.ConnectionCount())
 	}
 
-	// Send event (should only go to second connection)
+	// Send event (should go to first connection, the registered one)
 	err := broker.SendEvent("same-session", EventAgentToken, map[string]string{"token": "test"})
 	if err != nil {
 		t.Fatalf("SendEvent failed: %v", err)
@@ -411,18 +413,35 @@ func TestBroker_MultipleConnectionsSameSession(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	// Verify only second connection received the event
-	body2 := w2.Body.String()
-	if !strings.Contains(body2, "event: agent-token") {
-		t.Error("second connection should have received event")
+	// Verify first connection received the event
+	body1 := w1.Body.String()
+	if !strings.Contains(body1, "event: agent-token") {
+		t.Error("first connection should have received event")
 	}
 
-	// Close second connection
+	// Second connection should NOT have received the event (it's ignored)
+	body2 := w2.Body.String()
+	// Second connection only receives "connected" initial event (if even that)
+	if strings.Contains(body2, "event: agent-token") {
+		t.Error("second connection should NOT have received event (it was ignored)")
+	}
+
+	// Close session - this closes the first connection
 	broker.CloseSession("same-session")
 
 	select {
+	case <-done1:
+		// First connection closed (expected)
+	case <-time.After(1 * time.Second):
+		t.Fatal("timeout waiting for first connection to close")
+	}
+
+	// Cancel second connection's context to clean up (simulates browser closing tab)
+	cancel2()
+
+	select {
 	case <-done2:
-		// Success
+		// Second connection closed (expected)
 	case <-time.After(1 * time.Second):
 		t.Fatal("timeout waiting for second connection to close")
 	}
