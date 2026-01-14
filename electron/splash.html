@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weave</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 300px;
+            height: 200px;
+            background-color: #12100e;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 24px;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+        }
+
+        .title {
+            font-family: 'Snell Roundhand', 'Segoe Script', cursive;
+            font-size: 48px;
+            font-weight: 400;
+            color: #f5efe6;
+            letter-spacing: 0.02em;
+            user-select: none;
+        }
+
+        .spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid #2e2820;
+            border-top-color: #d4a574;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .loading-text {
+            font-size: 14px;
+            color: #7a6f60;
+            font-weight: 400;
+        }
+    </style>
+</head>
+<body>
+    <div class="title">Weave</div>
+    <div class="spinner"></div>
+    <div class="loading-text">Loading...</div>
+</body>
+</html>

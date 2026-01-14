@@ -1,0 +1,15 @@
+{
+  "name": "weave",
+  "version": "0.1.0",
+  "description": "Open-source, local-first image generation system that replaces complex configuration interfaces with natural conversation",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "Richard Hawkins",
+  "license": "MIT",
+  "private": true,
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

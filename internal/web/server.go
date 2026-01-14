@@ -208,6 +208,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// Image serving endpoint
 	mux.HandleFunc("GET /images/{id}", s.handleImage)
+
+	// Health check endpoint for Electron
+	mux.HandleFunc("GET /ready", s.handleReady)
 }
 
 // ListenAndServe starts the HTTP server and blocks until the context is cancelled.
@@ -1296,4 +1299,12 @@ func (s *Server) parseSeed(value string) int64 {
 	}
 
 	return parsed
+}
+
+// handleReady is a health check endpoint for Electron.
+// Returns HTTP 200 with JSON {"status":"ready"} when the server is ready.
+func (s *Server) handleReady(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `{"status":"ready"}`)
 }

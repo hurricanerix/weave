@@ -102,6 +102,14 @@ func TestServer_Routes(t *testing.T) {
 			bodyContains:    `"status":"ok"`,
 		},
 		{
+			name:            "GET /ready returns ready status",
+			method:          "GET",
+			path:            "/ready",
+			wantStatusCode:  http.StatusOK,
+			wantContentType: "application/json",
+			bodyContains:    `"status":"ready"`,
+		},
+		{
 			name:           "POST / wrong method returns 405",
 			method:         "POST",
 			path:           "/",
@@ -179,6 +187,33 @@ func TestServer_HandleIndex(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "Weave Web UI") {
 		t.Errorf("body should contain title, got %q", body)
+	}
+}
+
+func TestServer_HandleReady(t *testing.T) {
+	s, err := NewServer("")
+	if err != nil {
+		t.Fatalf("NewServer() error = %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/ready", nil)
+	w := httptest.NewRecorder()
+
+	s.handleReady(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status code = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	contentType := w.Header().Get("Content-Type")
+	if contentType != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", contentType)
+	}
+
+	body := w.Body.String()
+	want := `{"status":"ready"}`
+	if body != want {
+		t.Errorf("body = %q, want %q", body, want)
 	}
 }
 

@@ -4,16 +4,43 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
 	"github.com/hurricanerix/weave/internal/client"
 	"github.com/hurricanerix/weave/internal/config"
+	"github.com/hurricanerix/weave/internal/logging"
 	"github.com/hurricanerix/weave/internal/startup"
 )
 
 func main() {
 	os.Exit(run())
+}
+
+// monitorStdin monitors the provided reader for EOF and cancels the context when detected.
+// This is used to detect parent process death when running as a child process.
+// When stdin reaches EOF (parent died), the context is cancelled to trigger graceful shutdown.
+//
+// This function blocks until EOF is reached or an error occurs.
+func monitorStdin(cancel context.CancelFunc, stdin io.Reader, logger *logging.Logger) {
+	buf := make([]byte, 32)
+	for {
+		_, err := stdin.Read(buf)
+		if err == io.EOF {
+			logger.Info("Parent process died, initiating shutdown")
+			cancel()
+			return
+		}
+		if err != nil {
+			// Non-EOF error means stdin is broken but parent may still be alive.
+			// Don't trigger shutdown - let normal shutdown mechanisms handle it.
+			logger.Debug("Error reading stdin: %v", err)
+			return
+		}
+		// Data received on stdin is unexpected when running under Electron,
+		// but not an error. Continue monitoring for EOF.
+	}
 }
 
 func run() int {
@@ -76,7 +103,16 @@ func run() int {
 
 	// Accept connection from compute daemon
 	logger.Debug("Waiting for compute daemon to connect...")
-	ctx := context.Background()
+
+	// Create cancellable context for server lifecycle
+	// This context will be cancelled by signal handlers or stdin EOF detection
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Start stdin monitoring for orphan process detection
+	// When parent process dies, stdin EOF triggers graceful shutdown
+	go monitorStdin(cancel, os.Stdin, logger)
+
 	acceptCtx, acceptCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer acceptCancel()
 
