@@ -140,6 +140,13 @@ func SpawnCompute(socketPath string) (*exec.Cmd, io.WriteCloser, error) {
 		"/usr/bin/weave-compute",             // System install
 	}
 
+	// Also check for compute daemon next to weave executable (packaged Electron app)
+	if exePath, err := os.Executable(); err == nil {
+		exeDir := filepath.Dir(exePath)
+		siblingPath := filepath.Join(exeDir, "weave-compute")
+		candidatePaths = append([]string{siblingPath}, candidatePaths...)
+	}
+
 	var binaryPath string
 	for _, path := range candidatePaths {
 		if _, err := os.Stat(path); err == nil {

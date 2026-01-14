@@ -18,8 +18,9 @@
 !go.sum
 !go.mod
 
-# Weave compuete daemon project
+# Weave components
 !/compute-daemon
+!/electron
 
 # Weave Documentation
 !docs/**/*.md

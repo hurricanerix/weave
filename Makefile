@@ -1,15 +1,21 @@
-.PHONY: default clean build weave compute
+.PHONY: default clean weave compute electron run
 
-default: clean build
-
-build: weave compute
+default: electron
 
 weave:
-	go build -o bin/weave ./cmd/weave
+	go build -o build/weave ./cmd/weave
 
 compute:
 	$(MAKE) -C compute-daemon
 
+electron: weave compute
+	@test -d electron/node_modules || (echo "Error: npm dependencies not installed" && echo "Run: cd electron && npm install" && exit 1)
+	cd electron && npm run build
+
+run: electron
+	./electron/dist/linux-unpacked/weave --no-sandbox
+
 clean:
-	rm -f bin/weave
+	rm -rf build/
+	rm -rf electron/dist/
 	$(MAKE) -C compute-daemon clean

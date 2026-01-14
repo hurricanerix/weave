@@ -4,12 +4,31 @@
   "description": "Open-source, local-first image generation system that replaces complex configuration interfaces with natural conversation",
   "main": "main.js",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "build": "electron-builder --linux dir"
   },
   "author": "Richard Hawkins",
   "license": "MIT",
   "private": true,
   "devDependencies": {
-    "electron": "^33.0.0"
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "com.placeholder.weave",
+    "productName": "Weave",
+    "linux": {
+      "target": "dir"
+    },
+    "extraResources": [
+      {
+        "from": "../build/weave",
+        "to": "weave"
+      },
+      {
+        "from": "../compute-daemon/weave-compute",
+        "to": "weave-compute"
+      }
+    ]
   }
 }

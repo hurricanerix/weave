@@ -23,8 +23,12 @@ let shuttingDown = false;
  */
 function spawnGoServer() {
   return new Promise((resolve, reject) => {
-    // Binary path is fixed to project location for security (no env var injection)
-    const binaryPath = path.join(__dirname, '..', 'bin', 'weave');
+    // Binary path depends on whether app is packaged or running in development
+    // Packaged: binary is in resources directory (copied by electron-builder)
+    // Development: binary is in build/ directory (built by make weave)
+    const binaryPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'weave')
+      : path.join(__dirname, '..', 'build', 'weave');
 
     // Check if binary exists before spawning
     if (!fs.existsSync(binaryPath)) {
