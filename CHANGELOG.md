@@ -15,3 +15,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - Socket lifecycle management: weave now creates and owns the Unix socket, spawns compute as child process (Story 018)
+- History sidebar defaults to closed on page load for better focus and screen space (Story 019)
