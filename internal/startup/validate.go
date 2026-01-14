@@ -33,10 +33,6 @@ const (
 	ollamaTimeout = 5 * time.Second
 	// computeTimeout is the timeout for compute daemon connection test
 	computeTimeout = 5 * time.Second
-	// socketDir is the subdirectory under XDG_RUNTIME_DIR where the socket is created
-	socketDir = "weave"
-	// socketName is the name of the Unix domain socket file
-	socketName = "weave.sock"
 )
 
 // ValidateOllama checks if ollama is running and reachable at the given URL.

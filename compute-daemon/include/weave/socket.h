@@ -48,6 +48,7 @@ typedef enum {
     SOCKET_ERR_TIMEOUT_FAILED = -14,  /**< Failed to set socket timeout */
     SOCKET_ERR_ACCEPT_FAILED = -15,   /**< Failed to accept connection */
     SOCKET_ERR_NULL_HANDLER = -16,    /**< NULL handler provided to accept loop */
+    SOCKET_ERR_CONNECT_FAILED = -17,  /**< Failed to connect to socket */
 } socket_error_t;
 
 /**
@@ -130,6 +131,34 @@ socket_error_t socket_get_dir_path(char *path_buf, size_t buf_size);
  * - Close the socket file descriptor
  */
 socket_error_t socket_create(int *listen_fd);
+
+/**
+ * socket_connect - Connect to an existing Unix domain socket
+ *
+ * Connects to an existing Unix domain socket at the specified path.
+ * This function is used by the daemon when running in "worker mode" where
+ * the socket is created by the parent process (weave) rather than by the
+ * daemon itself.
+ *
+ * Unlike socket_create(), this function does not create or bind a socket.
+ * It only connects to an already-listening socket. This is the client-side
+ * connection logic for the daemon to use when spawned by weave.
+ *
+ * @param socket_path  Path to the existing socket file
+ * @param connected_fd Pointer to store the connected socket file descriptor
+ * @return             SOCKET_OK on success, error code on failure
+ *
+ * Error codes:
+ * - SOCKET_ERR_NULL_POINTER: socket_path or connected_fd is NULL
+ * - SOCKET_ERR_PATH_TOO_LONG: Socket path exceeds system limit
+ * - SOCKET_ERR_SOCKET_FAILED: Could not create socket
+ * - SOCKET_ERR_CONNECT_FAILED: Could not connect to socket
+ *
+ * On success, the caller owns the socket and must close it when done.
+ * Do NOT call socket_cleanup() when using socket_connect() - the parent
+ * process owns the socket file.
+ */
+socket_error_t socket_connect(const char *socket_path, int *connected_fd);
 
 /**
  * socket_cleanup - Remove socket file

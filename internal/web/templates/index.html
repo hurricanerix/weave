@@ -1648,9 +1648,9 @@ img {
                                 <div class="textarea-with-copy">
                                     <textarea
                                         id="resolved-prompt"
+                                        name="prompt"
                                         class="form-input form-textarea text-mono"
-                                        placeholder="The agent-generated prompt will appear here..."
-                                        readonly
+                                        placeholder="Type or paste your prompt here..."
                                     ></textarea>
                                     <button type="button" class="copy-btn" onclick="copyResolvedPrompt()" aria-label="Copy resolved prompt">
                                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1768,9 +1768,9 @@ img {
                             <div class="flex flex-col gap-sm">
                                 <button id="generate-button" class="btn btn--primary"
                                     hx-post="/generate"
-                                    hx-include="#steps-input, #cfg-input, #seed-input, #width-input, #height-input"
+                                    hx-include="#resolved-prompt, #steps-input, #cfg-input, #seed-input, #width-input, #height-input"
                                     hx-trigger="click"
-                                    hx-swap="none">Regenerate</button>
+                                    hx-swap="none">Generate</button>
                                 <button type="button" class="btn" onclick="copySettings()">Copy Settings</button>
                             </div>
                         </div>
@@ -2402,6 +2402,12 @@ img {
             if (resolvedPrompt) {
                 hasPrompt = resolvedPrompt.value.trim() !== '';
                 updateGenerateButtonState();
+
+                // Update hasPrompt when user manually types in the prompt field
+                resolvedPrompt.addEventListener('input', function() {
+                    hasPrompt = resolvedPrompt.value.trim() !== '';
+                    updateGenerateButtonState();
+                });
             }
 
             // Track settings input focus state

@@ -121,11 +121,20 @@ static void restore_xdg_runtime_dir(void) {
 
 /**
  * Helper: Create a temporary directory for testing
+ * Uses project-local directory instead of /tmp
  */
 static char temp_dir[256] = {0};
 
 static int create_temp_dir(void) {
-    snprintf(temp_dir, sizeof(temp_dir), "/tmp/weave_test_XXXXXX");
+    /* Try to use TMPDIR if set, otherwise use ./tmp */
+    const char *base_dir = getenv("TMPDIR");
+    if (base_dir == NULL || base_dir[0] == '\0') {
+        base_dir = "./tmp";
+        /* Ensure ./tmp exists */
+        mkdir(base_dir, 0700); /* Ignore errors if it already exists */
+    }
+
+    snprintf(temp_dir, sizeof(temp_dir), "%s/weave_test_XXXXXX", base_dir);
     if (mkdtemp(temp_dir) == NULL) {
         return -1;
     }
@@ -1003,6 +1012,556 @@ void test_accept_loop_handles_shutdown(void) {
 
 /**
  * ==========================================================================
+ * Socket Connect Tests
+ * ==========================================================================
+ */
+
+/**
+ * Test: socket_connect with NULL socket_path
+ */
+void test_connect_null_socket_path(void) {
+    TEST("test_connect_null_socket_path");
+
+    int fd;
+    socket_error_t err = socket_connect(NULL, &fd);
+
+    ASSERT_EQ(SOCKET_ERR_NULL_POINTER, err);
+
+    TEST_PASS();
+}
+
+/**
+ * Test: socket_connect with NULL connected_fd
+ */
+void test_connect_null_connected_fd(void) {
+    TEST("test_connect_null_connected_fd");
+
+    /* Use project-local path */
+    socket_error_t err = socket_connect("./tmp/test.sock", NULL);
+
+    ASSERT_EQ(SOCKET_ERR_NULL_POINTER, err);
+
+    TEST_PASS();
+}
+
+/**
+ * Test: socket_connect with path too long
+ */
+void test_connect_path_too_long(void) {
+    TEST("test_connect_path_too_long");
+
+    /* Create a path that exceeds sockaddr_un.sun_path limit */
+    char long_path[256];
+    memset(long_path, 'a', sizeof(long_path) - 1);
+    long_path[sizeof(long_path) - 1] = '\0';
+
+    int fd;
+    socket_error_t err = socket_connect(long_path, &fd);
+
+    ASSERT_EQ(SOCKET_ERR_PATH_TOO_LONG, err);
+
+    TEST_PASS();
+}
+
+/**
+ * Test: socket_connect to non-existent socket fails
+ */
+void test_connect_nonexistent_socket(void) {
+    TEST("test_connect_nonexistent_socket");
+
+    int fd;
+    /* Use project-local path */
+    socket_error_t err = socket_connect("./tmp/weave_nonexistent_socket.sock", &fd);
+
+    ASSERT_EQ(SOCKET_ERR_CONNECT_FAILED, err);
+
+    TEST_PASS();
+}
+
+/**
+ * Test: socket_connect to existing socket succeeds
+ */
+void test_connect_success(void) {
+    TEST("test_connect_success");
+
+    save_xdg_runtime_dir();
+
+    if (create_temp_dir() != 0) {
+        printf("  SKIP: Could not create temp directory\n");
+        restore_xdg_runtime_dir();
+        tests_passed++;
+        return;
+    }
+
+    setenv("XDG_RUNTIME_DIR", temp_dir, 1);
+
+    /* Create listening socket */
+    int listen_fd = -1;
+    socket_error_t err = socket_create(&listen_fd);
+    ASSERT_EQ(SOCKET_OK, err);
+    ASSERT_TRUE(listen_fd >= 0);
+
+    /* Get the socket path */
+    char socket_path[SOCKET_PATH_MAX];
+    err = socket_get_path(socket_path, sizeof(socket_path));
+    ASSERT_EQ(SOCKET_OK, err);
+
+    /* Connect to the socket */
+    int connected_fd = -1;
+    err = socket_connect(socket_path, &connected_fd);
+    ASSERT_EQ(SOCKET_OK, err);
+    ASSERT_TRUE(connected_fd >= 0);
+
+    /* Accept the connection on the listening socket */
+    int accepted_fd = accept(listen_fd, NULL, NULL);
+    ASSERT_TRUE(accepted_fd >= 0);
+
+    /* Cleanup */
+    close(connected_fd);
+    close(accepted_fd);
+    close(listen_fd);
+    socket_cleanup();
+    cleanup_temp_dir();
+
+    restore_xdg_runtime_dir();
+
+    TEST_PASS();
+}
+
+/**
+ * ==========================================================================
+ * Request/Response Loop Tests (Client Mode)
+ * ==========================================================================
+ */
+
+/**
+ * Test: Client connection can send and receive data
+ *
+ * This test verifies that a socket connected via socket_connect() can
+ * successfully send and receive data over the connection. This simulates
+ * the basic request/response pattern used in client mode.
+ */
+void test_client_send_receive(void) {
+    TEST("test_client_send_receive");
+
+    save_xdg_runtime_dir();
+
+    if (create_temp_dir() != 0) {
+        printf("  SKIP: Could not create temp directory\n");
+        restore_xdg_runtime_dir();
+        tests_passed++;
+        return;
+    }
+
+    setenv("XDG_RUNTIME_DIR", temp_dir, 1);
+
+    /* Create listening socket */
+    int listen_fd = -1;
+    socket_error_t err = socket_create(&listen_fd);
+    ASSERT_EQ(SOCKET_OK, err);
+    ASSERT_TRUE(listen_fd >= 0);
+
+    /* Get socket path */
+    char socket_path[SOCKET_PATH_MAX];
+    err = socket_get_path(socket_path, sizeof(socket_path));
+    ASSERT_EQ(SOCKET_OK, err);
+
+    /* Fork a child to act as client */
+    pid_t pid = fork();
+    if (pid == 0) {
+        /* Child: connect to socket and send data */
+        close(listen_fd);
+
+        /* Small delay to let parent enter accept() */
+        usleep(50000);
+
+        /* Connect to socket */
+        int client_fd = -1;
+        socket_error_t connect_err = socket_connect(socket_path, &client_fd);
+        if (connect_err != SOCKET_OK) {
+            _exit(1);
+        }
+
+        /* Send test data */
+        const char *test_msg = "test_request";
+        if (write(client_fd, test_msg, strlen(test_msg)) != (ssize_t)strlen(test_msg)) {
+            close(client_fd);
+            _exit(2);
+        }
+
+        /* Receive response */
+        char response[64];
+        ssize_t n = read(client_fd, response, sizeof(response) - 1);
+        if (n <= 0) {
+            close(client_fd);
+            _exit(3);
+        }
+        response[n] = '\0';
+
+        /* Verify response */
+        if (strcmp(response, "test_response") != 0) {
+            close(client_fd);
+            _exit(4);
+        }
+
+        close(client_fd);
+        _exit(0);
+    }
+
+    /* Parent: accept connection and echo */
+    ASSERT_TRUE(pid > 0);
+
+    int accepted_fd = accept(listen_fd, NULL, NULL);
+    ASSERT_TRUE(accepted_fd >= 0);
+
+    /* Receive request */
+    char request[64];
+    ssize_t n = read(accepted_fd, request, sizeof(request) - 1);
+    ASSERT_TRUE(n > 0);
+    request[n] = '\0';
+
+    /* Verify request */
+    ASSERT_STR_EQ("test_request", request);
+
+    /* Send response */
+    const char *response = "test_response";
+    ssize_t written = write(accepted_fd, response, strlen(response));
+    ASSERT_EQ((ssize_t)strlen(response), written);
+
+    /* Wait for child */
+    int status;
+    waitpid(pid, &status, 0);
+    ASSERT_TRUE(WIFEXITED(status));
+    ASSERT_EQ(0, WEXITSTATUS(status));
+
+    /* Cleanup */
+    close(accepted_fd);
+    close(listen_fd);
+    socket_cleanup();
+    cleanup_temp_dir();
+
+    restore_xdg_runtime_dir();
+
+    TEST_PASS();
+}
+
+/**
+ * Test: Client connection loop handles multiple requests
+ *
+ * This test verifies that the same connected socket can handle multiple
+ * sequential requests, simulating the persistent connection pattern in
+ * client mode.
+ */
+void test_client_multiple_requests(void) {
+    TEST("test_client_multiple_requests");
+
+    save_xdg_runtime_dir();
+
+    if (create_temp_dir() != 0) {
+        printf("  SKIP: Could not create temp directory\n");
+        restore_xdg_runtime_dir();
+        tests_passed++;
+        return;
+    }
+
+    setenv("XDG_RUNTIME_DIR", temp_dir, 1);
+
+    /* Create listening socket */
+    int listen_fd = -1;
+    socket_error_t err = socket_create(&listen_fd);
+    ASSERT_EQ(SOCKET_OK, err);
+
+    /* Get socket path */
+    char socket_path[SOCKET_PATH_MAX];
+    err = socket_get_path(socket_path, sizeof(socket_path));
+    ASSERT_EQ(SOCKET_OK, err);
+
+    /* Fork a child to act as client */
+    pid_t pid = fork();
+    if (pid == 0) {
+        /* Child: connect and send multiple requests */
+        close(listen_fd);
+
+        usleep(50000);
+
+        int client_fd = -1;
+        socket_error_t connect_err = socket_connect(socket_path, &client_fd);
+        if (connect_err != SOCKET_OK) {
+            _exit(1);
+        }
+
+        /* Send 3 requests over the same connection */
+        for (int i = 1; i <= 3; i++) {
+            char request[32];
+            snprintf(request, sizeof(request), "request_%d", i);
+
+            if (write(client_fd, request, strlen(request)) != (ssize_t)strlen(request)) {
+                close(client_fd);
+                _exit(2);
+            }
+
+            /* Receive response */
+            char response[32];
+            ssize_t n = read(client_fd, response, sizeof(response) - 1);
+            if (n <= 0) {
+                close(client_fd);
+                _exit(3);
+            }
+            response[n] = '\0';
+
+            /* Verify response matches request */
+            char expected[32];
+            snprintf(expected, sizeof(expected), "response_%d", i);
+            if (strcmp(response, expected) != 0) {
+                close(client_fd);
+                _exit(4);
+            }
+        }
+
+        close(client_fd);
+        _exit(0);
+    }
+
+    /* Parent: accept and handle multiple requests */
+    ASSERT_TRUE(pid > 0);
+
+    int accepted_fd = accept(listen_fd, NULL, NULL);
+    ASSERT_TRUE(accepted_fd >= 0);
+
+    /* Handle 3 requests */
+    for (int i = 1; i <= 3; i++) {
+        char request[32];
+        ssize_t n = read(accepted_fd, request, sizeof(request) - 1);
+        ASSERT_TRUE(n > 0);
+        request[n] = '\0';
+
+        /* Send matching response */
+        char response[32];
+        snprintf(response, sizeof(response), "response_%d", i);
+        ssize_t written = write(accepted_fd, response, strlen(response));
+        ASSERT_EQ((ssize_t)strlen(response), written);
+    }
+
+    /* Wait for child */
+    int status;
+    waitpid(pid, &status, 0);
+    ASSERT_TRUE(WIFEXITED(status));
+    ASSERT_EQ(0, WEXITSTATUS(status));
+
+    /* Cleanup */
+    close(accepted_fd);
+    close(listen_fd);
+    socket_cleanup();
+    cleanup_temp_dir();
+
+    restore_xdg_runtime_dir();
+
+    TEST_PASS();
+}
+
+/**
+ * Test: Client loop terminates on connection close
+ *
+ * This test verifies that when the server closes the connection, the
+ * client can detect it (via read returning 0) and terminate cleanly.
+ * This simulates the shutdown pattern in client mode.
+ */
+void test_client_terminates_on_close(void) {
+    TEST("test_client_terminates_on_close");
+
+    save_xdg_runtime_dir();
+
+    if (create_temp_dir() != 0) {
+        printf("  SKIP: Could not create temp directory\n");
+        restore_xdg_runtime_dir();
+        tests_passed++;
+        return;
+    }
+
+    setenv("XDG_RUNTIME_DIR", temp_dir, 1);
+
+    /* Create listening socket */
+    int listen_fd = -1;
+    socket_error_t err = socket_create(&listen_fd);
+    ASSERT_EQ(SOCKET_OK, err);
+
+    /* Get socket path */
+    char socket_path[SOCKET_PATH_MAX];
+    err = socket_get_path(socket_path, sizeof(socket_path));
+    ASSERT_EQ(SOCKET_OK, err);
+
+    /* Fork a child to act as client */
+    pid_t pid = fork();
+    if (pid == 0) {
+        /* Child: connect and detect connection close */
+        close(listen_fd);
+
+        usleep(50000);
+
+        int client_fd = -1;
+        socket_error_t connect_err = socket_connect(socket_path, &client_fd);
+        if (connect_err != SOCKET_OK) {
+            _exit(1);
+        }
+
+        /*
+         * Simulate request/response loop that reads from socket.
+         * When server closes, read() should return 0 (EOF).
+         */
+        char buf[64];
+        ssize_t n = read(client_fd, buf, sizeof(buf));
+
+        if (n != 0) {
+            /* Expected EOF (n=0), but got something else */
+            close(client_fd);
+            _exit(2);
+        }
+
+        /* EOF detected correctly - clean shutdown */
+        close(client_fd);
+        _exit(0);
+    }
+
+    /* Parent: accept and immediately close connection */
+    ASSERT_TRUE(pid > 0);
+
+    int accepted_fd = accept(listen_fd, NULL, NULL);
+    ASSERT_TRUE(accepted_fd >= 0);
+
+    /* Close connection without sending anything */
+    close(accepted_fd);
+
+    /* Wait for child to detect closure and exit cleanly */
+    int status;
+    waitpid(pid, &status, 0);
+    ASSERT_TRUE(WIFEXITED(status));
+    ASSERT_EQ(0, WEXITSTATUS(status));
+
+    /* Cleanup */
+    close(listen_fd);
+    socket_cleanup();
+    cleanup_temp_dir();
+
+    restore_xdg_runtime_dir();
+
+    TEST_PASS();
+}
+
+/**
+ * Test: Client handles partial writes correctly
+ *
+ * This test verifies that the client connection can handle scenarios
+ * where writes might be partial (though unlikely with Unix sockets).
+ */
+void test_client_handles_partial_io(void) {
+    TEST("test_client_handles_partial_io");
+
+    save_xdg_runtime_dir();
+
+    if (create_temp_dir() != 0) {
+        printf("  SKIP: Could not create temp directory\n");
+        restore_xdg_runtime_dir();
+        tests_passed++;
+        return;
+    }
+
+    setenv("XDG_RUNTIME_DIR", temp_dir, 1);
+
+    /* Create listening socket */
+    int listen_fd = -1;
+    socket_error_t err = socket_create(&listen_fd);
+    ASSERT_EQ(SOCKET_OK, err);
+
+    /* Get socket path */
+    char socket_path[SOCKET_PATH_MAX];
+    err = socket_get_path(socket_path, sizeof(socket_path));
+    ASSERT_EQ(SOCKET_OK, err);
+
+    /* Fork a child to act as client */
+    pid_t pid = fork();
+    if (pid == 0) {
+        /* Child: connect and send larger data */
+        close(listen_fd);
+
+        usleep(50000);
+
+        int client_fd = -1;
+        socket_error_t connect_err = socket_connect(socket_path, &client_fd);
+        if (connect_err != SOCKET_OK) {
+            _exit(1);
+        }
+
+        /* Send 1KB of data */
+        char data[1024];
+        memset(data, 'A', sizeof(data));
+
+        size_t total_written = 0;
+        while (total_written < sizeof(data)) {
+            ssize_t n = write(client_fd, data + total_written,
+                            sizeof(data) - total_written);
+            if (n <= 0) {
+                close(client_fd);
+                _exit(2);
+            }
+            total_written += (size_t)n;
+        }
+
+        /* Receive acknowledgment */
+        char ack[4];
+        ssize_t n = read(client_fd, ack, sizeof(ack));
+        if (n != 3 || memcmp(ack, "ACK", 3) != 0) {
+            close(client_fd);
+            _exit(3);
+        }
+
+        close(client_fd);
+        _exit(0);
+    }
+
+    /* Parent: accept and receive all data */
+    ASSERT_TRUE(pid > 0);
+
+    int accepted_fd = accept(listen_fd, NULL, NULL);
+    ASSERT_TRUE(accepted_fd >= 0);
+
+    /* Read all 1KB */
+    char received[1024];
+    size_t total_read = 0;
+    while (total_read < sizeof(received)) {
+        ssize_t n = read(accepted_fd, received + total_read,
+                        sizeof(received) - total_read);
+        ASSERT_TRUE(n > 0);
+        total_read += (size_t)n;
+    }
+
+    /* Verify data */
+    for (size_t i = 0; i < sizeof(received); i++) {
+        ASSERT_EQ('A', received[i]);
+    }
+
+    /* Send ACK */
+    ssize_t written = write(accepted_fd, "ACK", 3);
+    ASSERT_EQ(3, written);
+
+    /* Wait for child */
+    int status;
+    waitpid(pid, &status, 0);
+    ASSERT_TRUE(WIFEXITED(status));
+    ASSERT_EQ(0, WEXITSTATUS(status));
+
+    /* Cleanup */
+    close(accepted_fd);
+    close(listen_fd);
+    socket_cleanup();
+    cleanup_temp_dir();
+
+    restore_xdg_runtime_dir();
+
+    TEST_PASS();
+}
+
+/**
+ * ==========================================================================
  * Error String Tests
  * ==========================================================================
  */
@@ -1029,6 +1588,7 @@ void test_error_strings(void) {
     ASSERT_STR_CONTAINS(socket_error_string(SOCKET_ERR_TIMEOUT_FAILED), "timeout");
     ASSERT_STR_CONTAINS(socket_error_string(SOCKET_ERR_ACCEPT_FAILED), "accept");
     ASSERT_STR_CONTAINS(socket_error_string(SOCKET_ERR_NULL_HANDLER), "handler");
+    ASSERT_STR_CONTAINS(socket_error_string(SOCKET_ERR_CONNECT_FAILED), "connect");
 
     /* Unknown error should not crash */
     const char *unknown = socket_error_string((socket_error_t)-999);
@@ -1084,6 +1644,19 @@ int main(void) {
     test_accept_loop_invalid_fd();
     test_accept_loop_null_handler();
     test_accept_loop_handles_shutdown();
+
+    printf("\n=== Socket Connect Tests ===\n");
+    test_connect_null_socket_path();
+    test_connect_null_connected_fd();
+    test_connect_path_too_long();
+    test_connect_nonexistent_socket();
+    test_connect_success();
+
+    printf("\n=== Request/Response Loop Tests (Client Mode) ===\n");
+    test_client_send_receive();
+    test_client_multiple_requests();
+    test_client_terminates_on_close();
+    test_client_handles_partial_io();
 
     printf("\n=== Error String Tests ===\n");
     test_error_strings();

@@ -28,7 +28,7 @@ func TestImagePipeline_EndToEnd(t *testing.T) {
 			Prompt: "test prompt",
 		},
 	}
-	server, err := NewServerWithDeps("", mockOllama, sessionMgr, storage, nil)
+	server, err := NewServerWithDeps("", mockOllama, sessionMgr, storage, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestImagePipeline_FullWorkflow(t *testing.T) {
 			Prompt: "A beautiful sunset",
 		},
 	}
-	server, err := NewServerWithDeps("", mockOllama, sessionMgr, storage, nil)
+	server, err := NewServerWithDeps("", mockOllama, sessionMgr, storage, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}

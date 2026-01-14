@@ -505,6 +505,8 @@ const char *socket_error_string(socket_error_t err) {
             return "failed to accept connection";
         case SOCKET_ERR_NULL_HANDLER:
             return "null handler provided to accept loop";
+        case SOCKET_ERR_CONNECT_FAILED:
+            return "failed to connect to socket";
         default:
             return "unknown error";
     }
@@ -567,6 +569,68 @@ int socket_is_shutdown_requested(void) {
  */
 void socket_reset_shutdown(void) {
     g_shutdown_requested = 0;
+}
+
+/**
+ * socket_connect - Connect to an existing Unix domain socket
+ *
+ * Connects to an existing Unix domain socket at the specified path.
+ * This function is used by the daemon when running in "worker mode" where
+ * the socket is created by the parent process (weave) rather than by the
+ * daemon itself.
+ *
+ * @param socket_path  Path to the existing socket file
+ * @param connected_fd Pointer to store the connected socket file descriptor
+ * @return             SOCKET_OK on success, error code on failure
+ *
+ * Error codes:
+ * - SOCKET_ERR_NULL_POINTER: socket_path or connected_fd is NULL
+ * - SOCKET_ERR_PATH_TOO_LONG: Socket path exceeds system limit
+ * - SOCKET_ERR_SOCKET_FAILED: Could not create socket
+ * - SOCKET_ERR_CONNECT_FAILED: Could not connect to socket
+ *
+ * On success, the caller owns the socket and must close it when done.
+ */
+socket_error_t socket_connect(const char *socket_path, int *connected_fd) {
+    if (socket_path == NULL || connected_fd == NULL) {
+        return SOCKET_ERR_NULL_POINTER;
+    }
+
+    *connected_fd = -1;
+
+    /* Verify path fits in sockaddr_un */
+    size_t path_len = strlen(socket_path);
+    if (path_len >= sizeof(((struct sockaddr_un *)0)->sun_path)) {
+        socket_log(SOCKET_LOG_ERROR, "socket path too long: %zu bytes (max %zu)",
+                   path_len, sizeof(((struct sockaddr_un *)0)->sun_path) - 1);
+        return SOCKET_ERR_PATH_TOO_LONG;
+    }
+
+    /* Create socket */
+    int sock_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sock_fd < 0) {
+        socket_log(SOCKET_LOG_ERROR, "socket() failed: %s", strerror(errno));
+        return SOCKET_ERR_SOCKET_FAILED;
+    }
+
+    /* Prepare address structure */
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr)); /* Ensures null termination */
+    addr.sun_family = AF_UNIX;
+    memcpy(addr.sun_path, socket_path, path_len + 1); /* Include null terminator */
+
+    /* Connect to the socket */
+    if (connect(sock_fd, (const struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        socket_log(SOCKET_LOG_ERROR, "connect() failed for %s: %s",
+                   socket_path, strerror(errno));
+        close(sock_fd);
+        return SOCKET_ERR_CONNECT_FAILED;
+    }
+
+    socket_log(SOCKET_LOG_INFO, "connected to socket: %s", socket_path);
+
+    *connected_fd = sock_fd;
+    return SOCKET_OK;
 }
 
 /**

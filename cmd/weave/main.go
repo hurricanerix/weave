@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
+	"github.com/hurricanerix/weave/internal/client"
 	"github.com/hurricanerix/weave/internal/config"
 	"github.com/hurricanerix/weave/internal/startup"
 )
@@ -49,34 +51,59 @@ func run() int {
 	}
 	logger.Info("Connected to ollama at %s (model: %s)", cfg.OllamaURL, cfg.OllamaModel)
 
-	// Validate weave-compute is running
-	logger.Debug("Validating weave-compute connection...")
-	if err := startup.ValidateCompute(); err != nil {
-		logger.Error("Compute validation failed: %v", err)
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		fmt.Fprintf(os.Stderr, "\nPlease ensure weave-compute daemon is running.\n")
-		fmt.Fprintf(os.Stderr, "See docs/DEVELOPMENT.md for setup instructions.\n")
-		return 1
-	}
-
-	// Get socket path for logging
-	socketPath, err := startup.GetSocketPath()
+	// Create socket for compute daemon communication
+	logger.Debug("Creating socket for weave-compute...")
+	listener, socketPath, err := startup.CreateSocket()
 	if err != nil {
-		logger.Error("Failed to get socket path: %v", err)
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		logger.Error("Failed to create socket: %v", err)
+		fmt.Fprintf(os.Stderr, "Error: failed to create socket: %v\n", err)
 		return 1
 	}
-	logger.Info("Connected to weave-compute at %s", socketPath)
+	defer listener.Close()
+	logger.Info("Created socket at %s", socketPath)
+
+	// Spawn compute daemon
+	logger.Debug("Spawning weave-compute daemon...")
+	computeProcess, computeStdin, err := startup.SpawnCompute(socketPath)
+	if err != nil {
+		logger.Error("Failed to spawn compute daemon: %v", err)
+		fmt.Fprintf(os.Stderr, "Error: failed to spawn compute daemon: %v\n", err)
+		fmt.Fprintf(os.Stderr, "\nEnsure the compute daemon binary is available.\n")
+		fmt.Fprintf(os.Stderr, "See docs/DEVELOPMENT.md for build instructions.\n")
+		return 1
+	}
+	logger.Info("Spawned weave-compute daemon (PID: %d)", computeProcess.Process.Pid)
+
+	// Accept connection from compute daemon
+	logger.Debug("Waiting for compute daemon to connect...")
+	ctx := context.Background()
+	acceptCtx, acceptCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer acceptCancel()
+
+	computeConn, err := client.AcceptConnection(acceptCtx, listener)
+	if err != nil {
+		logger.Error("Failed to accept compute connection: %v", err)
+		fmt.Fprintf(os.Stderr, "Error: failed to accept compute connection: %v\n", err)
+		return 1
+	}
+	logger.Info("Accepted connection from weave-compute daemon")
 
 	// Initialize all components
 	logger.Debug("Initializing components...")
-	ctx := context.Background()
-	components, err := startup.InitializeAll(ctx, cfg, logger)
+	components, err := startup.InitializeAll(ctx, cfg, logger, computeConn)
 	if err != nil {
 		logger.Error("Initialization failed: %v", err)
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
 	}
+
+	// Set compute-specific fields on components
+	components.ComputeListener = listener
+	components.ComputeSocketPath = socketPath
+	components.ComputeProcess = computeProcess
+	components.ComputeStdin = computeStdin
+
+	defer startup.CleanupCompute(components, logger)
 
 	// Log server startup
 	logger.Info("Listening on http://localhost:%d", cfg.Port)

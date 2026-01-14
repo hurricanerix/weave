@@ -229,7 +229,7 @@ func TestServer_HandleIndex_UsesDefaultValues(t *testing.T) {
 				Seed:  tt.seed,
 			}
 
-			s, err := NewServerWithDeps("", nil, nil, nil, cfg)
+			s, err := NewServerWithDeps("", nil, nil, nil, nil, cfg)
 			if err != nil {
 				t.Fatalf("NewServerWithDeps() error = %v", err)
 			}
@@ -622,7 +622,7 @@ func TestServer_APIEndpoints_Integration(t *testing.T) {
 
 func TestHandleImage_ValidImage(t *testing.T) {
 	storage := image.NewStorage()
-	server, err := NewServerWithDeps("", nil, nil, storage, nil)
+	server, err := NewServerWithDeps("", nil, nil, storage, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -679,7 +679,7 @@ func TestHandleImage_ValidImage(t *testing.T) {
 
 func TestHandleImage_NotFound(t *testing.T) {
 	storage := image.NewStorage()
-	server, err := NewServerWithDeps("", nil, nil, storage, nil)
+	server, err := NewServerWithDeps("", nil, nil, storage, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -698,7 +698,7 @@ func TestHandleImage_NotFound(t *testing.T) {
 
 func TestHandleImage_InvalidID(t *testing.T) {
 	storage := image.NewStorage()
-	server, err := NewServerWithDeps("", nil, nil, storage, nil)
+	server, err := NewServerWithDeps("", nil, nil, storage, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -761,7 +761,7 @@ func TestChatWithRetry_FormatReminderAfterParseError(t *testing.T) {
 				},
 			}
 
-			server, err := NewServerWithDeps("", mock, nil, nil, nil)
+			server, err := NewServerWithDeps("", mock, nil, nil, nil, nil)
 			if err != nil {
 				t.Fatalf("NewServerWithDeps failed: %v", err)
 			}
@@ -805,7 +805,7 @@ func TestChatWithRetry_ContextCompactionAfterTwoRetries(t *testing.T) {
 		},
 	}
 
-	server, err := NewServerWithDeps("", mock, nil, nil, nil)
+	server, err := NewServerWithDeps("", mock, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -843,7 +843,7 @@ func TestChatWithRetry_ErrorReturnedAfterAllRetriesFail(t *testing.T) {
 		},
 	}
 
-	server, err := NewServerWithDeps("", mock, nil, nil, nil)
+	server, err := NewServerWithDeps("", mock, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -888,7 +888,7 @@ func TestChatWithRetry_RetryCountResetsOnSuccess(t *testing.T) {
 		},
 	}
 
-	server, err := NewServerWithDeps("", mock, nil, nil, nil)
+	server, err := NewServerWithDeps("", mock, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -940,7 +940,7 @@ func TestChatWithRetry_NonFormatErrorReturnsImmediately(t *testing.T) {
 		},
 	}
 
-	server, err := NewServerWithDeps("", mock, nil, nil, nil)
+	server, err := NewServerWithDeps("", mock, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -966,7 +966,7 @@ func TestChatWithRetry_NonFormatErrorReturnsImmediately(t *testing.T) {
 }
 
 func TestCompactContext_CorrectFormat(t *testing.T) {
-	server, err := NewServerWithDeps("", nil, nil, nil, nil)
+	server, err := NewServerWithDeps("", nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -1026,7 +1026,7 @@ func TestCompactContext_CorrectFormat(t *testing.T) {
 }
 
 func TestCompactContext_SkipsSystemInjectedMessages(t *testing.T) {
-	server, err := NewServerWithDeps("", nil, nil, nil, nil)
+	server, err := NewServerWithDeps("", nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -1063,7 +1063,7 @@ func TestCompactContext_SkipsSystemInjectedMessages(t *testing.T) {
 }
 
 func TestCompactContext_TruncatesLongContent(t *testing.T) {
-	server, err := NewServerWithDeps("", nil, nil, nil, nil)
+	server, err := NewServerWithDeps("", nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -1102,7 +1102,7 @@ func TestServer_ParseSteps(t *testing.T) {
 		CFG:   1.0,
 		Seed:  0,
 	}
-	server, err := NewServerWithDeps("", nil, nil, nil, cfg)
+	server, err := NewServerWithDeps("", nil, nil, nil, nil, cfg)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -1139,7 +1139,7 @@ func TestServer_ParseCFG(t *testing.T) {
 		CFG:   1.5,
 		Seed:  0,
 	}
-	server, err := NewServerWithDeps("", nil, nil, nil, cfg)
+	server, err := NewServerWithDeps("", nil, nil, nil, nil, cfg)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -1175,7 +1175,7 @@ func TestServer_ParseSeed(t *testing.T) {
 		CFG:   1.0,
 		Seed:  42,
 	}
-	server, err := NewServerWithDeps("", nil, nil, nil, cfg)
+	server, err := NewServerWithDeps("", nil, nil, nil, nil, cfg)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}
@@ -1212,7 +1212,7 @@ func TestServer_HandleGenerateWithSettings(t *testing.T) {
 		CFG:   1.0,
 		Seed:  0,
 	}
-	server, err := NewServerWithDeps("", nil, nil, nil, cfg)
+	server, err := NewServerWithDeps("", nil, nil, nil, nil, cfg)
 	if err != nil {
 		t.Fatalf("NewServerWithDeps failed: %v", err)
 	}

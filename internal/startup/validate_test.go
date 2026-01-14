@@ -185,7 +185,7 @@ func TestGetSocketPath(t *testing.T) {
 	}{
 		{
 			name:    "valid XDG_RUNTIME_DIR",
-			xdgDir:  "/tmp/test",
+			xdgDir:  "", // Will be set to t.TempDir() in test
 			wantErr: false,
 		},
 		{
@@ -206,8 +206,14 @@ func TestGetSocketPath(t *testing.T) {
 				}
 			}()
 
-			if tt.xdgDir != "" {
-				os.Setenv("XDG_RUNTIME_DIR", tt.xdgDir)
+			xdgDir := tt.xdgDir
+			if xdgDir == "" && !tt.wantErr {
+				// Use project-local temp directory for valid test cases
+				xdgDir = t.TempDir()
+			}
+
+			if xdgDir != "" {
+				os.Setenv("XDG_RUNTIME_DIR", xdgDir)
 			} else {
 				os.Unsetenv("XDG_RUNTIME_DIR")
 			}
@@ -219,7 +225,7 @@ func TestGetSocketPath(t *testing.T) {
 			}
 
 			if !tt.wantErr {
-				expectedPath := filepath.Join(tt.xdgDir, socketDir, socketName)
+				expectedPath := filepath.Join(xdgDir, socketDir, socketName)
 				if path != expectedPath {
 					t.Errorf("GetSocketPath() = %q, want %q", path, expectedPath)
 				}
@@ -273,7 +279,8 @@ func TestGetSocketPath_PathCleaning(t *testing.T) {
 	}()
 
 	// Set path with dots (but still absolute)
-	os.Setenv("XDG_RUNTIME_DIR", "/tmp/test/./subdir/../")
+	tmpDir := t.TempDir()
+	os.Setenv("XDG_RUNTIME_DIR", filepath.Join(tmpDir, "test", ".", "subdir", ".."))
 
 	path, err := GetSocketPath()
 	if err != nil {

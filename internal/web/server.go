@@ -73,6 +73,9 @@ type Server struct {
 	// Image storage for generated images
 	imageStorage *image.Storage
 
+	// Compute client for image generation (persistent connection)
+	computeClient *client.Conn
+
 	// Default generation settings from CLI flags
 	defaultSteps  int
 	defaultCFG    float64
@@ -101,7 +104,7 @@ type indexTemplateData struct {
 // Deprecated: Use NewServerWithDeps to inject dependencies.
 // This function creates default clients for backward compatibility with tests.
 func NewServer(addr string) (*Server, error) {
-	return NewServerWithDeps(addr, nil, nil, nil, nil)
+	return NewServerWithDeps(addr, nil, nil, nil, nil, nil)
 }
 
 // NewServerWithDeps creates a new Server with injected dependencies.
@@ -109,9 +112,10 @@ func NewServer(addr string) (*Server, error) {
 // If ollamaClient is nil, a default client is created.
 // If sessionManager is nil, a default session manager is created.
 // If imageStorage is nil, a default image storage is created.
+// If computeClient is nil, generation requests will fail (for testing only).
 // If cfg is nil, default generation settings are used (steps=4, cfg=1.0, seed=0).
 // Returns an error if templates cannot be parsed.
-func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *conversation.SessionManager, imageStorage *image.Storage, cfg *config.Config) (*Server, error) {
+func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *conversation.SessionManager, imageStorage *image.Storage, computeClient *client.Conn, cfg *config.Config) (*Server, error) {
 	if addr == "" {
 		addr = DefaultAddr
 	}
@@ -155,6 +159,7 @@ func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *c
 		sessionManager: sessionManager,
 		rateLimiter:    newRateLimiter(),
 		imageStorage:   imageStorage,
+		computeClient:  computeClient,
 		defaultSteps:   defaultSteps,
 		defaultCFG:     defaultCFG,
 		defaultSeed:    defaultSeed,
@@ -1016,29 +1021,21 @@ func (s *Server) generateImage(ctx context.Context, sessionID string, prompt str
 		return fmt.Errorf("failed to encode request: %w", err)
 	}
 
-	// Connect to compute daemon
+	// Use persistent compute connection
+	if s.computeClient == nil {
+		log.Printf("Compute client not available for session %s", sessionID)
+		s.sendErrorEvent(sessionID, "Image generation is not available (compute daemon not connected)")
+		return client.ErrDaemonNotRunning
+	}
+
+	// Send request and receive response over persistent connection
 	genCtx, cancel := context.WithTimeout(ctx, 120*time.Second) // 2 min timeout for generation
 	defer cancel()
 
-	conn, err := client.Connect(genCtx)
-	if err != nil {
-		log.Printf("Failed to connect to compute daemon for session %s: %v", sessionID, err)
-		if errors.Is(err, client.ErrDaemonNotRunning) {
-			s.sendErrorEvent(sessionID, "Image generation is not available (weave-compute not running)")
-		} else if errors.Is(err, client.ErrXDGNotSet) {
-			s.sendErrorEvent(sessionID, "Image generation is not available (XDG_RUNTIME_DIR not set)")
-		} else {
-			s.sendErrorEvent(sessionID, "Failed to connect to image generation service")
-		}
-		return fmt.Errorf("failed to connect to daemon: %w", err)
-	}
-	defer conn.Close()
-
-	// Send request and receive response
-	responseData, err := conn.Send(genCtx, requestData)
+	responseData, err := s.computeClient.Send(genCtx, requestData)
 	if err != nil {
 		log.Printf("Failed to send request to compute daemon for session %s: %v", sessionID, err)
-		if errors.Is(err, client.ErrConnectionClosed) {
+		if errors.Is(err, client.ErrConnectionClosed) || errors.Is(err, client.ErrReaderDead) {
 			s.sendErrorEvent(sessionID, "Connection to image generation service was closed")
 		} else if errors.Is(err, client.ErrReadTimeout) {
 			s.sendErrorEvent(sessionID, "Image generation timed out. Try a simpler prompt.")

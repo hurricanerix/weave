@@ -70,6 +70,7 @@ weave-compute: $(DAEMON_C_OBJS) $(DAEMON_CXX_OBJS) $(SD_LIB)
 .PHONY: test
 test: $(TEST_DIR)/test_protocol $(TEST_DIR)/test_socket $(TEST_DIR)/test_sd_wrapper $(TEST_DIR)/test_generate
 	@echo "Running unit tests..."
+	@mkdir -p ./tmp
 	@./$(TEST_DIR)/test_protocol
 	@./$(TEST_DIR)/test_socket
 	@./$(TEST_DIR)/test_sd_wrapper
@@ -78,6 +79,7 @@ test: $(TEST_DIR)/test_protocol $(TEST_DIR)/test_socket $(TEST_DIR)/test_sd_wrap
 .PHONY: test-asan
 test-asan: $(TEST_DIR)/test_protocol_asan $(TEST_DIR)/test_socket_asan
 	@echo "Running tests with AddressSanitizer and UBSan..."
+	@mkdir -p ./tmp
 	@./$(TEST_DIR)/test_protocol_asan
 	@./$(TEST_DIR)/test_socket_asan
 
@@ -106,6 +108,9 @@ $(TEST_DIR)/test_sd_wrapper: $(TEST_DIR)/test_sd_wrapper.c $(SRC_DIR)/sd_wrapper
 
 $(TEST_DIR)/test_generate: $(TEST_DIR)/test_generate.c $(SRC_DIR)/generate.c
 	$(CC) $(CFLAGS_DEBUG) $(INCLUDES) -o $@ $^ $(LDFLAGS)
+
+$(TEST_DIR)/test_stdin_monitor_unit: $(TEST_DIR)/test_stdin_monitor_unit.c $(SRC_DIR)/socket.c
+	$(CC) $(CFLAGS_DEBUG) $(INCLUDES) -o $@ $^ $(LDFLAGS) -lpthread
 
 # Benchmark targets
 .PHONY: bench
@@ -138,9 +143,11 @@ clean:
 	rm -f $(TEST_DIR)/test_socket $(TEST_DIR)/test_socket_asan
 	rm -f $(TEST_DIR)/test_sd_wrapper
 	rm -f $(TEST_DIR)/test_generate
+	rm -f $(TEST_DIR)/test_stdin_monitor_unit
 	rm -f $(BENCH_DIR)/bench_generate
 	rm -f fuzz/fuzz_protocol fuzz/generate_corpus fuzz/test_corpus fuzz/stress_test
 	rm -rf fuzz/corpus fuzz/crash-* fuzz/leak-* fuzz/timeout-*
+	rm -rf ./tmp
 
 .PHONY: clean-all
 clean-all: clean
