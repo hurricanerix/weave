@@ -27,10 +27,12 @@
 
 # Weave project
 !README.md
+!CHANGELOG.md
 !LICENSE
 !CLAUDE.md
 !.claude/**/*.md
 !.gitmodules
+!Makefile
 
 # Third-party dependencies
 !/compute-daemon/third_party

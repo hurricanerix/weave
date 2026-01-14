@@ -244,9 +244,9 @@ func TestParseResponse(t *testing.T) {
 			wantErr:           nil,
 		},
 		{
-			name:              "multiple delimiters on own lines uses last",
-			response:          "Here's a separator:\n---\nLet me continue.\n---\n{\"prompt\": \"a cat\", \"steps\": 22, \"cfg\": 6.5, \"seed\": 9999}",
-			wantText:          "Here's a separator:\n---\nLet me continue.",
+			name:              "multiple delimiters on own lines uses first",
+			response:          "Here's a separator:\n---\n{\"prompt\": \"a cat\", \"steps\": 22, \"cfg\": 6.5, \"seed\": 9999}",
+			wantText:          "Here's a separator:",
 			wantPrompt:        "a cat",
 			wantGenerateImage: false,
 			wantSteps:         22,

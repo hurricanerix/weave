@@ -137,6 +137,10 @@ func parseResponse(response string) (string, LLMMetadata, error) {
 	// (empty if still asking questions). The "steps", "cfg", and "seed" fields specify
 	// generation settings. All four fields are required for the system to function.
 	// Missing any field means the LLM didn't follow the schema.
+	//
+	// NOTE: "generate_image" is optional and defaults to false if missing. This provides
+	// backward compatibility and graceful degradation if the LLM omits the field.
+	// The absence of "generate_image" is equivalent to "generate_image": false.
 	_, hasPrompt := rawMap["prompt"]
 	_, hasSteps := rawMap["steps"]
 	_, hasCFG := rawMap["cfg"]

@@ -284,20 +284,30 @@ func (c *Client) parseStreamingResponse(body io.Reader, callback StreamCallback)
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 {
-			continue // Skip empty lines in newline-delimited JSON
+			// Skip empty lines in newline-delimited JSON stream.
+			// WHY SKIP: Ollama's streaming format may include blank lines between
+			// JSON objects. These are not part of the protocol and should be ignored.
+			continue
 		}
 
+		// Parse the JSON object for this chunk.
+		// WHY UNMARSHAL PER LINE: Ollama's streaming format sends one JSON object
+		// per line. Each object contains a token in the Message.Content field.
 		var chatResp ChatResponse
 		if err := json.Unmarshal(line, &chatResp); err != nil {
+			// Parsing failed - malformed JSON from ollama.
+			// WHY FAIL IMMEDIATELY: If ollama sends malformed JSON, we can't trust
+			// the rest of the stream. Better to fail fast than continue with corrupted data.
 			return "", fmt.Errorf("failed to parse response: %w", err)
 		}
 
 		token := chatResp.Message.Content
 
-		// Append token to full response (always include everything)
-		// WHY: We need the complete response for parsing and storage, regardless of
-		// what gets displayed. The fullResponse includes both conversational text
-		// and JSON metadata.
+		// Append token to full response (always include everything).
+		// WHY ALWAYS APPEND: We need the complete response for parsing and storage,
+		// regardless of what gets displayed. The fullResponse includes both
+		// conversational text and JSON metadata. Even if we stop displaying tokens
+		// at the delimiter, we must preserve everything for parseResponse().
 		fullResponse.WriteString(token)
 
 		// Check response size limit to prevent unbounded memory usage
@@ -360,10 +370,18 @@ func (c *Client) parseStreamingResponse(body io.Reader, callback StreamCallback)
 		}
 
 		if chatResp.Done {
+			// Stream is complete - stop reading.
+			// WHY CHECK DONE: Ollama signals stream completion by setting Done=true
+			// in the final JSON object. This is more reliable than waiting for EOF
+			// because it's an explicit protocol signal that all tokens have been sent.
 			break
 		}
 	}
 
+	// Check for errors during stream reading.
+	// WHY CHECK SCANNER ERROR: Scanner.Scan() returns false on EOF or error.
+	// We must distinguish between clean completion (Done=true) and I/O errors
+	// (network failure, connection closed). Scanner.Err() tells us which it was.
 	if err := scanner.Err(); err != nil {
 		return fullResponse.String(), fmt.Errorf("stream read error: %w", err)
 	}

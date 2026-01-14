@@ -1613,12 +1613,12 @@ The default model can be changed by updating `defaultOllamaModel` in `internal/c
 
 ### Structured Output Format
 
-Weave uses a structured output format to separate conversational text (shown in chat) from machine-readable metadata (prompt extraction). Every LLM response follows this format:
+Weave uses a structured output format to separate conversational text (shown in chat) from machine-readable metadata (prompt extraction and generation settings). Every LLM response follows this format:
 
 ```
 <Conversational text visible to user>
 ---
-{"prompt": "extracted prompt", "ready": true}
+{"prompt": "...", "generate_image": true, "steps": 4, "cfg": 1.0, "seed": -1}
 ```
 
 **Format specification:**
@@ -1633,10 +1633,21 @@ Weave uses a structured output format to separate conversational text (shown in 
 
 ```json
 {
-  "prompt": "string",  // Image generation prompt (empty string if not ready)
-  "ready": boolean     // True if enough info to generate, false if still asking
+  "prompt": "string",           // Image generation prompt (empty string if not ready)
+  "generate_image": boolean,    // True to trigger generation, false to just update prompt
+  "steps": integer,             // Number of inference steps (typically 4-28)
+  "cfg": float,                 // CFG scale (classifier-free guidance, typically 1.0-7.5)
+  "seed": integer               // Generation seed (-1 for random, >=0 for reproducible)
 }
 ```
+
+**Field descriptions:**
+
+- **prompt**: The image generation prompt. Empty string when still asking clarifying questions.
+- **generate_image**: Controls automatic generation. When `true`, the backend automatically generates the image (same as user clicking generate button). When `false`, just updates prompt and settings without generating.
+- **steps**: Number of diffusion steps. More steps = higher quality but slower. Typical range: 4-28.
+- **cfg**: Classifier-free guidance scale. Higher values follow prompt more strictly. Typical range: 1.0-7.5.
+- **seed**: Random seed for reproducibility. Use -1 for random generation, or a specific value (0 or higher) for deterministic results.
 
 **Examples:**
 
@@ -1646,14 +1657,21 @@ A cat in a hat! Let me ask a few questions:
 - What kind of cat?
 - What style of hat?
 ---
-{"prompt": "", "ready": false}
+{"prompt": "", "generate_image": false, "steps": 4, "cfg": 1.0, "seed": -1}
 ```
 
 Agent ready to generate:
 ```
 Perfect! Generating your image now.
 ---
-{"prompt": "a tabby cat wearing a blue wizard hat", "ready": true}
+{"prompt": "a tabby cat wearing a blue wizard hat", "generate_image": true, "steps": 4, "cfg": 1.0, "seed": -1}
+```
+
+Agent adjusting settings:
+```
+I'll increase the quality with more steps.
+---
+{"prompt": "a tabby cat wearing a blue wizard hat", "generate_image": true, "steps": 28, "cfg": 1.0, "seed": -1}
 ```
 
 ### Automatic Retry Logic
@@ -1668,7 +1686,7 @@ If the response is missing the `---` delimiter, has invalid JSON, or is missing 
 
 ```
 Please end your response with `---` followed by JSON using this format:
-{"prompt": "your prompt here", "ready": true}
+{"prompt": "your prompt here", "generate_image": true, "steps": 4, "cfg": 1.0, "seed": -1}
 ```
 
 The LLM gets up to 2 chances to correct the format. This recovers most format errors.
@@ -1684,7 +1702,7 @@ If format reminders fail, weave assumes the conversation context has grown too l
 Compacted format:
 ```
 User wants: [key details extracted from conversation].
-Respond with ONLY JSON (no conversational text): {"prompt": "...", "ready": true}
+Respond with ONLY JSON (no conversational text): {"prompt": "...", "generate_image": true, "steps": 4, "cfg": 1.0, "seed": -1}
 ```
 
 This gives the LLM a fresh start with minimal context. One retry attempt is made with compacted context.

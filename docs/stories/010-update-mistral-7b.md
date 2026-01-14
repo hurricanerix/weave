@@ -1,7 +1,7 @@
 # Story 010: Update to Mistral 7B with structured output
 
 ## Status
-In Progress
+Done
 
 ## Problem
 
@@ -42,7 +42,10 @@ A reliable ollama client where:
 - [ ] System prompt instructs LLM to end EVERY message with `---\n{JSON}`
 - [ ] JSON schema contains:
   - `prompt` (string): Image generation prompt (empty string if not ready)
-  - `ready` (boolean): True if enough info to generate, false if still asking
+  - `generate_image` (boolean): True to trigger generation, false to just update prompt
+  - `steps` (int): Number of inference steps
+  - `cfg` (float): CFG scale
+  - `seed` (int): Generation seed (-1 for random)
 - [ ] Conversational text appears before `---` delimiter (shown in chat pane)
 - [ ] JSON appears after `---` delimiter (parsed, not shown in chat pane)
 - [ ] System prompt includes example format:
@@ -51,13 +54,13 @@ A reliable ollama client where:
   - What kind of cat?
   - What style of hat?
   ---
-  {"prompt": "", "ready": false}
+  {"prompt": "", "generate_image": false, "steps": 4, "cfg": 1.0, "seed": -1}
   ```
 - [ ] System prompt includes example when ready:
   ```
   Perfect! Generating your image now.
   ---
-  {"prompt": "a tabby cat wearing a blue wizard hat", "ready": true}
+  {"prompt": "a tabby cat wearing a blue wizard hat", "generate_image": true, "steps": 4, "cfg": 1.0, "seed": -1}
   ```
 
 ### Streaming Behavior
@@ -66,12 +69,12 @@ A reliable ollama client where:
 - [ ] When `---` delimiter detected, stop displaying tokens in chat pane
 - [ ] Buffer remaining tokens (JSON portion) until response complete
 - [ ] Parse buffered JSON after stream ends
-- [ ] If `ready: true` and `prompt` non-empty, update prompt pane
+- [ ] If `generate_image: true` and `prompt` non-empty, trigger generation automatically
 - [ ] Chat pane shows only conversational text (before `---`)
 
 ### JSON Parsing
 
-- [ ] Go code defines struct for JSON unmarshaling (prompt, ready fields)
+- [ ] Go code defines struct for JSON unmarshaling (prompt, generate_image, steps, cfg, seed fields)
 - [ ] After stream completes, parse JSON portion
 - [ ] If JSON valid and unmarshals successfully, accept response
 - [ ] If `---` delimiter missing, trigger retry (format error)
@@ -135,7 +138,7 @@ A reliable ollama client where:
 
 - [ ] DEVELOPMENT.md updated with Mistral 7B setup
 - [ ] DEVELOPMENT.md explains response format (`---\n{JSON}`)
-- [ ] DEVELOPMENT.md documents JSON schema (prompt, ready fields)
+- [ ] DEVELOPMENT.md documents JSON schema (prompt, generate_image, steps, cfg, seed fields)
 - [ ] DEVELOPMENT.md explains retry levels (format reminder → compaction → reset)
 - [ ] Code comments explain delimiter detection and JSON parsing
 - [ ] Code comments explain why streaming stops at `---`
@@ -205,7 +208,7 @@ Replace `SystemPrompt` constant in `internal/ollama/types.go` with new prompt th
 
 ### 004: Implement delimiter detection in streaming
 **Domain:** weave
-**Status:** pending
+**Status:** done
 **Depends on:** 002
 
 Modify `parseStreamingResponse` in `internal/ollama/client.go` to:
@@ -236,12 +239,12 @@ Return specific errors: `ErrMissingDelimiter`, `ErrInvalidJSON`, `ErrMissingFiel
 
 ### 006: Update Chat method to return parsed metadata
 **Domain:** weave
-**Status:** pending
+**Status:** done
 **Depends on:** 005
 
 Modify `Chat` method signature in `internal/ollama/client.go` to return `ChatResult` instead of just string. Update `ChatResult` to contain:
 - `Response string` (conversational text only, before delimiter)
-- `Metadata LLMMetadata` (parsed JSON)
+- `Metadata LLMMetadata` (parsed JSON with prompt, generate_image, steps, cfg, seed)
 - Remove old `Prompt` field (now in metadata)
 
 Update all callers to use new return type.
@@ -294,7 +297,7 @@ Add final error handling in `handleChat` after all retries fail:
 
 ### 010: Remove old ExtractPrompt function
 **Domain:** weave
-**Status:** pending
+**Status:** done
 **Depends on:** 006
 
 Delete `ExtractPrompt` function from `internal/ollama/prompt.go` and its helper functions (`isValidPromptModifier`, `stripQuotes`). Remove `PromptPrefix` constant. Clean up any remaining references to text-based prompt extraction.
@@ -309,7 +312,7 @@ Delete `ExtractPrompt` function from `internal/ollama/prompt.go` and its helper 
 Modify `handleChat` in `internal/web/server.go` to:
 - Use `chatWithRetry` instead of direct ollama client call
 - Extract prompt from `result.Metadata.Prompt` instead of `ollama.ExtractPrompt(fullResponse)`
-- Only update prompt if `result.Metadata.Ready == true` and prompt non-empty
+- If `result.Metadata.GenerateImage == true` and prompt non-empty, trigger generation automatically
 - Send `agent-done` event after successful parse
 
 ---
@@ -324,7 +327,7 @@ Add tests in `internal/ollama/prompt_test.go`:
 - Parse response missing delimiter (returns error)
 - Parse response with invalid JSON after delimiter (returns error)
 - Parse response missing required fields (returns error)
-- Parse response with empty prompt but ready=false (valid)
+- Parse response with empty prompt but generate_image=false (valid)
 
 Use table-driven tests with multiple test cases.
 
@@ -369,7 +372,7 @@ Add test in `internal/ollama/integration_test.go`:
 - 10 multi-turn conversations with Mistral 7B
 - Verify all responses contain `---` delimiter
 - Verify all JSON parses successfully
-- Verify prompts extracted when ready=true
+- Verify prompts extracted when generate_image=true
 - Verify conversational text excludes JSON portion
 - Skip test if Mistral 7B not available in ollama
 
@@ -386,7 +389,7 @@ Update `docs/DEVELOPMENT.md`:
 - Change all references from `llama3.2:1b` to `mistral:7b`
 - Update pull command: `ollama pull mistral:7b`
 - Add section explaining response format (`---\n{JSON}`)
-- Document JSON schema (prompt, ready fields)
+- Document JSON schema (prompt, generate_image, steps, cfg, seed fields)
 - Document retry behavior (format reminder → compaction → reset)
 - Update model selection rationale (instruction following, format adherence)
 
@@ -394,7 +397,7 @@ Update `docs/DEVELOPMENT.md`:
 
 ### 017: Add code comments for delimiter logic
 **Domain:** weave
-**Status:** pending
+**Status:** done
 **Depends on:** 004, 005
 
 Add detailed comments in:
@@ -470,7 +473,7 @@ This gives LLM a fresh start with minimal context. If this fails, the LLM is fun
 
 ### JSON schema
 
-Minimal schema: `prompt` and `ready`. More fields could be added later (confidence score, clarifications needed, etc.) but not required for MVP. Keep it simple.
+Initial schema (Story 010): `prompt` and `ready`. Extended in Story 012 to `prompt`, `generate_image`, `steps`, `cfg`, and `seed` for full control over generation parameters and auto-generation behavior.
 
 ### Backward compatibility
 
@@ -530,9 +533,11 @@ Before marking this story complete, execute the following manual tests and docum
 - All responses contain `---` delimiter
 - All responses parse successfully
 - No format retries triggered (check logs)
-- Prompts update correctly when ready=true
+- Prompts update correctly when generate_image=true
 
 **Result:** [To be documented]
+
+**Note:** Story 012 extended the JSON schema to include `generate_image` for auto-generation control, replacing the original `ready` field with explicit generation triggering.
 
 ---
 
@@ -604,8 +609,8 @@ Before marking this story complete, execute the following manual tests and docum
 
 **Expected:**
 - Prompt extracted from `metadata.prompt` field
-- Prompt only appears when `metadata.ready == true`
-- Prompt appears in prompt pane only (not in chat text)
+- Prompt appears in prompt pane with every metadata update
+- Generation triggered when `metadata.generate_image == true`
 - Prompt content matches JSON exactly
 
 **Result:** [To be documented]

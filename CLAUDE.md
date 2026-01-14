@@ -82,3 +82,60 @@ RTX 4070 SUPER (12GB VRAM):
 - **C**: C99, no hidden costs, Valgrind clean
 - **Security**: Auth on socket, input validation, no UB
 - **Testing**: Fast unit tests, slow integration tests (tagged), detailed benchmarks
+
+## Implementing Stories
+
+When the user says "Implement Story NNN" (e.g., "Implement Story 015"):
+
+### Workflow
+
+1. **Read the story** from `docs/stories/NNN-*.md`
+2. **For each task in order:**
+   a. Check task status - skip if already `done`
+   b. Spawn the appropriate developer agent based on `Domain:`
+      - `weave` → weave-developer
+      - `compute` → compute-developer
+   c. Developer implements the task
+   d. Spawn code-reviewer to review the changes
+   e. **If CHANGES REQUESTED:**
+      - Developer fixes the issues
+      - Re-run code-reviewer
+      - Repeat up to 3 times total
+      - If still failing after 3 attempts: **STOP** (see below)
+   f. **If APPROVED:** Update task status to `done`, continue to next task
+
+3. **After all tasks are done:**
+   a. Spawn qa-reviewer to verify acceptance criteria
+   b. Spawn security-reviewer to assess security (run in parallel with qa)
+   c. **If either requests changes:**
+      - Developer fixes the issues
+      - Re-run code-reviewer on fixes
+      - Re-run both qa-reviewer and security-reviewer
+      - Repeat up to 3 times total for the story-level review cycle
+      - If still failing: **STOP** (see below)
+
+4. **After both reviewers approve:**
+   a. Update CHANGELOG.md with the story (add to `[Unreleased]` section)
+   b. Update story status to `Done`
+   c. Print: "Story NNN complete."
+
+### On Failure (3 failed attempts)
+
+Do NOT create a file or update the story. Print to terminal:
+
+```
+BLOCKED: Story NNN - Task XXX (or "QA/Security Review")
+
+Phase: [code-review | qa-review | security-review]
+Issue: [Brief description of the recurring problem]
+Attempts: 3
+
+Review needed before continuing.
+```
+
+### CHANGELOG Updates
+
+Add entries to the `[Unreleased]` section in CHANGELOG.md:
+- Use the story title as the entry
+- Categorize as Added, Changed, Fixed, or Removed based on the story's nature
+- Format: `- Story title (Story NNN)`
