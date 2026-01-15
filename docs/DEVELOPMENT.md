@@ -6,42 +6,72 @@ This document covers development workflows, testing, and debugging for Weave.
 
 ```
 weave/
-├── cmd/weave/          # Go CLI and web server
+├── electron/           # Electron desktop shell
+├── cmd/weave/          # Go backend service
 ├── internal/           # Go internal packages
-├── compute-daemon/     # C GPU daemon
+├── compute/            # C GPU compute component
 │   ├── src/            # C source files
 │   ├── include/        # C header files
 │   ├── test/           # Unit tests
 │   └── fuzz/           # Fuzzing infrastructure
+├── packaging/          # Distribution packaging (Flatpak, etc.)
 └── docs/               # Documentation
 ```
 
+The application runs as an Electron app that launches the Go backend, which spawns the C compute process. For development, you can also run weave directly and access the UI via browser.
+
 ## Building
 
-### Go (weave orchestrator)
-
+Build everything and run:
 ```bash
-cd weave
-go build -o bin/weave ./cmd/weave
+make run
 ```
 
-### C (compute daemon)
-
+Or build individual components:
 ```bash
-cd compute-daemon
-make test        # Build and run unit tests
-make test-asan   # Run with AddressSanitizer/UBSan
+make weave
+make compute
+make electron
 ```
 
-## Running weave
+For Flatpak distribution:
+```bash
+make flatpak
+make flatpak-install
+```
 
-The `weave` application orchestrates the entire image generation workflow. It requires both `ollama` and `weave-compute` to be running before it starts.
+Clean build artifacts:
+```bash
+make clean
+```
 
-### Startup order
+Note: Electron build requires npm dependencies. If not installed:
+```bash
+cd electron && npm install
+```
 
-1. Start ollama: `ollama serve`
-2. Start weave-compute daemon: `./compute-daemon/weave-compute`
-3. Start weave: `./bin/weave`
+## Running the application
+
+The recommended way to run Weave is through Electron:
+```bash
+make run
+```
+
+This builds all components and launches the desktop application.
+
+### Development mode
+
+For development, you can run the Go backend directly and access the UI via browser:
+```bash
+ollama serve              # Start ollama (required for now)
+./build/weave             # Start backend (spawns compute automatically)
+```
+
+Then open `http://localhost:8080` in your browser.
+
+### Current requirements
+
+- **ollama**: Required for LLM inference (temporary - will be replaced by unified compute layer)
 
 ### CLI flags
 
@@ -53,7 +83,7 @@ The weave binary accepts the following command-line flags:
 --cfg <CFG>                CFG scale (default: 1.0)
 --width <WIDTH>            Image width in pixels (default: 1024)
 --height <HEIGHT>          Image height in pixels (default: 1024)
---seed <SEED>              Image generation seed, 0 = random (default: 0)
+--seed <SEED>              Image generation seed, -1 = random (default: -1)
 --llm-seed <SEED>          LLM seed for deterministic responses, 0 = random (default: 0)
 --ollama-url <URL>         Ollama API endpoint (default: http://localhost:11434)
 --ollama-model <MODEL>     Ollama model name (default: mistral:7b)
@@ -91,21 +121,19 @@ Enable debug logging:
 
 ### Startup validation
 
-On startup, weave performs the following validations:
+On startup, the backend performs the following:
 
 1. **Ollama connectivity**: HTTP GET to `<ollama-url>/api/tags`
-   - If ollama is not running, weave exits with error: "ollama not running at <url>"
-   - User is prompted to run: `ollama serve`
+   - If ollama is not running, exits with error and prompts: `ollama serve`
 
 2. **Ollama model availability**: Checks that the configured model exists
-   - If model is missing, weave exits with error: "model not available in ollama"
-   - User is prompted to run: `ollama pull <model>`
+   - If model is missing, exits with error and prompts: `ollama pull <model>`
 
-3. **Weave-compute connectivity**: Attempts to connect to socket at `$XDG_RUNTIME_DIR/weave/weave.sock`
-   - If socket doesn't exist, weave exits with error: "weave-compute not running (socket not found at <path>)"
-   - If connection is refused, weave exits with error: "weave-compute not accepting connections"
+3. **Compute process**: Creates Unix socket and spawns the compute process
+   - If spawn fails, exits with error
+   - Waits for compute to connect (10 second timeout)
 
-All validation happens before the HTTP server starts listening. This ensures that dependencies are available before accepting user requests.
+All validation happens before the HTTP server starts listening.
 
 ### Startup output
 
@@ -113,27 +141,28 @@ Successful startup:
 ```
 2026/01/04 11:00:00 [INFO] Starting weave...
 2026/01/04 11:00:00 [INFO] Connected to ollama at http://localhost:11434 (model: mistral:7b)
-2026/01/04 11:00:00 [INFO] Connected to weave-compute at /run/user/1000/weave/weave.sock
+2026/01/04 11:00:00 [INFO] Created socket at /run/user/1000/weave/weave.sock
+2026/01/04 11:00:00 [INFO] Spawned weave-compute daemon (PID: 12345)
+2026/01/04 11:00:00 [INFO] Accepted connection from weave-compute daemon
 2026/01/04 11:00:00 [INFO] Listening on http://localhost:8080
-2026/01/04 11:00:00 Starting web server on http://localhost:8080
 ```
 
 With debug logging (`--log-level debug`):
 ```
 2026/01/04 11:00:00 [INFO] Starting weave...
-2026/01/04 11:00:00 [DEBUG] Configuration: port=8080, steps=4, cfg=1.0, width=1024, height=1024, seed=0, llm-seed=0
+2026/01/04 11:00:00 [DEBUG] Configuration: port=8080, steps=4, cfg=1.0, width=1024, height=1024, seed=-1, llm-seed=0
 2026/01/04 11:00:00 [DEBUG] Ollama: url=http://localhost:11434, model=mistral:7b
 2026/01/04 11:00:00 [DEBUG] Log level: debug
 2026/01/04 11:00:00 [DEBUG] Validating ollama connection...
 2026/01/04 11:00:00 [INFO] Connected to ollama at http://localhost:11434 (model: mistral:7b)
-2026/01/04 11:00:00 [DEBUG] Validating weave-compute connection...
-2026/01/04 11:00:00 [INFO] Connected to weave-compute at /run/user/1000/weave/weave.sock
+2026/01/04 11:00:00 [DEBUG] Creating socket for weave-compute...
+2026/01/04 11:00:00 [INFO] Created socket at /run/user/1000/weave/weave.sock
+2026/01/04 11:00:00 [DEBUG] Spawning weave-compute daemon...
+2026/01/04 11:00:00 [INFO] Spawned weave-compute daemon (PID: 12345)
+2026/01/04 11:00:00 [DEBUG] Waiting for compute daemon to connect...
+2026/01/04 11:00:00 [INFO] Accepted connection from weave-compute daemon
 2026/01/04 11:00:00 [DEBUG] Initializing components...
-2026/01/04 11:00:00 [DEBUG] Created ollama client: endpoint=http://localhost:11434, model=mistral:7b
-2026/01/04 11:00:00 [DEBUG] Created session manager
-2026/01/04 11:00:00 [DEBUG] Created web server on port 8080
 2026/01/04 11:00:00 [INFO] Listening on http://localhost:8080
-2026/01/04 11:00:00 Starting web server on http://localhost:8080
 ```
 
 ### Graceful shutdown
@@ -182,23 +211,23 @@ The shutdown process:
 2. List available models: `ollama list`
 3. Use an available model with `--ollama-model <name>`
 
-#### Error: "weave-compute not running (socket not found at /run/user/1000/weave/weave.sock)"
+#### Error: "failed to spawn compute daemon"
 
-**Cause**: weave-compute daemon is not running.
-
-**Solution**:
-1. Build compute daemon: `cd compute-daemon && make weave-compute`
-2. Start daemon: `./compute-daemon/weave-compute`
-3. Verify socket exists: `ls -la $XDG_RUNTIME_DIR/weave/weave.sock`
-
-#### Error: "weave-compute not accepting connections"
-
-**Cause**: Socket exists but daemon crashed or is not responding.
+**Cause**: The compute binary could not be started.
 
 **Solution**:
-1. Kill existing daemon process: `pkill weave-compute`
-2. Remove stale socket: `rm $XDG_RUNTIME_DIR/weave/weave.sock`
-3. Restart daemon: `./compute-daemon/weave-compute`
+1. Ensure compute is built: `make compute`
+2. Check the binary exists: `ls -la compute-daemon/weave-compute`
+3. Check for missing libraries: `ldd compute-daemon/weave-compute`
+
+#### Error: "failed to accept compute connection"
+
+**Cause**: Compute process started but failed to connect within timeout.
+
+**Solution**:
+1. Check compute process logs for errors
+2. Ensure no firewall or security software blocking Unix sockets
+3. Try running with debug logging: `./build/weave --log-level debug`
 
 #### Error: "XDG_RUNTIME_DIR not set"
 
@@ -220,9 +249,9 @@ The shutdown process:
 
 ## Unix Socket Communication
 
-The Go orchestrator (`weave`) and C daemon (`weave-compute`) communicate via Unix domain sockets with SO_PEERCRED authentication.
+The Go backend and C compute process communicate via Unix domain sockets with SO_PEERCRED authentication.
 
-### Socket Path
+### Socket path
 
 The socket is located at:
 
@@ -245,54 +274,26 @@ ls -la $XDG_RUNTIME_DIR/weave/weave.sock
 - `$XDG_RUNTIME_DIR/weave/` - Directory with mode 0700 (owner only)
 - `$XDG_RUNTIME_DIR/weave/weave.sock` - Socket file with mode 0600 (owner read/write only)
 
-### Running Daemon and Client
+### How it works
 
-**Start the daemon:**
+In normal operation, the backend:
+1. Creates the socket at `$XDG_RUNTIME_DIR/weave/weave.sock`
+2. Spawns the compute process
+3. Accepts the connection from compute
 
-```bash
-cd compute-daemon
-make weave-compute
-
-# Run the daemon (stays in foreground)
-./weave-compute
-
-# Expected output:
-# weave-compute starting...
-# listening on /run/user/1000/weave/weave.sock
-```
-
-**Connect with the Go client:**
-
-```go
-package main
-
-import (
-    "context"
-    "fmt"
-    "github.com/hurricanerix/weave/internal/client"
-)
-
-func main() {
-    ctx := context.Background()
-
-    conn, err := client.Connect(ctx)
-    if err != nil {
-        fmt.Printf("Connection failed: %v\n", err)
-        return
-    }
-    defer conn.Close()
-
-    fmt.Println("Connected successfully")
-}
-```
-
-**Run integration tests:**
+For development or debugging, you can run compute manually:
 
 ```bash
-# Ensure daemon is built first
-cd compute-daemon && make weave-compute && cd ..
+# Build compute
+make compute
 
-# Run socket integration tests
+# Run manually (it will connect to an existing socket)
+./compute-daemon/weave-compute --socket $XDG_RUNTIME_DIR/weave/weave.sock
+```
+
+### Integration tests
+
+```bash
 go test -tags=integration -v ./test/integration/...
 ```
 
@@ -417,34 +418,26 @@ export XDG_RUNTIME_DIR=/run/user/$(id -u)
 export XDG_RUNTIME_DIR=$(mktemp -d)
 ```
 
-**Daemon not running (ENOENT)**
+**Socket not found (ENOENT)**
 
-```
-Error: weave-compute daemon not running (socket not found)
-```
-
-Solution:
+If running compute manually and the socket doesn't exist:
 ```bash
 # Check if socket exists
 ls -la $XDG_RUNTIME_DIR/weave/weave.sock
 
-# Start the daemon
-cd compute-daemon && ./weave-compute
+# The backend must be running first to create the socket
+./build/weave
 ```
 
 **Connection refused (ECONNREFUSED)**
 
-```
-Error: weave-compute daemon not accepting connections
-```
-
-This indicates a stale socket file. Solution:
+This indicates a stale socket file:
 ```bash
 # Remove stale socket
 rm -f $XDG_RUNTIME_DIR/weave/weave.sock
 
-# Restart daemon (it handles stale sockets automatically)
-./weave-compute
+# Restart the backend
+./build/weave
 ```
 
 **Permission denied**
@@ -1029,8 +1022,6 @@ See `.claude/rules/documentation.md` for full documentation standards.
 
 ## Security Considerations
 
-See `docs/SECURITY.md` for security guidelines.
-
 **Critical for protocol implementation:**
 - Validate all input before processing
 - Check bounds before all array access
@@ -1430,7 +1421,7 @@ If generation fails on non-NVIDIA hardware, please file an issue with:
 
 ## ollama LLM Setup
 
-The weave CLI uses ollama to power the conversational interface for image generation. ollama runs locally and provides fast LLM inference.
+Weave currently uses ollama to power the conversational interface for image generation. ollama runs locally and provides fast LLM inference. This dependency will be removed when the compute layer supports LLM inference directly.
 
 ### Installing ollama
 
@@ -1751,27 +1742,21 @@ If you see repeated format errors, the model may not support this format well. T
 
 ## Web UI
 
-The weave web interface provides a browser-based UI for interacting with the image generation system. It uses HTMX for dynamic updates and Server-Sent Events (SSE) for real-time streaming.
+The backend serves a web interface using HTMX for dynamic updates and Server-Sent Events (SSE) for real-time streaming. The same UI is displayed in both the Electron desktop app and browser.
 
-### Running the Web Server
+For development, you can access the UI directly via browser at `http://localhost:8080` instead of through Electron. This is useful for:
+- Using browser developer tools
+- Faster iteration (no Electron rebuild needed)
+- Debugging SSE and network requests
 
-Start the web server from the project root:
+### Running for development
 
 ```bash
-# Using go run
-go run ./cmd/weave web
-
-# Or build and run
-go build -o bin/weave ./cmd/weave
-./bin/weave web
+ollama serve              # In one terminal
+./build/weave             # In another terminal
 ```
 
-The server starts on `http://localhost:8080` by default.
-
-Expected output:
-```
-Starting web server on http://localhost:8080
-```
+Then open `http://localhost:8080` in your browser.
 
 ### Accessing the UI
 

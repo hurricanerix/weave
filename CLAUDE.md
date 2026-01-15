@@ -2,15 +2,22 @@
 
 ## What This Is
 
-Production-grade image generation daemon with GPU acceleration.
+Production-grade desktop application for conversational image generation with GPU acceleration.
 
-- **weave** (Go): CLI + web server for orchestration
-- **weave-compute** (C): GPU daemon with auth
-- **Protocol**: Binary over Unix sockets
+- **Electron**: Desktop shell providing native app experience
+- **weave** (Go): Orchestration layer (web server, LLM integration, spawns compute)
+- **weave-compute** (C): GPU compute component (spawned by weave, not a standalone daemon)
+- **Protocol**: Binary over Unix sockets between weave and weave-compute
 
 ## Architecture
 
-Available in `docs/ARCHITECTURE.md`
+The application runs as an Electron app that launches the Go backend, which in turn spawns the C compute process. Communication between Go and C uses a binary protocol over Unix sockets.
+
+```
+Electron (UI) → weave (Go) → weave-compute (C)
+                    ↓              ↓
+               ollama (LLM)    GPU inference
+```
 
 ## Development Workflow
 
