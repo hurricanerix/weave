@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Flatpak packaging for Linux desktop distribution (Story 022)
 - Electron build integration with Makefile targets (Story 021)
 - Electron desktop shell with native app experience (Story 020)
 - Update to Mistral 7B with structured output (Story 010)

@@ -10,31 +10,14 @@
 # But not these files...
 !/.gitignore
 
-# Weave project source files
-!*.go
-!*.html
-!*.css
-!*.ttf
-!go.sum
-!go.mod
-
-# Weave components
-!/compute-daemon
-!/electron
-!/packaging
-
-# Weave Documentation
-!docs/**/*.md
-!docs/**/*.png
-
-# Weave project
-!README.md
-!CHANGELOG.md
-!LICENSE
-!CLAUDE.md
-!.claude/**/*.md
-!.gitmodules
-!Makefile
+# Packaging files
+!*.yml
+!*.desktop
+!*.sh
+!*.png
 
 # ...even if they are in subdirectories
 !*/
+
+
+

@@ -1,0 +1,25 @@
+app-id: com.placeholder.weave
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+command: weave
+
+finish-args:
+  - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --device=dri
+  - --share=network
+  - --socket=pulseaudio
+
+modules:
+  - name: weave
+    buildsystem: simple
+    build-commands:
+      - cp -r electron/dist/linux-unpacked /app/weave
+      - install -Dm755 packaging/flatpak/weave.sh /app/bin/weave
+      - install -Dm644 packaging/flatpak/com.placeholder.weave.desktop /app/share/applications/com.placeholder.weave.desktop
+      - install -Dm644 packaging/flatpak/com.placeholder.weave.png /app/share/icons/hicolor/256x256/apps/com.placeholder.weave.png
+    sources:
+      - type: dir
+        path: ../..

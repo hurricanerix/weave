@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Weave
+Comment=Image Generation Tool
+Icon=com.placeholder.weave
+Exec=weave
+Terminal=false
+Categories=Graphics;
