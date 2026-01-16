@@ -28,7 +28,7 @@ Electron (UI) → weave-backend (Go) → weave-compute (C)
 
 ### Implementation
 
-3. **weave-developer** or **compute-developer** - Implement each task
+3. **backend-developer** or **compute-developer** - Implement each task
 4. **code-reviewer** - Review per-task for code quality
 
 ### Story Completion
@@ -45,8 +45,10 @@ Available in `.claude/agents/`:
 |-------|------|-----------|
 | **story-writer** | Define features, acceptance criteria | New feature planning |
 | **task-planner** | Break stories into tasks | After story is ready |
-| **weave-developer** | Implement weave (Go) code | Per task |
+| **backend-developer** | Implement backend (Go) code | Per task |
 | **compute-developer** | Implement compute (C) code | Per task |
+| **electron-developer** | Implement Electron (JS) code | Per task |
+| **release-engineer** | Packaging and distribution | Per task |
 | **code-reviewer** | Review code quality | Per task |
 | **qa-reviewer** | Verify acceptance criteria, UX | Per story (complete) |
 | **security-reviewer** | Assess security, risk | Per story (complete) |
@@ -58,13 +60,14 @@ Stories live in `docs/stories/NNN-title.md`. Each story contains:
 - Acceptance criteria
 - Tasks (added by task-planner)
 
-Tasks are numbered per-story (001, 002, 003...) and assigned to a domain (weave/compute).
+Tasks are numbered per-story (001, 002, 003...) and assigned to a domain (backend/compute/electron/packaging).
 
 ## Language-Specific Rules
 
 Detailed conventions in `.claude/rules/`:
 - **go.md** - Go standards and testing
 - **c.md** - C standards and performance
+- **electron.md** - Electron security and patterns
 - **protocol.md** - Binary protocol specification
 - **documentation.md** - Documentation standards
 
@@ -100,8 +103,10 @@ When the user says "Implement Story NNN" (e.g., "Implement Story 015"):
 2. **For each task in order:**
    a. Check task status - skip if already `done`
    b. Spawn the appropriate developer agent based on `Domain:`
-      - `weave` → weave-developer
+      - `backend` → backend-developer
       - `compute` → compute-developer
+      - `electron` → electron-developer
+      - `packaging` → release-engineer
    c. Developer implements the task
    d. Spawn code-reviewer to review the changes
    e. **If CHANGES REQUESTED:**

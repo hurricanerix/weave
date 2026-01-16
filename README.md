@@ -13,7 +13,7 @@ There are no guarantees that it works correctly. See the [docs](./docs) for more
 ## Quick start
 
 Prerequisites:
-- Go 1.21+
+- Go 1.25.5+
 - Node.js 18+
 - Make
 - [ollama](https://ollama.com/) with `mistral:7b` model

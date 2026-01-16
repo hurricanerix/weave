@@ -30,14 +30,18 @@ Boring code is beautiful code.
 Follow standard Go project layout:
 ```
 weave/
-├── cmd/weave/          # Main application
-├── internal/           # Private packages
-│   ├── protocol/       # Binary protocol
-│   ├── scheduler/      # Job scheduling
-│   ├── web/            # HTTP server
-│   └── client/         # Compute client
-├── pkg/                # Public libraries (if any)
-└── go.mod
+├── backend/            # Go backend service
+│   ├── cmd/weave/      # Main application
+│   ├── internal/       # Private packages
+│   │   ├── protocol/   # Binary protocol
+│   │   ├── scheduler/  # Job scheduling
+│   │   ├── web/        # HTTP server
+│   │   └── client/     # Compute client
+│   ├── pkg/            # Public libraries (if any)
+│   ├── test/integration/ # Integration tests
+│   ├── go.mod
+│   └── go.sum
+└── compute/            # C GPU compute component
 ```
 
 ## Code Style
@@ -353,7 +357,7 @@ Every package needs a doc comment:
 
 ```go
 // Package protocol implements the binary protocol for
-// communication between weave and weave-compute.
+// communication between weave-backend and weave-compute.
 package protocol
 ```
 
@@ -401,37 +405,37 @@ Standard targets:
 ```makefile
 .PHONY: test
 test:
-    go test -v ./...
+    cd backend && go test -v ./...
 
-.PHONY: test-integration  
+.PHONY: test-integration
 test-integration:
-    go test -v -tags=integration ./...
+    cd backend && go test -v -tags=integration ./...
 
 .PHONY: bench
 bench:
-    go test -bench=. -benchmem ./...
+    cd backend && go test -bench=. -benchmem ./...
 
 .PHONY: fmt
 fmt:
-    go fmt ./...
-    goimports -w .
+    cd backend && go fmt ./...
+    cd backend && goimports -w .
 
 .PHONY: lint
 lint:
-    golangci-lint run
+    cd backend && golangci-lint run
 
 .PHONY: build
 build:
-    go build -o bin/weave ./cmd/weave
+    cd backend && go build -o ../bin/weave ./cmd/weave
 ```
 
 ### CI Checks
 
 Must pass:
-- `go test ./...`
-- `go vet ./...`
-- `golangci-lint run`
-- `go mod tidy` (no changes)
+- `cd backend && go test ./...`
+- `cd backend && go vet ./...`
+- `cd backend && golangci-lint run`
+- `cd backend && go mod tidy` (no changes)
 
 ## When in Doubt
 

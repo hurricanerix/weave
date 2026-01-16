@@ -19,6 +19,7 @@
 !go.mod
 
 # Weave components
+!/backend
 !/compute
 !/electron
 !/packaging

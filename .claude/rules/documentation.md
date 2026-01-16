@@ -243,7 +243,7 @@ Use for structured comparisons:
 ```markdown
 | Component | Language | Purpose |
 |-----------|----------|---------|
-| weave | Go | CLI and orchestration |
+| weave-backend | Go | CLI and orchestration |
 | weave-compute | C | GPU inference daemon |
 ```
 

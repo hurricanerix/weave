@@ -24,8 +24,8 @@ let shuttingDown = false;
 function spawnGoServer() {
   return new Promise((resolve, reject) => {
     // Binary path depends on whether app is packaged or running in development
-    // Packaged: binary is in resources directory (copied by electron-builder)
-    // Development: binary is in build/ directory (built by make backend)
+    // Packaged: binary is in resources directory (copied by electron-builder from ../build/weave-backend)
+    // Development: binary is in build/ directory (built from backend/ by Makefile to ../build/weave-backend)
     const binaryPath = app.isPackaged
       ? path.join(process.resourcesPath, 'weave-backend')
       : path.join(__dirname, '..', 'build', 'weave-backend');

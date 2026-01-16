@@ -14,6 +14,7 @@ func computeBinaryExists() bool {
 		"compute/weave-compute",
 		"../compute/weave-compute",
 		"../../compute/weave-compute",
+		"../../../compute/weave-compute",
 	}
 	for _, path := range candidatePaths {
 		if _, err := os.Stat(path); err == nil {
@@ -56,6 +57,7 @@ func TestSpawnCompute(t *testing.T) {
 					"compute/weave-compute",
 					"../compute/weave-compute",
 					"../../compute/weave-compute",
+					"../../../compute/weave-compute",
 				}
 
 				for _, binaryPath := range candidatePaths {

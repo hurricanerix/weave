@@ -56,8 +56,9 @@ make test-stub
 
 ### Run Integration Tests
 
-From the project root:
+From the backend directory:
 ```bash
+cd backend
 go test -v -tags=integration ./test/integration/
 ```
 
@@ -145,8 +146,9 @@ If a test fails:
      hexdump -C
    ```
 
-3. Enable verbose output:
+3. Enable verbose output (from backend directory):
    ```bash
+   cd backend
    go test -v -tags=integration ./test/integration/ -run TestName
    ```
 

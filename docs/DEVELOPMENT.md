@@ -6,14 +6,18 @@ This document covers development workflows, testing, and debugging for Weave.
 
 ```
 weave/
-├── electron/           # Electron desktop shell
-├── cmd/weave/          # Go backend service
-├── internal/           # Go internal packages
+├── backend/            # Go backend service
+│   ├── cmd/weave/      # Main application
+│   ├── internal/       # Go internal packages
+│   ├── test/integration/ # Integration tests
+│   ├── go.mod
+│   └── go.sum
 ├── compute/            # C GPU compute component
 │   ├── src/            # C source files
 │   ├── include/        # C header files
 │   ├── test/           # Unit tests
 │   └── fuzz/           # Fuzzing infrastructure
+├── electron/           # Electron desktop shell
 ├── packaging/          # Distribution packaging (Flatpak, etc.)
 └── docs/               # Documentation
 ```
@@ -294,6 +298,7 @@ make compute
 ### Integration tests
 
 ```bash
+cd backend
 go test -tags=integration -v ./test/integration/...
 ```
 
@@ -327,6 +332,7 @@ sudo -u nobody socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/weave/weave.sock
 
 ```bash
 # As your normal user - should succeed
+cd backend
 go run ./cmd/test-connect/
 
 # As a different user - should fail silently (connection closed)
@@ -496,6 +502,7 @@ Test Go encoder and decoder in isolation:
 
 ```bash
 # Run all protocol package tests
+cd backend
 go test ./internal/protocol/...
 
 # Verbose output
@@ -567,6 +574,7 @@ The stub generator is a minimal C program that:
 
 ```bash
 # From project root
+cd backend
 go test -v -tags=integration ./test/integration/
 
 # Run specific test
@@ -600,10 +608,10 @@ See the [Fuzzing](#fuzzing) section below for protocol fuzzing with libFuzzer.
 
 When modifying the protocol, run all tests in order:
 
-1. `go test ./internal/protocol/...` - Go unit tests
+1. `cd backend && go test ./internal/protocol/...` - Go unit tests
 2. `cd compute && make test` - C unit tests
 3. `cd compute && make test-asan` - C with sanitizers
-4. `go test -tags=integration ./test/integration/` - Round-trip tests
+4. `cd backend && go test -tags=integration ./test/integration/` - Round-trip tests
 5. `cd compute && make test-corpus` - Corpus validation
 6. `cd compute && make fuzz` - 60-second fuzz run
 
@@ -613,6 +621,7 @@ All must pass before committing protocol changes.
 
 **Go:**
 ```bash
+cd backend
 go test ./...
 ```
 
@@ -711,6 +720,7 @@ cd compute && cd fuzz
 
 **Go:**
 ```bash
+cd backend
 go fmt ./...
 goimports -w .
 ```
@@ -727,6 +737,7 @@ Uses `clang-format` with project-specific style.
 
 **Go:**
 ```bash
+cd backend
 golangci-lint run
 ```
 
@@ -783,6 +794,7 @@ hexdump -C test_message.bin
 ### Go Profiling
 
 ```bash
+cd backend
 # CPU profiling
 go test -cpuprofile=cpu.prof -bench=.
 go tool pprof cpu.prof
@@ -806,6 +818,7 @@ gprof profiled gmon.out > analysis.txt
 ### Go Benchmarks
 
 ```bash
+cd backend
 go test -bench=. -benchmem ./...
 ```
 
@@ -829,7 +842,7 @@ Expected performance for protocol operations:
 2. Update C types in `compute/include/weave/protocol.h`
 3. Update decoder in `compute/src/protocol.c`
 4. Add tests in `compute/test/test_protocol.c`
-5. Update Go encoder/decoder in `internal/protocol/`
+5. Update Go encoder/decoder in `backend/internal/protocol/`
 6. Add integration test
 7. Run fuzzer for 1 hour to verify stability
 
@@ -908,6 +921,7 @@ cd compute
 make test-stub
 
 # Create test input from Go side
+cd backend
 go run -tags=integration ./test/integration/debug_encode.go > /tmp/request.bin
 hexdump -C /tmp/request.bin
 
@@ -949,6 +963,7 @@ make fuzz
 Integration tests spawn processes, which can be slow:
 ```bash
 # Run only fast unit tests
+cd backend
 go test ./internal/protocol/...
 
 # Skip integration tests during development
@@ -963,6 +978,7 @@ go test -tags=integration ./test/integration/
 **Go module checksum mismatch**
 
 ```bash
+cd backend
 go clean -modcache
 go mod download
 go mod verify
@@ -1000,15 +1016,15 @@ rocm-smi    # For AMD GPUs
 
 All PRs must pass:
 
-- [ ] Go unit tests (`go test ./...`)
-- [ ] Go protocol tests (`go test ./internal/protocol/...`)
+- [ ] Go unit tests (`cd backend && go test ./...`)
+- [ ] Go protocol tests (`cd backend && go test ./internal/protocol/...`)
 - [ ] C unit tests (`cd compute && make test`)
 - [ ] ASan/UBSan tests (`cd compute && make test-asan`)
-- [ ] Integration tests (`go test -tags=integration ./test/integration/`)
+- [ ] Integration tests (`cd backend && go test -tags=integration ./test/integration/`)
 - [ ] Corpus validation (`cd compute && make test-corpus`)
 - [ ] Fuzzing (5-minute smoke test)
-- [ ] Go linting (`golangci-lint run`)
-- [ ] Formatting (`go fmt`, `cd compute && make fmt`)
+- [ ] Go linting (`cd backend && golangci-lint run`)
+- [ ] Formatting (`cd backend && go fmt`, `cd compute && make fmt`)
 
 ## Documentation Standards
 
@@ -1486,6 +1502,7 @@ With ollama running and the model pulled:
 
 ```bash
 # Run ollama integration tests
+cd backend
 go test -tags=integration -v ./internal/ollama/...
 ```
 
@@ -1600,7 +1617,7 @@ For alternative models, use the `--ollama-model` flag:
 ./build/weave-backend --ollama-model llama3.1:8b
 ```
 
-The default model can be changed by updating `defaultOllamaModel` in `internal/config/config.go`.
+The default model can be changed by updating `defaultOllamaModel` in `backend/internal/config/config.go`.
 
 ### Structured Output Format
 
@@ -1874,6 +1891,7 @@ Test the web server programmatically:
 
 ```bash
 # Run web integration tests
+cd backend
 go test -tags=integration -v ./internal/web/...
 ```
 
@@ -2140,7 +2158,7 @@ Storage cleanup can be tested by:
 2. Waiting 1 hour for age-based cleanup
 3. Watching DEBUG logs for cleanup events
 
-Integration tests in `internal/web/image_pipeline_integration_test.go` verify cleanup behavior programmatically.
+Integration tests in `backend/internal/web/image_pipeline_integration_test.go` verify cleanup behavior programmatically.
 
 ### Troubleshooting Image Issues
 

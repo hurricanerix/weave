@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-description: Use after a task is implemented to review code quality. Reviews Go and C code for idioms, readability, maintainability, and testability. Runs per-task before qa-reviewer and security-reviewer.
+description: Use after a task is implemented to review code quality. Reviews Go, C, and Electron code for idioms, readability, maintainability, and testability. Runs per-task before qa-reviewer and security-reviewer.
 model: sonnet
 allowedTools: ["Read", "Grep", "Glob", "Bash"]
 ---
@@ -43,14 +43,21 @@ Look at what was actually done:
 
 ```bash
 # Go code
+cd backend
 go build ./...
 go test ./...
 go fmt ./...
 go vet ./...
 
 # C code
+cd compute
 make
 make test
+
+# Electron code
+cd electron
+npm test
+npm run lint
 ```
 
 ### 4. Review Against Standards
@@ -58,6 +65,7 @@ make test
 Check against the rules files:
 - `.claude/rules/go.md` for Go code
 - `.claude/rules/c.md` for C code
+- `.claude/rules/electron.md` for Electron code
 
 ### 5. Provide Feedback
 
@@ -127,6 +135,51 @@ if (data_len > sizeof(buffer)) {
 memcpy(buffer, data, data_len);
 ```
 
+### Electron Code (check `.claude/rules/electron.md`)
+
+**Security:**
+- Context isolation enabled?
+- Node integration disabled?
+- Preload script minimal and explicit?
+
+**Patterns:**
+```javascript
+// BAD - Security disabled
+const win = new BrowserWindow({
+    webPreferences: {
+        nodeIntegration: true,
+        contextIsolation: false
+    }
+});
+
+// GOOD - Secure defaults
+const win = new BrowserWindow({
+    webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        preload: path.join(__dirname, 'preload.js')
+    }
+});
+```
+
+```javascript
+// BAD - Exposing raw IPC
+contextBridge.exposeInMainWorld('electron', {
+    ipcRenderer: ipcRenderer
+});
+
+// GOOD - Explicit, minimal API
+contextBridge.exposeInMainWorld('weave', {
+    generate: (prompt) => ipcRenderer.invoke('weave:generate', prompt)
+});
+```
+
+**IPC:**
+- Using `invoke`/`handle` for request/response?
+- Input validation in main process?
+- Channel names prefixed with `weave:`?
+
 ## Issue Categories
 
 ### Critical (blocks approval)
@@ -134,13 +187,13 @@ memcpy(buffer, data, data_len);
 These MUST be fixed:
 
 1. **Doesn't compile**
-   > "Code doesn't compile. `go build` fails with: [error]"
+   > "Code doesn't compile. `cd backend && go build` fails with: [error]"
 
 2. **Tests fail**
-   > "Tests failing. `go test ./...` shows: [failures]"
+   > "Tests failing. `cd backend && go test ./...` shows: [failures]"
 
 3. **Not formatted**
-   > "Code not formatted. Run `go fmt ./...` or `make fmt`"
+   > "Code not formatted. Run `cd backend && go fmt ./...` or `make fmt`"
 
 4. **Obvious bugs**
    > "Line 47: This will panic when `req` is nil. Add nil check."

@@ -10,7 +10,7 @@ electron: backend compute
 	cd electron && npm run build
 
 backend:
-	go build -o build/weave-backend ./cmd/weave
+	cd backend && go build -o ../build/weave-backend ./cmd/weave
 
 compute:
 	$(MAKE) -C compute

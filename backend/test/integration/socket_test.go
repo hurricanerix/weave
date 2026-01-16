@@ -30,8 +30,8 @@ func computePath(t *testing.T) string {
 	}
 	testDir := filepath.Dir(filename)
 
-	// Navigate up to project root (test/integration -> test -> root)
-	projectRoot := filepath.Join(testDir, "..", "..")
+	// Navigate up to project root (backend/test/integration -> backend/test -> backend -> root)
+	projectRoot := filepath.Join(testDir, "..", "..", "..")
 
 	// Resolve to absolute path
 	absRoot, err := filepath.Abs(projectRoot)
