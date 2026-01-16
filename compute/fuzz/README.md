@@ -64,7 +64,7 @@ sudo make install
 The seed corpus provides starting inputs that cover valid protocol messages and edge cases. This helps the fuzzer find bugs faster.
 
 ```bash
-cd compute-daemon/fuzz
+cd compute/fuzz
 
 # Build corpus generator
 gcc -std=c99 -Wall -Wextra -I../include -o generate_corpus generate_corpus.c -lm
@@ -242,8 +242,8 @@ Description=Weave Protocol Fuzzer
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/weave/compute-daemon/fuzz
-ExecStart=/opt/weave/compute-daemon/fuzz/fuzz_protocol corpus/ -max_total_time=86400
+WorkingDirectory=/opt/weave/compute/fuzz
+ExecStart=/opt/weave/compute/fuzz/fuzz_protocol corpus/ -max_total_time=86400
 Restart=always
 
 [Install]

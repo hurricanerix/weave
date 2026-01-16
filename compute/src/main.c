@@ -1,7 +1,7 @@
 /**
- * Weave Compute Daemon - Main Entry Point
+ * Weave Compute - Main Entry Point
  *
- * This is the main entry point for the weave-compute daemon. It handles:
+ * This is the main entry point for weave-compute. It handles:
  * - Signal setup (SIGTERM, SIGINT for graceful shutdown)
  * - SD model loading
  * - Socket creation or connection
@@ -18,7 +18,7 @@
  *   weave-compute                      # Server mode (backward compatibility)
  *   weave-compute --socket-path PATH   # Client mode (spawned by weave)
  *
- * The daemon authenticates connections using SO_PEERCRED (same-UID only).
+ * weave-compute authenticates connections using SO_PEERCRED (same-UID only).
  */
 
 #define _GNU_SOURCE
@@ -71,7 +71,7 @@ static int g_socket_owned = 0;
  * Global SD wrapper context for cleanup.
  * NOT accessed from signal handlers.
  *
- * IMPORTANT: The SD wrapper context is NOT thread-safe. This daemon handles
+ * IMPORTANT: The SD wrapper context is NOT thread-safe. weave-compute handles
  * connections sequentially (one at a time) in the main thread. Do NOT add
  * concurrent request processing without adding proper synchronization.
  */
@@ -95,13 +95,13 @@ static void print_usage(const char *program_name, int exit_code) {
 
     fprintf(stream, "Usage: %s [OPTIONS]\n", program_name);
     fprintf(stream, "\n");
-    fprintf(stream, "Weave compute daemon for GPU-accelerated image generation.\n");
+    fprintf(stream, "Weave compute process for GPU-accelerated image generation.\n");
     fprintf(stream, "\n");
     fprintf(stream, "Options:\n");
     fprintf(stream, "  --socket-path PATH  Unix socket path (default: $XDG_RUNTIME_DIR/weave/weave.sock)\n");
     fprintf(stream, "  -h, --help          Show this help message and exit\n");
     fprintf(stream, "\n");
-    fprintf(stream, "The daemon loads SD 3.5 Medium and processes image generation requests.\n");
+    fprintf(stream, "weave-compute loads SD 3.5 Medium and processes image generation requests.\n");
     fprintf(stream, "It uses SO_PEERCRED authentication (same-UID only).\n");
 
     exit(exit_code);
@@ -277,7 +277,7 @@ static int write_full(int fd, const uint8_t *buf, size_t count) {
  * is_server_error - Check if error code indicates a server-side error
  *
  * Uses explicit mapping instead of fragile numeric comparison.
- * Server errors (500) are issues with the daemon itself.
+ * Server errors (500) are issues with weave-compute itself.
  * Client errors (400) are issues with the request.
  *
  * @param code  Error code to check

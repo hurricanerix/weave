@@ -19,7 +19,7 @@ import (
 	"github.com/hurricanerix/weave/internal/startup"
 )
 
-// computePath returns the path to the weave-compute daemon binary.
+// computePath returns the path to the weave-compute binary.
 func computePath(t *testing.T) string {
 	t.Helper()
 
@@ -39,7 +39,7 @@ func computePath(t *testing.T) string {
 		t.Fatalf("failed to resolve project root: %v", err)
 	}
 
-	return filepath.Join(absRoot, "compute-daemon", "weave-compute")
+	return filepath.Join(absRoot, "compute", "weave-compute")
 }
 
 // testEnv creates a temporary XDG_RUNTIME_DIR for testing.
@@ -184,7 +184,7 @@ func TestPersistentConnection(t *testing.T) {
 	defer conn.Close()
 
 	// Step 4: Send a minimal valid protocol message to verify connection works
-	// Note: The compute daemon has a placeholder handler that closes immediately,
+	// Note: The compute process has a placeholder handler that closes immediately,
 	// but we can verify the connection was established and multiplexing works.
 
 	// Create a minimal test message (16 byte header + 8 byte request ID + empty payload)
@@ -215,22 +215,22 @@ func TestPersistentConnection(t *testing.T) {
 	testMsg[22] = 0x00
 	testMsg[23] = 0x00
 
-	// Use short timeout since daemon may close connection
+	// Use short timeout since compute process may close connection
 	sendCtx, sendCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer sendCancel()
 
-	// Attempt to send - daemon's placeholder handler closes connection immediately.
+	// Attempt to send - compute process placeholder handler closes connection immediately.
 	// We expect connection closed or write error (broken pipe).
 	_, err = conn.Send(sendCtx, testMsg)
 
-	// The daemon accepted the connection, then immediately closed it
+	// The compute process accepted the connection, then immediately closed it
 	// because the placeholder handler returns without reading/writing.
 	// This is expected. The test verifies that:
 	// 1. We could establish persistent connection
 	// 2. Connection closes cleanly (not a crash)
 	if err != nil {
 		// Expected: connection closed, write error, or timeout
-		t.Logf("expected error (daemon placeholder closes connection): %v", err)
+		t.Logf("expected error (compute process placeholder closes connection): %v", err)
 	}
 }
 

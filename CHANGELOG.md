@@ -17,5 +17,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - CSS component library and design system (Story 014)
 
 ### Changed
+- Component naming standardization: backend binary renamed to weave-backend, compute-daemon directory renamed to compute, obsolete daemon terminology removed (Story 023)
 - Socket lifecycle management: weave now creates and owns the Unix socket, spawns compute as child process (Story 018)
 - History sidebar defaults to closed on page load for better focus and screen space (Story 019)

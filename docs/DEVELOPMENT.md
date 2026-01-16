@@ -29,7 +29,7 @@ make run
 
 Or build individual components:
 ```bash
-make weave
+make backend
 make compute
 make electron
 ```
@@ -64,7 +64,7 @@ This builds all components and launches the desktop application.
 For development, you can run the Go backend directly and access the UI via browser:
 ```bash
 ollama serve              # Start ollama (required for now)
-./build/weave             # Start backend (spawns compute automatically)
+./build/weave-backend     # Start backend (spawns compute automatically)
 ```
 
 Then open `http://localhost:8080` in your browser.
@@ -75,7 +75,7 @@ Then open `http://localhost:8080` in your browser.
 
 ### CLI flags
 
-The weave binary accepts the following command-line flags:
+The weave-backend binary accepts the following command-line flags:
 
 ```
 --port <PORT>              HTTP server port (default: 8080)
@@ -96,27 +96,27 @@ The weave binary accepts the following command-line flags:
 
 Start with defaults:
 ```bash
-./bin/weave
+./build/weave-backend
 ```
 
 Use custom port:
 ```bash
-./bin/weave --port 3000
+./build/weave-backend --port 3000
 ```
 
 Use deterministic generation:
 ```bash
-./bin/weave --seed 42 --llm-seed 123
+./build/weave-backend --seed 42 --llm-seed 123
 ```
 
 Use different ollama model:
 ```bash
-./bin/weave --ollama-model llama3.2:3b
+./build/weave-backend --ollama-model llama3.2:3b
 ```
 
 Enable debug logging:
 ```bash
-./bin/weave --log-level debug
+./build/weave-backend --log-level debug
 ```
 
 ### Startup validation
@@ -142,8 +142,8 @@ Successful startup:
 2026/01/04 11:00:00 [INFO] Starting weave...
 2026/01/04 11:00:00 [INFO] Connected to ollama at http://localhost:11434 (model: mistral:7b)
 2026/01/04 11:00:00 [INFO] Created socket at /run/user/1000/weave/weave.sock
-2026/01/04 11:00:00 [INFO] Spawned weave-compute daemon (PID: 12345)
-2026/01/04 11:00:00 [INFO] Accepted connection from weave-compute daemon
+2026/01/04 11:00:00 [INFO] Spawned weave-compute process (PID: 12345)
+2026/01/04 11:00:00 [INFO] Accepted connection from weave-compute process
 2026/01/04 11:00:00 [INFO] Listening on http://localhost:8080
 ```
 
@@ -157,10 +157,10 @@ With debug logging (`--log-level debug`):
 2026/01/04 11:00:00 [INFO] Connected to ollama at http://localhost:11434 (model: mistral:7b)
 2026/01/04 11:00:00 [DEBUG] Creating socket for weave-compute...
 2026/01/04 11:00:00 [INFO] Created socket at /run/user/1000/weave/weave.sock
-2026/01/04 11:00:00 [DEBUG] Spawning weave-compute daemon...
-2026/01/04 11:00:00 [INFO] Spawned weave-compute daemon (PID: 12345)
-2026/01/04 11:00:00 [DEBUG] Waiting for compute daemon to connect...
-2026/01/04 11:00:00 [INFO] Accepted connection from weave-compute daemon
+2026/01/04 11:00:00 [DEBUG] Spawning weave-compute process...
+2026/01/04 11:00:00 [INFO] Spawned weave-compute process (PID: 12345)
+2026/01/04 11:00:00 [DEBUG] Waiting for compute process to connect...
+2026/01/04 11:00:00 [INFO] Accepted connection from weave-compute process
 2026/01/04 11:00:00 [DEBUG] Initializing components...
 2026/01/04 11:00:00 [INFO] Listening on http://localhost:8080
 ```
@@ -171,7 +171,7 @@ Weave handles SIGTERM and SIGINT signals for graceful shutdown:
 
 ```bash
 # Start weave
-./bin/weave
+./build/weave-backend
 
 # In another terminal, send SIGTERM
 kill <pid>
@@ -211,14 +211,14 @@ The shutdown process:
 2. List available models: `ollama list`
 3. Use an available model with `--ollama-model <name>`
 
-#### Error: "failed to spawn compute daemon"
+#### Error: "failed to spawn compute process"
 
 **Cause**: The compute binary could not be started.
 
 **Solution**:
 1. Ensure compute is built: `make compute`
-2. Check the binary exists: `ls -la compute-daemon/weave-compute`
-3. Check for missing libraries: `ldd compute-daemon/weave-compute`
+2. Check the binary exists: `ls -la compute/weave-compute`
+3. Check for missing libraries: `ldd compute/weave-compute`
 
 #### Error: "failed to accept compute connection"
 
@@ -227,7 +227,7 @@ The shutdown process:
 **Solution**:
 1. Check compute process logs for errors
 2. Ensure no firewall or security software blocking Unix sockets
-3. Try running with debug logging: `./build/weave --log-level debug`
+3. Try running with debug logging: `./build/weave-backend --log-level debug`
 
 #### Error: "XDG_RUNTIME_DIR not set"
 
@@ -243,7 +243,7 @@ The shutdown process:
 **Cause**: Another process is using port 8080.
 
 **Solution**:
-1. Use a different port: `./bin/weave --port 3000`
+1. Use a different port: `./build/weave-backend --port 3000`
 2. Find process using port: `lsof -i :8080`
 3. Kill the process or choose a different port
 
@@ -288,7 +288,7 @@ For development or debugging, you can run compute manually:
 make compute
 
 # Run manually (it will connect to an existing socket)
-./compute-daemon/weave-compute --socket $XDG_RUNTIME_DIR/weave/weave.sock
+./compute/weave-compute --socket $XDG_RUNTIME_DIR/weave/weave.sock
 ```
 
 ### Integration tests
@@ -299,12 +299,12 @@ go test -tags=integration -v ./test/integration/...
 
 ### Socket Authentication (SO_PEERCRED)
 
-The daemon authenticates every connection using `SO_PEERCRED`, which provides kernel-verified credentials of the connecting process. Only processes running as the same user (UID) as the daemon are allowed to connect.
+The compute process authenticates every connection using `SO_PEERCRED`, which provides kernel-verified credentials of the connecting process. Only processes running as the same user (UID) as the compute process are allowed to connect.
 
 **How it works:**
 1. Client connects to socket
-2. Daemon calls `getsockopt(SO_PEERCRED)` to get client's UID/PID
-3. If client UID matches daemon UID, connection is accepted
+2. Compute process calls `getsockopt(SO_PEERCRED)` to get client's UID/PID
+3. If client UID matches compute process UID, connection is accepted
 4. If UIDs differ, connection is closed immediately with no response
 
 **Testing authentication rejection:**
@@ -312,14 +312,14 @@ The daemon authenticates every connection using `SO_PEERCRED`, which provides ke
 To verify that different UIDs are rejected, use `sudo -u` to run as a different user:
 
 ```bash
-# Terminal 1: Start daemon as your user
+# Terminal 1: Start compute process as your user
 ./weave-compute
 
 # Terminal 2: Try to connect as a different user
 sudo -u nobody socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/weave/weave.sock
 # Connection will be closed immediately with no response
 
-# Check daemon logs (if DEBUG logging enabled)
+# Check compute process logs (if DEBUG logging enabled)
 # [socket] DEBUG: auth rejected: client uid=65534 pid=12345 (expected uid=1000)
 ```
 
@@ -372,15 +372,15 @@ socket_set_log_callback(my_log_handler);
 
 ### Graceful Shutdown
 
-The daemon handles SIGTERM and SIGINT for graceful shutdown:
+The compute process handles SIGTERM and SIGINT for graceful shutdown:
 
 ```bash
-# Start daemon
+# Start compute process
 ./weave-compute &
-DAEMON_PID=$!
+COMPUTE_PID=$!
 
 # Send SIGTERM to shutdown gracefully
-kill $DAEMON_PID
+kill $COMPUTE_PID
 
 # Expected output:
 # shutting down gracefully
@@ -394,9 +394,9 @@ ls $XDG_RUNTIME_DIR/weave/weave.sock
 ### Socket Timeouts
 
 **Connection timeout (client):** 5 seconds
-**Read timeout (client):** 65 seconds (slightly longer than daemon's 60s)
-**Write timeout (daemon):** 5 seconds
-**Read timeout (daemon):** 60 seconds
+**Read timeout (client):** 65 seconds (slightly longer than compute process's 60s)
+**Write timeout (compute process):** 5 seconds
+**Read timeout (compute process):** 60 seconds
 
 ### Troubleshooting Socket Issues
 
@@ -426,7 +426,7 @@ If running compute manually and the socket doesn't exist:
 ls -la $XDG_RUNTIME_DIR/weave/weave.sock
 
 # The backend must be running first to create the socket
-./build/weave
+./build/weave-backend
 ```
 
 **Connection refused (ECONNREFUSED)**
@@ -437,7 +437,7 @@ This indicates a stale socket file:
 rm -f $XDG_RUNTIME_DIR/weave/weave.sock
 
 # Restart the backend
-./build/weave
+./build/weave-backend
 ```
 
 **Permission denied**
@@ -472,15 +472,15 @@ Then check logs for rejection messages:
 **Connection timeout**
 
 ```
-Error: weave-compute daemon connection timeout
+Error: weave-compute process connection timeout
 ```
 
-The daemon may be overloaded or hung. Check:
+The compute process may be overloaded or hung. Check:
 ```bash
-# Is daemon process running?
+# Is compute process running?
 pgrep weave-compute
 
-# Check daemon logs for errors
+# Check compute process logs for errors
 # Restart if necessary
 ```
 
@@ -522,7 +522,7 @@ The Go tests verify:
 Test C decoder and encoder in isolation:
 
 ```bash
-cd compute-daemon
+cd compute
 
 # Build and run tests
 make test
@@ -549,7 +549,7 @@ Integration tests verify the complete round-trip: Go encodes → C decodes → C
 
 Build the C stub generator first:
 ```bash
-cd compute-daemon
+cd compute
 make test-stub
 
 # Verify it was built
@@ -601,11 +601,11 @@ See the [Fuzzing](#fuzzing) section below for protocol fuzzing with libFuzzer.
 When modifying the protocol, run all tests in order:
 
 1. `go test ./internal/protocol/...` - Go unit tests
-2. `cd compute-daemon && make test` - C unit tests
-3. `cd compute-daemon && make test-asan` - C with sanitizers
+2. `cd compute && make test` - C unit tests
+3. `cd compute && make test-asan` - C with sanitizers
 4. `go test -tags=integration ./test/integration/` - Round-trip tests
-5. `cd compute-daemon && make test-corpus` - Corpus validation
-6. `cd compute-daemon && make fuzz` - 60-second fuzz run
+5. `cd compute && make test-corpus` - Corpus validation
+6. `cd compute && make fuzz` - 60-second fuzz run
 
 All must pass before committing protocol changes.
 
@@ -618,7 +618,7 @@ go test ./...
 
 **C:**
 ```bash
-cd compute-daemon
+cd compute
 make test
 ```
 
@@ -627,7 +627,7 @@ make test
 Run C code with AddressSanitizer and UndefinedBehaviorSanitizer:
 
 ```bash
-cd compute-daemon
+cd compute
 make test-asan
 ```
 
@@ -650,7 +650,7 @@ Fuzzing tests the protocol decoder with millions of random inputs to find crashe
 Uses gcc/ASan to validate all corpus files:
 
 ```bash
-cd compute-daemon
+cd compute
 make test-corpus
 ```
 
@@ -669,7 +669,7 @@ sudo dnf install clang
 
 **Run fuzzer for 60 seconds:**
 ```bash
-cd compute-daemon
+cd compute
 make fuzz
 ```
 
@@ -678,7 +678,7 @@ make fuzz
 make fuzz-long
 ```
 
-**See `compute-daemon/fuzz/README.md` for detailed fuzzing documentation.**
+**See `compute/fuzz/README.md` for detailed fuzzing documentation.**
 
 ### Expected Results
 
@@ -701,7 +701,7 @@ For critical code paths, run fuzzing overnight or continuously in CI:
 
 ```bash
 # 8 hour run (overnight)
-cd compute-daemon/fuzz
+cd compute && cd fuzz
 ./fuzz_protocol corpus/ -max_total_time=28800 -jobs=4
 ```
 
@@ -717,7 +717,7 @@ goimports -w .
 
 **C:**
 ```bash
-cd compute-daemon
+cd compute
 make fmt
 ```
 
@@ -741,7 +741,7 @@ clang-tidy src/*.c -- -I./include
 ### C Debugging with GDB
 
 ```bash
-cd compute-daemon
+cd compute
 gcc -O0 -g -I./include -o debug_program src/protocol.c test/test_protocol.c -lm
 gdb ./debug_program
 
@@ -755,7 +755,7 @@ gdb ./debug_program
 ### Memory Debugging with Valgrind
 
 ```bash
-cd compute-daemon
+cd compute
 make test-asan  # First try ASan (faster)
 
 # Or use Valgrind (slower but thorough)
@@ -772,7 +772,7 @@ Use `hexdump` to inspect binary protocol messages:
 hexdump -C message.bin
 
 # Or use test stub generator
-cd compute-daemon
+cd compute
 make test-stub
 ./test/test_stub_generator > test_message.bin
 hexdump -C test_message.bin
@@ -812,7 +812,7 @@ go test -bench=. -benchmem ./...
 ### C Benchmarks
 
 ```bash
-cd compute-daemon
+cd compute
 make bench  # If benchmark target exists
 ```
 
@@ -826,9 +826,9 @@ Expected performance for protocol operations:
 ### Adding a New Protocol Field
 
 1. Update protocol specification in `docs/protocol/SPEC_SD35.md`
-2. Update C types in `compute-daemon/include/weave/protocol.h`
-3. Update decoder in `compute-daemon/src/protocol.c`
-4. Add tests in `compute-daemon/test/test_protocol.c`
+2. Update C types in `compute/include/weave/protocol.h`
+3. Update decoder in `compute/src/protocol.c`
+4. Add tests in `compute/test/test_protocol.c`
 5. Update Go encoder/decoder in `internal/protocol/`
 6. Add integration test
 7. Run fuzzer for 1 hour to verify stability
@@ -863,7 +863,7 @@ protocol_roundtrip_test.go:158: stub generator failed: stub generator not found
 
 Solution:
 ```bash
-cd compute-daemon
+cd compute
 make test-stub
 ls -la test/test_stub_generator  # Verify it exists
 ```
@@ -877,7 +877,7 @@ Error: clang not found. Install with: sudo apt-get install clang
 Solution (use corpus testing instead):
 ```bash
 # Use gcc-based corpus testing if clang unavailable
-cd compute-daemon
+cd compute
 make test-corpus
 
 # Or install clang
@@ -889,7 +889,7 @@ sudo dnf install clang      # Fedora
 
 Check for missing sanitizer libraries:
 ```bash
-cd compute-daemon
+cd compute
 
 # Try building with debug flags only
 gcc -O0 -g -I./include -o test/test_protocol test/test_protocol.c src/protocol.c -lm
@@ -904,7 +904,7 @@ sudo apt-get install libasan6  # Ubuntu/Debian
 Indicates encoder/decoder mismatch. Debug:
 ```bash
 # Generate a request and inspect it
-cd compute-daemon
+cd compute
 make test-stub
 
 # Create test input from Go side
@@ -920,9 +920,9 @@ hexdump -C /tmp/response.bin
 
 **Fuzzer finds crashes**
 
-Crashes are saved to `compute-daemon/fuzz/crash-*` files:
+Crashes are saved to `compute/fuzz/crash-*` files:
 ```bash
-cd compute-daemon/fuzz
+cd compute/fuzz
 
 # List crashes
 ls -la crash-*
@@ -982,7 +982,7 @@ gcc ... -lm
 
 See [Troubleshooting Socket Issues](#troubleshooting-socket-issues) in the Unix Socket Communication section for detailed guidance on:
 - XDG_RUNTIME_DIR not set
-- Daemon not running (ENOENT)
+- Compute process not running (ENOENT)
 - Connection refused (stale socket)
 - Permission denied
 - Authentication failures
@@ -1002,13 +1002,13 @@ All PRs must pass:
 
 - [ ] Go unit tests (`go test ./...`)
 - [ ] Go protocol tests (`go test ./internal/protocol/...`)
-- [ ] C unit tests (`cd compute-daemon && make test`)
-- [ ] ASan/UBSan tests (`cd compute-daemon && make test-asan`)
+- [ ] C unit tests (`cd compute && make test`)
+- [ ] ASan/UBSan tests (`cd compute && make test-asan`)
 - [ ] Integration tests (`go test -tags=integration ./test/integration/`)
-- [ ] Corpus validation (`cd compute-daemon && make test-corpus`)
+- [ ] Corpus validation (`cd compute && make test-corpus`)
 - [ ] Fuzzing (5-minute smoke test)
 - [ ] Go linting (`golangci-lint run`)
-- [ ] Formatting (`go fmt`, `cd compute-daemon && make fmt`)
+- [ ] Formatting (`go fmt`, `cd compute && make fmt`)
 
 ## Documentation Standards
 
@@ -1109,7 +1109,7 @@ These are being actively addressed by the project and mostly affect SD 3.5 Large
 #### Phase 1: Integration
 - Add stable-diffusion.cpp as submodule or vendored dependency
 - Build with Vulkan support enabled (`-DSD_VULKAN=ON`)
-- Create C wrapper interface for daemon
+- Create C wrapper interface for compute process
 
 #### Phase 2: Model Loading
 - Download SD 3.5 Medium from Hugging Face:
@@ -1231,7 +1231,7 @@ huggingface-cli download stabilityai/stable-diffusion-3.5-medium \
 **Directory Structure**:
 ```
 weave/
-├── compute-daemon/
+├── compute/
 │   └── weave-compute
 └── models/
     ├── sd3.5_medium.safetensors      # Main diffusion model
@@ -1314,7 +1314,7 @@ For reduced VRAM usage, use GGUF quantized models:
 ./sd-convert -m models/sd3.5_medium.safetensors \
   -o models/sd3.5_medium_q8.gguf --type q8_0
 
-# Use in daemon (modify model path)
+# Use in compute process (modify model path)
 # Load: models/sd3.5_medium_q8.gguf instead of .safetensors
 ```
 
@@ -1356,7 +1356,7 @@ To test:
 # Verify Vulkan works
 vulkaninfo | grep AMD
 
-# Run daemon
+# Run compute process
 ./weave-compute
 
 # Run benchmark
@@ -1385,7 +1385,7 @@ vulkaninfo | grep Intel
 # Check for compute queue
 vulkaninfo | grep -A 5 "queueFlags" | grep COMPUTE
 
-# Run daemon
+# Run compute process
 ./weave-compute
 ```
 
@@ -1408,7 +1408,7 @@ The Vulkan backend provides cross-vendor GPU support through the standard Vulkan
 If generation fails on non-NVIDIA hardware, please file an issue with:
 - GPU model and driver version
 - `vulkaninfo` output
-- Error message from daemon
+- Error message from compute process
 - VRAM available (`nvidia-smi`, `rocm-smi`, or equivalent)
 
 ### References
@@ -1594,10 +1594,10 @@ Mistral 7B was chosen over smaller models like Llama 3.2 1B due to superior inst
 For alternative models, use the `--ollama-model` flag:
 ```bash
 # Smaller, faster (may have format drift issues)
-./bin/weave --ollama-model llama3.2:1b
+./build/weave-backend --ollama-model llama3.2:1b
 
 # Larger, higher quality
-./bin/weave --ollama-model llama3.1:8b
+./build/weave-backend --ollama-model llama3.1:8b
 ```
 
 The default model can be changed by updating `defaultOllamaModel` in `internal/config/config.go`.
@@ -1720,7 +1720,7 @@ The conversation history is cleared and the user can start a new conversation im
 To debug format errors, enable DEBUG logging:
 
 ```bash
-./bin/weave --log-level debug
+./build/weave-backend --log-level debug
 ```
 
 Look for log messages indicating:
@@ -1737,7 +1737,7 @@ Example DEBUG output:
 
 If you see repeated format errors, the model may not support this format well. Try a larger model:
 ```bash
-./bin/weave --ollama-model llama3.1:8b
+./build/weave-backend --ollama-model llama3.1:8b
 ```
 
 ## Web UI
@@ -1753,7 +1753,7 @@ For development, you can access the UI directly via browser at `http://localhost
 
 ```bash
 ollama serve              # In one terminal
-./build/weave             # In another terminal
+./build/weave-backend             # In another terminal
 ```
 
 Then open `http://localhost:8080` in your browser.
@@ -1975,7 +1975,7 @@ To verify each feature works:
 ```
 1. Click "Generate Image" with a prompt set
 2. Watch spinner appear in chat
-3. See image appear (or error if daemon not running)
+3. See image appear (or error if compute process not running)
 ```
 
 **Session persistence:**
@@ -2046,7 +2046,7 @@ Cleanup happens automatically. No manual intervention required.
 Cleanup events are logged at DEBUG level:
 
 ```bash
-./bin/weave --log-level debug
+./build/weave-backend --log-level debug
 ```
 
 Example cleanup log output:
@@ -2069,7 +2069,7 @@ These limits prevent unbounded memory growth for long-running servers.
 ### Image Generation Flow
 
 1. User triggers generation via "Generate Image" button
-2. Server generates placeholder gradient (or calls compute daemon when ready)
+2. Server generates placeholder gradient (or calls compute process when ready)
 3. Raw pixel data (RGB) encoded to PNG using Go's image/png package
 4. PNG stored in memory, UUID generated
 5. SSE event sent with image URL: `{"url": "/images/<uuid>.png"}`
@@ -2078,7 +2078,7 @@ These limits prevent unbounded memory growth for long-running servers.
 
 **Placeholder Images**
 
-Currently, the server generates a colored gradient placeholder since the compute daemon integration is not complete. This will be replaced with actual generated images from weave-compute.
+Currently, the server generates a colored gradient placeholder since the compute process integration is not complete. This will be replaced with actual generated images from weave-compute.
 
 Placeholder format:
 - Size: 512x512 pixels
@@ -2102,7 +2102,7 @@ This allows browsers to cache images indefinitely, reducing server load.
 
 Enable DEBUG logging to see storage statistics:
 ```bash
-./bin/weave --log-level debug
+./build/weave-backend --log-level debug
 ```
 
 Cleanup events show current image count.

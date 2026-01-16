@@ -185,10 +185,10 @@ Implement `internal/protocol/decode.go` with function to decode MSG_GENERATE_RES
 **Status:** done
 **Depends on:** 001
 
-Create `compute-daemon/include/weave/protocol.h` with message type enum, status codes, and C structs for wire format. Define generate_request_t with header, model_id, prompt offset table, generation params. Define generate_response_t and error_response_t. Use fixed-width types (uint32_t, uint16_t) and document byte order.
+Create `compute/include/weave/protocol.h` with message type enum, status codes, and C structs for wire format. Define generate_request_t with header, model_id, prompt offset table, generation params. Define generate_response_t and error_response_t. Use fixed-width types (uint32_t, uint16_t) and document byte order.
 
 **Files created:**
-- `compute-daemon/include/weave/protocol.h` - Protocol types, constants, and structs for C
+- `compute/include/weave/protocol.h` - Protocol types, constants, and structs for C
 
 **Implementation details:**
 - Uses `#pragma once` for header guard (C99 standard)
@@ -220,12 +220,12 @@ Create `compute-daemon/include/weave/protocol.h` with message type enum, status 
 **Status:** done
 **Depends on:** 005
 
-Implement `compute-daemon/src/protocol.c` with decode_generate_request() function. Parse header (validate magic 0x57455645, check version), extract model_id, validate model_id == 0 (return error 400 for non-zero). Parse SD35 payload with prompt offset table and generation params. Perform ALL bounds checking (prompt length, dimensions, integer overflow, buffer sizes).
+Implement `compute/src/protocol.c` with decode_generate_request() function. Parse header (validate magic 0x57455645, check version), extract model_id, validate model_id == 0 (return error 400 for non-zero). Parse SD35 payload with prompt offset table and generation params. Perform ALL bounds checking (prompt length, dimensions, integer overflow, buffer sizes).
 
 **Files created:**
-- `compute-daemon/src/protocol.c` - Request decoder implementation
-- `compute-daemon/test/test_protocol.c` - 25 unit tests
-- `compute-daemon/Makefile` - Build system with test targets
+- `compute/src/protocol.c` - Request decoder implementation
+- `compute/test/test_protocol.c` - 25 unit tests
+- `compute/Makefile` - Build system with test targets
 
 **Implementation details:**
 - `decode_generate_request()` main decoder function
@@ -248,8 +248,8 @@ Implement `compute-daemon/src/protocol.c` with decode_generate_request() functio
 Implement encode_generate_response() and encode_error_response() in protocol.c. For success (status 200), write header + image dimensions + raw pixel data. For errors (status 400/500), write header + error code + error message string. Include length-prefix for error messages. All multi-byte integers in big-endian.
 
 **Files updated:**
-- `compute-daemon/src/protocol.c` - Added encoder functions
-- `compute-daemon/test/test_protocol.c` - Added 14 encoder tests (total now 39 tests)
+- `compute/src/protocol.c` - Added encoder functions
+- `compute/test/test_protocol.c` - Added 14 encoder tests (total now 39 tests)
 
 **Implementation details:**
 - `encode_generate_response()` encodes successful SD 3.5 responses with image data
@@ -274,7 +274,7 @@ Create integration test that encodes request in Go, passes bytes to C decoder (v
 
 **Files to create:**
 - `test/integration/protocol_roundtrip_test.go`
-- `compute-daemon/test/test_stub_generator.c` (returns test pattern)
+- `compute/test/test_stub_generator.c` (returns test pattern)
 
 **Testing:** Integration test passes. Verify image dimensions match request. Verify test pattern data integrity.
 
@@ -288,12 +288,12 @@ Create integration test that encodes request in Go, passes bytes to C decoder (v
 Create fuzzing harness using libFuzzer or AFL for decode_generate_request(). Fuzz with random byte inputs to find crashes, hangs, or undefined behavior. Configure to run for at least 1 million iterations. Document how to run fuzzer in DEVELOPMENT.md.
 
 **Files created:**
-- `compute-daemon/fuzz/fuzz_protocol.c` - libFuzzer/AFL harness
-- `compute-daemon/fuzz/generate_corpus.c` - Generates 13 seed corpus files
-- `compute-daemon/fuzz/test_corpus.c` - Validates corpus with ASan/UBSan
-- `compute-daemon/fuzz/stress_test.c` - 1M+ iteration stress test
-- `compute-daemon/fuzz/README.md` - Comprehensive fuzzing documentation
-- Updated `compute-daemon/Makefile` - Added fuzz targets
+- `compute/fuzz/fuzz_protocol.c` - libFuzzer/AFL harness
+- `compute/fuzz/generate_corpus.c` - Generates 13 seed corpus files
+- `compute/fuzz/test_corpus.c` - Validates corpus with ASan/UBSan
+- `compute/fuzz/stress_test.c` - 1M+ iteration stress test
+- `compute/fuzz/README.md` - Comprehensive fuzzing documentation
+- Updated `compute/Makefile` - Added fuzz targets
 
 **Implementation details:**
 - Implements `LLVMFuzzerTestOneInput()` for libFuzzer

@@ -3,7 +3,7 @@
  *
  * This header defines C types and constants for the Weave binary protocol.
  * The protocol is used for communication between the Go orchestration layer
- * (weave) and the C GPU daemon (weave-compute) over Unix domain sockets.
+ * (weave) and the C GPU compute process (weave-compute) over Unix domain sockets.
  *
  * Protocol version: 1
  * Specification: docs/protocol/SPEC.md, docs/protocol/SPEC_SD35.md

@@ -2,7 +2,7 @@
  * Weave Socket Module - Unix Domain Socket Management
  *
  * This module handles Unix domain socket creation, cleanup, lifecycle
- * management, and authentication for the weave-compute daemon. It provides
+ * management, and authentication for weave-compute. It provides
  * secure socket creation at $XDG_RUNTIME_DIR/weave/weave.sock with
  * appropriate permissions and SO_PEERCRED-based authentication.
  *
@@ -43,7 +43,7 @@ typedef enum {
     SOCKET_ERR_NULL_POINTER = -9,     /**< NULL pointer argument */
     SOCKET_ERR_STALE_SOCKET = -10,    /**< Stale socket removed (not an error, informational) */
     SOCKET_ERR_AUTH_FAILED = -11,     /**< SO_PEERCRED authentication failed */
-    SOCKET_ERR_AUTH_UID_MISMATCH = -12, /**< Client UID does not match daemon UID */
+    SOCKET_ERR_AUTH_UID_MISMATCH = -12, /**< Client UID does not match process UID */
     SOCKET_ERR_INVALID_FD = -13,      /**< Invalid file descriptor */
     SOCKET_ERR_TIMEOUT_FAILED = -14,  /**< Failed to set socket timeout */
     SOCKET_ERR_ACCEPT_FAILED = -15,   /**< Failed to accept connection */
@@ -136,13 +136,13 @@ socket_error_t socket_create(int *listen_fd);
  * socket_connect - Connect to an existing Unix domain socket
  *
  * Connects to an existing Unix domain socket at the specified path.
- * This function is used by the daemon when running in "worker mode" where
- * the socket is created by the parent process (weave) rather than by the
- * daemon itself.
+ * This function is used by weave-compute when running in "worker mode" where
+ * the socket is created by the parent process (weave) rather than by
+ * weave-compute itself.
  *
  * Unlike socket_create(), this function does not create or bind a socket.
  * It only connects to an already-listening socket. This is the client-side
- * connection logic for the daemon to use when spawned by weave.
+ * connection logic for weave-compute to use when spawned by weave.
  *
  * @param socket_path  Path to the existing socket file
  * @param connected_fd Pointer to store the connected socket file descriptor
@@ -164,7 +164,7 @@ socket_error_t socket_connect(const char *socket_path, int *connected_fd);
  * socket_cleanup - Remove socket file
  *
  * Removes the socket file from the filesystem. Should be called during
- * graceful shutdown to allow the daemon to restart cleanly.
+ * graceful shutdown to allow weave-compute to restart cleanly.
  *
  * This function does NOT close the socket file descriptor - the caller
  * must do that separately.
@@ -180,7 +180,7 @@ socket_error_t socket_cleanup(void);
 /**
  * socket_auth_connection - Authenticate a client connection via SO_PEERCRED
  *
- * Verifies that the connecting process has the same UID as the daemon.
+ * Verifies that the connecting process has the same UID as weave-compute.
  * This function should be called immediately after accept() and before
  * reading any data from the client socket.
  *
@@ -195,7 +195,7 @@ socket_error_t socket_cleanup(void);
  * Error codes:
  * - SOCKET_ERR_INVALID_FD: client_fd is negative
  * - SOCKET_ERR_AUTH_FAILED: Could not retrieve peer credentials
- * - SOCKET_ERR_AUTH_UID_MISMATCH: Client UID does not match daemon UID
+ * - SOCKET_ERR_AUTH_UID_MISMATCH: Client UID does not match process UID
  *
  * Security:
  * - Uses SO_PEERCRED which is kernel-verified and unforgeable
@@ -289,7 +289,7 @@ void socket_request_shutdown(void);
 int socket_is_shutdown_requested(void);
 
 /**
- * socket_accept_loop - Main accept loop for the daemon
+ * socket_accept_loop - Main accept loop for weave-compute
  *
  * Accepts connections on the listening socket, authenticates each client
  * via SO_PEERCRED, sets timeouts, and calls the handler for each connection.

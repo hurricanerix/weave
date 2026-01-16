@@ -23,7 +23,7 @@ Connection to image generation service was closed
 [sd] DEBUG: ggml_extend.hpp:1754 - clip compute buffer size: 1.40 MB(RAM)
 ...
 /home/.../stable-diffusion.cpp/ggml/src/ggml-cpu/ops.cpp:4666: GGML_ASSERT(i01 >= 0 && i01 < ne01) failed
-[1]    183712 IOT instruction (core dumped)  ./compute-daemon/weave-compute
+[1]    183712 IOT instruction (core dumped)  ./compute/weave-compute
 ```
 
 ## Steps to reproduce
@@ -70,7 +70,7 @@ Reduced maximum prompt length from 2048 to 512 bytes per encoder.
 **Rationale:** 512 bytes produces approximately 128-170 tokens. This keeps prompts short enough that CLIP and T5 produce similar token counts, avoiding the mismatch that triggers the crash.
 
 **Files changed:**
-- `compute-daemon/include/weave/protocol.h` - `SD35_MAX_PROMPT_LENGTH` 2048 → 512
+- `compute/include/weave/protocol.h` - `SD35_MAX_PROMPT_LENGTH` 2048 → 512
 - `internal/protocol/types.go` - `SD35MaxPromptLen` 2048 → 512
 - `internal/protocol/types_test.go` - Updated test expectations
 - `internal/protocol/encode_test.go` - Updated test expectations

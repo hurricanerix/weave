@@ -74,7 +74,7 @@ This change requires coordinated updates to both weave (Go) and compute (C) code
 **Status:** done
 **Depends on:** none
 
-Add a new function `socket_connect()` to `compute-daemon/src/socket.c` that connects to an existing Unix socket (instead of creating it). The function should take a socket path as a parameter, create a socket file descriptor, connect to it, and return the connected socket. This mirrors the client connection logic but is for the daemon's server-side use. Update `weave/socket.h` with the function declaration. Include error handling for connection failures.
+Add a new function `socket_connect()` to `compute/src/socket.c` that connects to an existing Unix socket (instead of creating it). The function should take a socket path as a parameter, create a socket file descriptor, connect to it, and return the connected socket. This mirrors the client connection logic but is for the daemon's server-side use. Update `weave/socket.h` with the function declaration. Include error handling for connection failures.
 
 ---
 
@@ -83,7 +83,7 @@ Add a new function `socket_connect()` to `compute-daemon/src/socket.c` that conn
 **Status:** done
 **Depends on:** none
 
-Modify `compute-daemon/src/main.c` to accept a `--socket-path` CLI argument. Parse the argument using standard getopt or manual parsing. Store the socket path for use during socket initialization. If the argument is not provided, fall back to the current behavior (calling `socket_get_path()` to construct the default path). This maintains backward compatibility during the transition.
+Modify `compute/src/main.c` to accept a `--socket-path` CLI argument. Parse the argument using standard getopt or manual parsing. Store the socket path for use during socket initialization. If the argument is not provided, fall back to the current behavior (calling `socket_get_path()` to construct the default path). This maintains backward compatibility during the transition.
 
 ---
 
@@ -92,7 +92,7 @@ Modify `compute-daemon/src/main.c` to accept a `--socket-path` CLI argument. Par
 **Status:** done
 **Depends on:** 001, 002
 
-Modify `compute-daemon/src/main.c` to connect as a client to weave's listening socket using `socket_connect()`. After connecting, replace the accept loop with a request/response loop that reads requests from the connected socket, processes them, and sends responses back over the same connection. The loop continues until the connection closes or stdin closes. Remove `socket_create()` and `socket_cleanup()` calls since compute no longer owns the socket file. Update error messages to reflect client connection failures.
+Modify `compute/src/main.c` to connect as a client to weave's listening socket using `socket_connect()`. After connecting, replace the accept loop with a request/response loop that reads requests from the connected socket, processes them, and sends responses back over the same connection. The loop continues until the connection closes or stdin closes. Remove `socket_create()` and `socket_cleanup()` calls since compute no longer owns the socket file. Update error messages to reflect client connection failures.
 
 ---
 
@@ -101,7 +101,7 @@ Modify `compute-daemon/src/main.c` to connect as a client to weave's listening s
 **Status:** done
 **Depends on:** 003
 
-Add a background monitoring mechanism in `compute-daemon/src/main.c` that watches stdin for closure. When stdin is closed (indicating parent process death), call `socket_request_shutdown()` to trigger graceful termination. Use a simple read loop in a separate thread (pthread) or select/poll on stdin. This provides the fallback mechanism for detecting parent process death even if the socket connection remains open.
+Add a background monitoring mechanism in `compute/src/main.c` that watches stdin for closure. When stdin is closed (indicating parent process death), call `socket_request_shutdown()` to trigger graceful termination. Use a simple read loop in a separate thread (pthread) or select/poll on stdin. This provides the fallback mechanism for detecting parent process death even if the socket connection remains open.
 
 ---
 
@@ -155,6 +155,6 @@ Update `test/integration/socket_test.go` to test the new client/server role reve
 **Status:** done
 **Depends on:** 001, 003
 
-Update `compute-daemon/test/test_socket.c` to test the new client connection pattern. Add tests that verify: `socket_connect()` connects to existing listening socket, connection to non-existent socket fails with appropriate error, request/response loop reads and writes over connected socket, loop terminates cleanly on connection close. Test the client request loop in isolation from the full daemon. Ensure existing `socket_create()` tests still pass for backward compatibility.
+Update `compute/test/test_socket.c` to test the new client connection pattern. Add tests that verify: `socket_connect()` connects to existing listening socket, connection to non-existent socket fails with appropriate error, request/response loop reads and writes over connected socket, loop terminates cleanly on connection close. Test the client request loop in isolation from the full daemon. Ensure existing `socket_create()` tests still pass for backward compatibility.
 
 ---

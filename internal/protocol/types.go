@@ -1,5 +1,5 @@
 // Package protocol implements the binary protocol for communication
-// between weave (Go orchestration) and weave-compute (C GPU daemon).
+// between weave (Go orchestration) and weave-compute (C GPU process).
 package protocol
 
 import "errors"

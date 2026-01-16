@@ -25,10 +25,10 @@ function spawnGoServer() {
   return new Promise((resolve, reject) => {
     // Binary path depends on whether app is packaged or running in development
     // Packaged: binary is in resources directory (copied by electron-builder)
-    // Development: binary is in build/ directory (built by make weave)
+    // Development: binary is in build/ directory (built by make backend)
     const binaryPath = app.isPackaged
-      ? path.join(process.resourcesPath, 'weave')
-      : path.join(__dirname, '..', 'build', 'weave');
+      ? path.join(process.resourcesPath, 'weave-backend')
+      : path.join(__dirname, '..', 'build', 'weave-backend');
 
     // Check if binary exists before spawning
     if (!fs.existsSync(binaryPath)) {
@@ -50,13 +50,13 @@ function spawnGoServer() {
     // Pipe stdout to console with prefix
     child.stdout.on('data', (data) => {
       const lines = data.toString().trim().split('\n').filter(Boolean);
-      lines.forEach(line => console.log(`[weave] ${line}`));
+      lines.forEach(line => console.log(`[weave-backend] ${line}`));
     });
 
     // Pipe stderr to console with prefix
     child.stderr.on('data', (data) => {
       const lines = data.toString().trim().split('\n').filter(Boolean);
-      lines.forEach(line => console.error(`[weave] ${line}`));
+      lines.forEach(line => console.error(`[weave-backend] ${line}`));
     });
 
     // Log when process exits
@@ -251,7 +251,7 @@ app.whenReady().then(async () => {
     if (err.isBinaryMissing) {
       showErrorDialog(
         'Failed to start Weave server',
-        `The weave binary was not found at:\n${err.binaryPath}\n\nPlease build the project first:\n  make weave`
+        `The weave-backend binary was not found at:\n${err.binaryPath}\n\nPlease build the project first:\n  make backend`
       );
     } else if (err.message.includes('failed to start within')) {
       showErrorDialog(

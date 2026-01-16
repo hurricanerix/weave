@@ -83,7 +83,7 @@ type Server struct {
 	defaultWidth  int
 	defaultHeight int
 
-	// Request ID counter for compute daemon requests
+	// Request ID counter for compute process requests
 	requestID uint64
 }
 
@@ -956,8 +956,8 @@ func (s *Server) handleNewChat(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `{"status":"ok","session_id":"%s"}`, sessionID)
 }
 
-// generateImage performs image generation using the compute daemon.
-// It handles the entire generation flow: protocol request creation, daemon communication,
+// generateImage performs image generation using the compute process.
+// It handles the entire generation flow: protocol request creation, compute communication,
 // response handling, and SSE event sending. This method is called from both handleGenerate
 // (manual button click) and handleChat (agent-triggered generation).
 //
@@ -1027,8 +1027,8 @@ func (s *Server) generateImage(ctx context.Context, sessionID string, prompt str
 	// Use persistent compute connection
 	if s.computeClient == nil {
 		log.Printf("Compute client not available for session %s", sessionID)
-		s.sendErrorEvent(sessionID, "Image generation is not available (compute daemon not connected)")
-		return client.ErrDaemonNotRunning
+		s.sendErrorEvent(sessionID, "Image generation is not available (compute process not connected)")
+		return client.ErrComputeNotRunning
 	}
 
 	// Send request and receive response over persistent connection
@@ -1037,7 +1037,7 @@ func (s *Server) generateImage(ctx context.Context, sessionID string, prompt str
 
 	responseData, err := s.computeClient.Send(genCtx, requestData)
 	if err != nil {
-		log.Printf("Failed to send request to compute daemon for session %s: %v", sessionID, err)
+		log.Printf("Failed to send request to compute process for session %s: %v", sessionID, err)
 		if errors.Is(err, client.ErrConnectionClosed) || errors.Is(err, client.ErrReaderDead) {
 			s.sendErrorEvent(sessionID, "Connection to image generation service was closed")
 		} else if errors.Is(err, client.ErrReadTimeout) {
@@ -1097,10 +1097,10 @@ func (s *Server) generateImage(ctx context.Context, sessionID string, prompt str
 		})
 
 	case *protocol.ErrorResponse:
-		log.Printf("Compute daemon error for session %s: code=%d, msg=%s",
+		log.Printf("Compute process error for session %s: code=%d, msg=%s",
 			sessionID, resp.ErrorCode, resp.ErrorMessage)
 		s.sendErrorEvent(sessionID, fmt.Sprintf("Image generation failed: %s", resp.ErrorMessage))
-		return fmt.Errorf("daemon error: %s", resp.ErrorMessage)
+		return fmt.Errorf("compute error: %s", resp.ErrorMessage)
 
 	default:
 		log.Printf("Unexpected response type for session %s: %T", sessionID, response)
@@ -1177,7 +1177,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 		// Error already sent via SSE and logged
 		// Determine appropriate HTTP status code based on error type
 		var statusCode int
-		if errors.Is(err, client.ErrDaemonNotRunning) || errors.Is(err, client.ErrXDGNotSet) {
+		if errors.Is(err, client.ErrComputeNotRunning) || errors.Is(err, client.ErrXDGNotSet) {
 			statusCode = http.StatusServiceUnavailable
 		} else {
 			statusCode = http.StatusInternalServerError
@@ -1194,7 +1194,7 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 }
 
 // generatePlaceholderPixels creates a colored gradient for testing.
-// This will be replaced with actual compute daemon output.
+// This will be replaced with actual compute process output.
 func generatePlaceholderPixels(width, height int) []byte {
 	pixels := make([]byte, width*height*3) // RGB format
 	for y := 0; y < height; y++ {

@@ -120,7 +120,7 @@ func TestUserFlow_GenerateWithoutPrompt(t *testing.T) {
 }
 
 // TestUserFlow_GenerateWithPrompt tests generate with a valid prompt.
-// When the compute daemon is not running, we expect 503 Service Unavailable.
+// When the compute process is not running, we expect 503 Service Unavailable.
 func TestUserFlow_GenerateWithPrompt(t *testing.T) {
 	s, err := NewServer("")
 	if err != nil {
@@ -140,8 +140,8 @@ func TestUserFlow_GenerateWithPrompt(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.handleGenerate(w, req)
 
-	// Without a running daemon, we expect 503 Service Unavailable
-	// This is correct behavior - the daemon is required for image generation
+	// Without a running compute process, we expect 503 Service Unavailable
+	// This is correct behavior - the compute process is required for image generation
 	if w.Code != http.StatusServiceUnavailable {
 		t.Errorf("status code = %d, want %d", w.Code, http.StatusServiceUnavailable)
 	}

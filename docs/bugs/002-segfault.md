@@ -15,12 +15,12 @@ stable-diffusion.cpp has a bug where GGML compute buffers are not properly freed
 **Trade-off:** Adds ~2-3 seconds model reload time per generation. This should be removed once the upstream stable-diffusion.cpp bug is fixed.
 
 **Files changed:**
-- `compute-daemon/include/weave/sd_wrapper.h` - Added `sd_wrapper_reset()` declaration
-- `compute-daemon/src/sd_wrapper.cpp` - Implemented `sd_wrapper_reset()`
-- `compute-daemon/src/generate.c` - Call reset before each generation
-- `compute-daemon/test/test_generate.c` - Added mock for testing
+- `compute/include/weave/sd_wrapper.h` - Added `sd_wrapper_reset()` declaration
+- `compute/src/sd_wrapper.cpp` - Implemented `sd_wrapper_reset()`
+- `compute/src/generate.c` - Call reset before each generation
+- `compute/test/test_generate.c` - Added mock for testing
 
-**Verification:** All unit tests pass. Rebuild the daemon with `make -C compute-daemon` and restart to apply the fix
+**Verification:** All unit tests pass. Rebuild the daemon with `make -C compute` and restart to apply the fix
 
 ## Related
 
@@ -43,7 +43,7 @@ Connection to image generation service was closed
 [sd] DEBUG: clip.hpp:304  - token length: 231
 [sd] DEBUG: t5.hpp:402  - token length: 308
 [sd] DEBUG: ggml_extend.hpp:1754 - clip compute buffer size: 1.40 MB(RAM)
-[1]    143345 segmentation fault (core dumped)  ./compute-daemon/weave-compute
+[1]    143345 segmentation fault (core dumped)  ./compute/weave-compute
 ```
 
 ## Steps to reproduce
@@ -107,7 +107,7 @@ This appears before the first successful generation and may indicate socket hand
 
 1. Run under Valgrind to detect memory errors:
    ```bash
-   valgrind --leak-check=full ./compute-daemon/weave-compute
+   valgrind --leak-check=full ./compute/weave-compute
    ```
 
 2. Run under AddressSanitizer:
@@ -118,9 +118,9 @@ This appears before the first successful generation and may indicate socket hand
 3. Generate core dump and analyze:
    ```bash
    ulimit -c unlimited
-   ./compute-daemon/weave-compute
+   ./compute/weave-compute
    # After crash:
-   gdb ./compute-daemon/weave-compute core
+   gdb ./compute/weave-compute core
    ```
 
 4. Check if issue is related to prompt length (second prompt was longer)

@@ -1,3 +1,0 @@
-# Weave Compute Daemon
-
-TBD

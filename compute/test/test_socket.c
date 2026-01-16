@@ -418,10 +418,10 @@ void test_create_success(void) {
 /**
  * Test: socket_create removes stale socket
  *
- * A "stale socket" is a socket file left behind by a crashed daemon that
+ * A "stale socket" is a socket file left behind by a crashed process that
  * didn't clean up properly. The file exists on disk, but no process is
  * listening on it. When we try to connect(), it fails with ECONNREFUSED.
- * The daemon should detect this and remove the stale file before binding.
+ * weave-compute should detect this and remove the stale file before binding.
  */
 void test_create_removes_stale_socket(void) {
     TEST("test_create_removes_stale_socket");
@@ -446,7 +446,7 @@ void test_create_removes_stale_socket(void) {
     socket_get_path(socket_path, sizeof(socket_path));
 
     /*
-     * Simulate a crashed daemon: create a socket, bind it, then close
+     * Simulate a crashed process: create a socket, bind it, then close
      * without calling listen(). This leaves the socket file on disk,
      * but connect() will fail because no one is listening.
      */

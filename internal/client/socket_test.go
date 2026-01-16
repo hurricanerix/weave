@@ -98,12 +98,12 @@ func TestClassifyDialError(t *testing.T) {
 		{
 			name:    "ENOENT error",
 			err:     &net.OpError{Err: syscall.ENOENT},
-			wantErr: ErrDaemonNotRunning,
+			wantErr: ErrComputeNotRunning,
 		},
 		{
 			name:    "ECONNREFUSED error",
 			err:     &net.OpError{Err: syscall.ECONNREFUSED},
-			wantErr: ErrDaemonNotAccepting,
+			wantErr: ErrComputeNotAccepting,
 		},
 	}
 
@@ -157,8 +157,8 @@ func TestConnectToNonexistentSocket(t *testing.T) {
 	ctx := context.Background()
 	conn, err := Connect(ctx)
 
-	if !errors.Is(err, ErrDaemonNotRunning) {
-		t.Errorf("Connect() error = %v, want ErrDaemonNotRunning", err)
+	if !errors.Is(err, ErrComputeNotRunning) {
+		t.Errorf("Connect() error = %v, want ErrComputeNotRunning", err)
 	}
 
 	if conn != nil {
@@ -262,29 +262,29 @@ func TestErrorMessages(t *testing.T) {
 			wantMsg: "XDG_RUNTIME_DIR not set",
 		},
 		{
-			name:    "daemon not running",
-			err:     ErrDaemonNotRunning,
-			wantMsg: "weave-compute daemon not running (socket not found)",
+			name:    "compute not running",
+			err:     ErrComputeNotRunning,
+			wantMsg: "weave-compute process not running (socket not found)",
 		},
 		{
-			name:    "daemon not accepting",
-			err:     ErrDaemonNotAccepting,
-			wantMsg: "weave-compute daemon not accepting connections",
+			name:    "compute not accepting",
+			err:     ErrComputeNotAccepting,
+			wantMsg: "weave-compute process not accepting connections",
 		},
 		{
 			name:    "connection timeout",
 			err:     ErrConnectionTimeout,
-			wantMsg: "weave-compute daemon connection timeout",
+			wantMsg: "weave-compute process connection timeout",
 		},
 		{
 			name:    "read timeout",
 			err:     ErrReadTimeout,
-			wantMsg: "weave-compute daemon read timeout",
+			wantMsg: "weave-compute process read timeout",
 		},
 		{
 			name:    "connection closed",
 			err:     ErrConnectionClosed,
-			wantMsg: "weave-compute daemon closed connection",
+			wantMsg: "weave-compute process closed connection",
 		},
 	}
 
@@ -378,7 +378,7 @@ func TestSendReadTimeout(t *testing.T) {
 
 	_, err = c.Send(ctx, []byte("test request"))
 	if err == nil {
-		t.Error("Send() should timeout when daemon doesn't respond")
+		t.Error("Send() should timeout when compute process doesn't respond")
 	}
 
 	// Check for timeout error - could be either ErrReadTimeout or ErrConnectionClosed
@@ -700,16 +700,16 @@ func TestClassifyReadError(t *testing.T) {
 }
 
 // Integration test - only runs with -tags=integration
-// Requires actual daemon running
+// Requires actual compute process running
 func TestConnectIntegration(t *testing.T) {
 	// Skip if not in integration mode
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	// This would require the daemon to be running
+	// This would require the compute process to be running
 	// Tagged as integration test in the build tags below
-	t.Skip("Integration test requires running daemon - run with -tags=integration")
+	t.Skip("Integration test requires running compute process - run with -tags=integration")
 }
 
 func TestAcceptConnection(t *testing.T) {
@@ -814,7 +814,7 @@ func TestMultiplexedSend(t *testing.T) {
 	defer listener.Close()
 	defer os.Remove(socketPath)
 
-	// Simulate compute daemon: connect and then echo responses
+	// Simulate compute process: connect and then echo responses
 	// We need to initiate the connection before calling AcceptConnection
 	connCh := make(chan net.Conn, 1)
 	go func() {

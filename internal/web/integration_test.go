@@ -1032,7 +1032,7 @@ func TestIntegration_AgentTriggeredGeneration(t *testing.T) {
 		t.Errorf("event should include steps, got %q", eventContent)
 	}
 
-	// Note: We can't actually test image generation without the compute daemon running,
+	// Note: We can't actually test image generation without the compute process running,
 	// but we've verified that the prompt and settings events are sent correctly.
 	// The actual generation would happen in handleChat after checking GenerateImage=true.
 

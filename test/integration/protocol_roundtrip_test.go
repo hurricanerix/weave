@@ -35,7 +35,7 @@ func stubGeneratorPath(t *testing.T) string {
 		t.Fatalf("failed to resolve project root: %v", err)
 	}
 
-	return filepath.Join(absRoot, "compute-daemon", "test", "test_stub_generator")
+	return filepath.Join(absRoot, "compute", "test", "test_stub_generator")
 }
 
 // runStubGenerator executes the C stub generator with the given request bytes.
@@ -47,7 +47,7 @@ func runStubGenerator(t *testing.T, requestBytes []byte) ([]byte, error) {
 
 	// Verify stub generator exists
 	if _, err := os.Stat(stubPath); os.IsNotExist(err) {
-		return nil, fmt.Errorf("stub generator not found at %s (run 'make test-stub' in compute-daemon/)", stubPath)
+		return nil, fmt.Errorf("stub generator not found at %s (run 'make test-stub' in compute/)", stubPath)
 	}
 
 	cmd := exec.Command(stubPath)

@@ -2,7 +2,7 @@
  * Weave Socket Module - Unix Domain Socket Implementation
  *
  * This file implements Unix domain socket creation, management, and
- * authentication for the weave-compute daemon.
+ * authentication for weave-compute.
  *
  * Security considerations:
  * - Socket directory: mode 0700 (owner only)
@@ -43,7 +43,7 @@
  * Global socket path storage.
  * Set during socket_create() for use by socket_cleanup().
  *
- * Note: This global state is acceptable for MVP since the daemon runs as a
+ * Note: This global state is acceptable for MVP since weave-compute runs as a
  * single-threaded process with one listening socket. NOT thread-safe.
  * For concurrent operation, refactor to pass socket_context_t explicitly.
  */
@@ -260,7 +260,7 @@ static int is_socket_stale(const char *socket_path) {
     close(test_fd);
 
     if (result == 0) {
-        /* Connection succeeded - socket is active (another daemon is running) */
+        /* Connection succeeded - socket is active (another process is running) */
         return 0;
     }
 
@@ -422,8 +422,8 @@ socket_error_t socket_cleanup(void) {
  * socket_auth_connection - Authenticate a client connection via SO_PEERCRED
  *
  * This function retrieves the peer credentials of a connected Unix domain
- * socket and verifies that the connecting process has the same UID as the
- * daemon. This provides kernel-verified authentication that cannot be forged.
+ * socket and verifies that the connecting process has the same UID as
+ * weave-compute. This provides kernel-verified authentication that cannot be forged.
  *
  * The function should be called immediately after accept() and before reading
  * any data from the client. On authentication failure, the caller should close
@@ -445,15 +445,15 @@ socket_error_t socket_auth_connection(int client_fd) {
         return SOCKET_ERR_AUTH_FAILED;
     }
 
-    /* Compare client UID with daemon UID */
-    uid_t daemon_uid = getuid();
+    /* Compare client UID with process UID */
+    uid_t process_uid = getuid();
 
-    if (cred.uid != daemon_uid) {
+    if (cred.uid != process_uid) {
         socket_log(SOCKET_LOG_DEBUG,
                    "auth rejected: client uid=%u pid=%u (expected uid=%u)",
                    (unsigned int)cred.uid,
                    (unsigned int)cred.pid,
-                   (unsigned int)daemon_uid);
+                   (unsigned int)process_uid);
         return SOCKET_ERR_AUTH_UID_MISMATCH;
     }
 
@@ -575,9 +575,9 @@ void socket_reset_shutdown(void) {
  * socket_connect - Connect to an existing Unix domain socket
  *
  * Connects to an existing Unix domain socket at the specified path.
- * This function is used by the daemon when running in "worker mode" where
- * the socket is created by the parent process (weave) rather than by the
- * daemon itself.
+ * This function is used by weave-compute when running in "worker mode" where
+ * the socket is created by the parent process (weave) rather than by
+ * weave-compute itself.
  *
  * @param socket_path  Path to the existing socket file
  * @param connected_fd Pointer to store the connected socket file descriptor
@@ -634,7 +634,7 @@ socket_error_t socket_connect(const char *socket_path, int *connected_fd) {
 }
 
 /**
- * socket_accept_loop - Main accept loop for the daemon
+ * socket_accept_loop - Main accept loop for weave-compute
  */
 socket_error_t socket_accept_loop(int listen_fd, socket_connection_handler_t handler) {
     if (listen_fd < 0) {

@@ -31,7 +31,7 @@ var (
 const (
 	// ollamaTimeout is the timeout for ollama validation request
 	ollamaTimeout = 5 * time.Second
-	// computeTimeout is the timeout for compute daemon connection test
+	// computeTimeout is the timeout for compute process connection test
 	computeTimeout = 5 * time.Second
 )
 
@@ -96,9 +96,9 @@ func ValidateOllama(baseURL string) error {
 	return fmt.Errorf("%w at %s: unexpected status code %d", ErrOllamaNotRunning, baseURL, resp.StatusCode)
 }
 
-// ValidateCompute checks if weave-compute daemon is running and accepting connections.
+// ValidateCompute checks if weave-compute process is running and accepting connections.
 // It checks that the socket file exists and can be connected to.
-// Returns nil if daemon is available, error otherwise.
+// Returns nil if compute process is available, error otherwise.
 func ValidateCompute() error {
 	socketPath, err := GetSocketPath()
 	if err != nil {
@@ -113,20 +113,20 @@ func ValidateCompute() error {
 		return fmt.Errorf("failed to check socket: %w", err)
 	}
 
-	// Try to connect to verify daemon is accepting connections
+	// Try to connect to verify compute process is accepting connections
 	ctx, cancel := context.WithTimeout(context.Background(), computeTimeout)
 	defer cancel()
 
 	conn, err := client.Connect(ctx)
 	if err != nil {
 		// Check for specific error types
-		if errors.Is(err, client.ErrDaemonNotRunning) {
+		if errors.Is(err, client.ErrComputeNotRunning) {
 			return fmt.Errorf("%w at %s", ErrComputeNotRunning, socketPath)
 		}
-		if errors.Is(err, client.ErrDaemonNotAccepting) {
+		if errors.Is(err, client.ErrComputeNotAccepting) {
 			return fmt.Errorf("%w", ErrComputeNotAccepting)
 		}
-		return fmt.Errorf("failed to connect to compute daemon: %w", err)
+		return fmt.Errorf("failed to connect to compute process: %w", err)
 	}
 	defer conn.Close()
 

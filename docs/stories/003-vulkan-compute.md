@@ -127,22 +127,22 @@ Evaluate Vulkan implementation options (raw Vulkan API, ncnn, vulkan-kompute, or
 Integrate stable-diffusion.cpp as a git submodule and create C wrapper interface. stable-diffusion.cpp handles SafeTensors parsing internally via its built-in support, so no separate SafeTensors parser is needed. Build system configured to compile with Vulkan backend enabled.
 
 **Implementation:**
-- Added stable-diffusion.cpp as git submodule at `compute-daemon/third_party/stable-diffusion.cpp`
-- Created C wrapper interface at `compute-daemon/include/weave/sd_wrapper.h`
-- Implemented wrapper at `compute-daemon/src/sd_wrapper.cpp` (C++ to bridge C99 daemon to C++ library)
+- Added stable-diffusion.cpp as git submodule at `compute/third_party/stable-diffusion.cpp`
+- Created C wrapper interface at `compute/include/weave/sd_wrapper.h`
+- Implemented wrapper at `compute/src/sd_wrapper.cpp` (C++ to bridge C99 daemon to C++ library)
 - Updated Makefile to build stable-diffusion.cpp with CMake (Vulkan backend enabled)
-- Created build script `compute-daemon/scripts/build-sd.sh`
-- Added basic integration test at `compute-daemon/test/test_sd_wrapper.c`
+- Created build script `compute/scripts/build-sd.sh`
+- Added basic integration test at `compute/test/test_sd_wrapper.c`
 
 **Files created:**
-- `compute-daemon/include/weave/sd_wrapper.h` - C API wrapper
-- `compute-daemon/src/sd_wrapper.cpp` - Wrapper implementation
-- `compute-daemon/scripts/build-sd.sh` - Build script for stable-diffusion.cpp
-- `compute-daemon/test/test_sd_wrapper.c` - Basic wrapper tests
+- `compute/include/weave/sd_wrapper.h` - C API wrapper
+- `compute/src/sd_wrapper.cpp` - Wrapper implementation
+- `compute/scripts/build-sd.sh` - Build script for stable-diffusion.cpp
+- `compute/test/test_sd_wrapper.c` - Basic wrapper tests
 
 **Files modified:**
-- `compute-daemon/Makefile` - Added stable-diffusion.cpp build integration
-- `compute-daemon/.gitignore` - Allowed third_party and scripts directories
+- `compute/Makefile` - Added stable-diffusion.cpp build integration
+- `compute/.gitignore` - Allowed third_party and scripts directories
 - `.gitignore` - Allowed .gitmodules
 
 **Testing:** Basic wrapper test verifies API correctness (config init, param init, null handling). Full model loading tests require actual model file and GPU (covered in later tasks).
@@ -171,16 +171,16 @@ No separate implementation files needed - the sd_wrapper provides the interface 
 **Status:** done
 **Depends on:** 002
 
-Created `compute-daemon/src/generate.c` with `process_generate_request()` function that:
+Created `compute/src/generate.c` with `process_generate_request()` function that:
 - Converts protocol parameters to SD wrapper format
 - Calls `sd_wrapper_generate()` to create image
 - Builds protocol response with image data
 - Maps SD wrapper errors to protocol status codes (400/500)
 
 **Files created:**
-- `compute-daemon/src/generate.c` - Pipeline implementation
-- `compute-daemon/include/weave/generate.h` - Public API
-- `compute-daemon/test/test_generate.c` - 18 unit tests with mock SD wrapper
+- `compute/src/generate.c` - Pipeline implementation
+- `compute/include/weave/generate.h` - Public API
+- `compute/test/test_generate.c` - 18 unit tests with mock SD wrapper
 
 **Testing:** All 18 unit tests pass. Tests cover valid requests, null handling, prompt validation, error mapping, and memory management.
 
@@ -191,7 +191,7 @@ Created `compute-daemon/src/generate.c` with `process_generate_request()` functi
 **Status:** done
 **Depends on:** 007
 
-Updated `compute-daemon/src/main.c` to wire everything together:
+Updated `compute/src/main.c` to wire everything together:
 - Model loaded at startup via `sd_wrapper_create()` with hardcoded path `./models/sd3.5_medium.safetensors`
 - `handle_connection()` implements full request/response flow:
   - Reads protocol header and payload from socket
@@ -203,7 +203,7 @@ Updated `compute-daemon/src/main.c` to wire everything together:
 - Graceful shutdown with model cleanup via `sd_wrapper_free()`
 
 **Files modified:**
-- `compute-daemon/src/main.c` - Complete daemon implementation
+- `compute/src/main.c` - Complete daemon implementation
 
 **Testing:** Code compiles cleanly with all warnings enabled. Requires actual GPU and model for integration testing.
 
@@ -217,8 +217,8 @@ Updated `compute-daemon/src/main.c` to wire everything together:
 Run generation benchmarks on RTX 4070 Super. Measure time for 1024x1024, 4 steps. Target: under 3 seconds. Measure VRAM usage. Document results. If performance target not met, profile and optimize hot paths.
 
 **Files created:**
-- `compute-daemon/bench/bench_generate.c` - Complete benchmark harness (394 lines)
-- `compute-daemon/bench/README.md` - Usage documentation
+- `compute/bench/bench_generate.c` - Complete benchmark harness (394 lines)
+- `compute/bench/README.md` - Usage documentation
 
 **Makefile updated:**
 - Added `make bench` target

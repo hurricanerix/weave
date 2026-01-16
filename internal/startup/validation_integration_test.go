@@ -82,7 +82,7 @@ func TestValidateCompute_Integration_SocketExists(t *testing.T) {
 
 	// Should fail because the socket exists but nothing is listening
 	if err == nil {
-		t.Fatal("ValidateCompute() should fail when socket exists but daemon not accepting connections")
+		t.Fatal("ValidateCompute() should fail when socket exists but compute process not accepting connections")
 	}
 
 	t.Logf("Error message (as expected): %v", err)

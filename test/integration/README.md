@@ -33,7 +33,7 @@ Request          |
 
 ### C Stub Generator
 
-Located at `compute-daemon/test/test_stub_generator.c`.
+Located at `compute/test/test_stub_generator.c`.
 
 This program:
 - Reads a binary protocol request from stdin
@@ -42,7 +42,7 @@ This program:
 - Encodes a response using the C encoder
 - Writes the response to stdout
 
-The stub generator uses the same protocol implementation that the actual compute daemon will use, ensuring the integration test validates the real code paths.
+The stub generator uses the same protocol implementation that weave-compute uses, ensuring the integration test validates the real code paths.
 
 ## Running Tests
 
@@ -50,7 +50,7 @@ The stub generator uses the same protocol implementation that the actual compute
 
 Build the C stub generator:
 ```bash
-cd compute-daemon
+cd compute
 make test-stub
 ```
 
@@ -134,14 +134,14 @@ If a test fails:
 
 1. Check the stub generator built successfully:
    ```bash
-   ls -la compute-daemon/test/test_stub_generator
+   ls -la compute/test/test_stub_generator
    ```
 
 2. Test the stub generator manually:
    ```bash
    # Create a simple test request and pipe it through
    go run ./test/integration/manual_request.go | \
-     ./compute-daemon/test/test_stub_generator | \
+     ./compute/test/test_stub_generator | \
      hexdump -C
    ```
 

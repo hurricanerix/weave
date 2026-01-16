@@ -1,4 +1,4 @@
-// Package client provides connectivity to the weave-compute daemon.
+// Package client provides connectivity to the weave-compute process.
 //
 // There are two connection modes:
 //
@@ -49,7 +49,7 @@ const (
 	// connectTimeout is the maximum time to wait for a connection to establish
 	connectTimeout = 5 * time.Second
 	// readTimeout is the maximum time to wait for reading from the socket
-	// Set to 65s to be slightly longer than daemon's 60s timeout to avoid race
+	// Set to 65s to be slightly longer than compute's 60s timeout to avoid race
 	readTimeout = 65 * time.Second
 	// maxPayloadSize is the maximum size of a response payload (10 MB)
 	maxPayloadSize = 10 * 1024 * 1024
@@ -58,23 +58,23 @@ const (
 var (
 	// ErrXDGNotSet is returned when XDG_RUNTIME_DIR environment variable is not set
 	ErrXDGNotSet = errors.New("XDG_RUNTIME_DIR not set")
-	// ErrDaemonNotRunning is returned when the socket file doesn't exist
-	ErrDaemonNotRunning = errors.New("weave-compute daemon not running (socket not found)")
-	// ErrDaemonNotAccepting is returned when connection is refused
-	ErrDaemonNotAccepting = errors.New("weave-compute daemon not accepting connections")
+	// ErrComputeNotRunning is returned when the socket file doesn't exist (compute process not running)
+	ErrComputeNotRunning = errors.New("weave-compute process not running (socket not found)")
+	// ErrComputeNotAccepting is returned when connection is refused (compute process not accepting)
+	ErrComputeNotAccepting = errors.New("weave-compute process not accepting connections")
 	// ErrConnectionTimeout is returned when connection attempt times out
-	ErrConnectionTimeout = errors.New("weave-compute daemon connection timeout")
+	ErrConnectionTimeout = errors.New("weave-compute process connection timeout")
 	// ErrReadTimeout is returned when reading from socket times out
-	ErrReadTimeout = errors.New("weave-compute daemon read timeout")
-	// ErrConnectionClosed is returned when the daemon closes the connection unexpectedly
-	ErrConnectionClosed = errors.New("weave-compute daemon closed connection")
+	ErrReadTimeout = errors.New("weave-compute process read timeout")
+	// ErrConnectionClosed is returned when the compute process closes the connection unexpectedly
+	ErrConnectionClosed = errors.New("weave-compute process closed connection")
 	// ErrAcceptTimeout is returned when accepting a connection times out
-	ErrAcceptTimeout = errors.New("timeout waiting for compute daemon connection")
+	ErrAcceptTimeout = errors.New("timeout waiting for compute process connection")
 	// ErrReaderDead is returned when the response reader goroutine has stopped
 	ErrReaderDead = errors.New("response reader goroutine has stopped")
 )
 
-// Conn represents a connection to the weave-compute daemon.
+// Conn represents a connection to the weave-compute process.
 //
 // For persistent connections (created via AcceptConnection), the connection
 // is multiplexed: multiple concurrent requests are sent over the same socket,
@@ -92,13 +92,13 @@ type Conn struct {
 	readerErr       error                  // Error from response reader (if any)
 }
 
-// Connect establishes a connection to the weave-compute daemon.
+// Connect establishes a connection to the weave-compute process.
 // It reads XDG_RUNTIME_DIR from the environment, constructs the socket path,
 // and connects with appropriate timeouts.
 //
 // Returns ErrXDGNotSet if XDG_RUNTIME_DIR is not set.
-// Returns ErrDaemonNotRunning if the socket file doesn't exist.
-// Returns ErrDaemonNotAccepting if the daemon refuses the connection.
+// Returns ErrComputeNotRunning if the socket file doesn't exist.
+// Returns ErrComputeNotAccepting if the compute process refuses the connection.
 // Returns ErrConnectionTimeout if the connection attempt times out.
 func Connect(ctx context.Context) (*Conn, error) {
 	socketPath, err := getSocketPath()
@@ -129,7 +129,7 @@ func Connect(ctx context.Context) (*Conn, error) {
 	return &Conn{conn: conn}, nil
 }
 
-// AcceptConnection accepts a single connection from the compute daemon.
+// AcceptConnection accepts a single connection from the compute process.
 // It blocks until a connection is accepted or the context is cancelled.
 //
 // The returned Conn supports request multiplexing: multiple goroutines can
@@ -190,7 +190,7 @@ func AcceptConnection(ctx context.Context, listener net.Listener) (*Conn, error)
 	return c, nil
 }
 
-// Close closes the connection to the daemon.
+// Close closes the connection to the compute process.
 // For multiplexed connections, this also stops the response reader goroutine.
 func (c *Conn) Close() error {
 	if c.conn == nil {
@@ -305,7 +305,7 @@ func (c *Conn) responseReader() {
 	}
 }
 
-// Send sends a protocol message to the daemon and reads the response.
+// Send sends a protocol message to the compute process and reads the response.
 //
 // For multiplexed connections (created via AcceptConnection), this method:
 // - Extracts the request ID from the request
@@ -465,7 +465,7 @@ func (c *Conn) sendDirect(ctx context.Context, request []byte) ([]byte, error) {
 	// Extract payload length from header (bytes 8-11, big-endian)
 	payloadLen := binary.BigEndian.Uint32(header[8:12])
 
-	// Validate payload length (protect against malicious daemon)
+	// Validate payload length (protect against malicious compute process)
 	if payloadLen > maxPayloadSize {
 		return nil, fmt.Errorf("payload too large: %d bytes (max %d)", payloadLen, maxPayloadSize)
 	}
@@ -518,17 +518,17 @@ func classifyDialError(err error) error {
 		if opErr.Err != nil {
 			// ENOENT - socket file doesn't exist
 			if errors.Is(opErr.Err, syscall.ENOENT) {
-				return ErrDaemonNotRunning
+				return ErrComputeNotRunning
 			}
-			// ECONNREFUSED - daemon not accepting connections
+			// ECONNREFUSED - compute process not accepting connections
 			if errors.Is(opErr.Err, syscall.ECONNREFUSED) {
-				return ErrDaemonNotAccepting
+				return ErrComputeNotAccepting
 			}
 		}
 	}
 
 	// Return the original error if we can't classify it
-	return fmt.Errorf("failed to connect to daemon: %w", err)
+	return fmt.Errorf("failed to connect to compute process: %w", err)
 }
 
 // classifyReadError converts low-level read errors into user-friendly errors
@@ -559,5 +559,5 @@ func classifyReadError(err error) error {
 	}
 
 	// Return wrapped error
-	return fmt.Errorf("failed to read from daemon: %w", err)
+	return fmt.Errorf("failed to read from compute process: %w", err)
 }

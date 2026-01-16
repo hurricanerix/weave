@@ -5,7 +5,7 @@
 #include <stdint.h>
 
 /**
- * Thin wrapper around stable-diffusion.cpp for weave compute daemon.
+ * Thin wrapper around stable-diffusion.cpp for weave-compute.
  *
  * This wrapper provides a simplified interface for SD 3.5 Medium inference
  * with Vulkan backend. It handles model loading, text encoding, and image

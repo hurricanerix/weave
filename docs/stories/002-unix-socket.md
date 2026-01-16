@@ -95,12 +95,12 @@ The daemon processes one request at a time for MVP (accepts connection, processe
 **Status:** done
 **Depends on:** none
 
-Create `compute-daemon/src/socket.c` with functions to create Unix socket at `$XDG_RUNTIME_DIR/weave/weave.sock`. Check environment variable, create directory with mode 0700, create socket with mode 0600. Implement cleanup on shutdown (unlink socket file). Handle stale socket detection (attempt connect, unlink if fails).
+Create `compute/src/socket.c` with functions to create Unix socket at `$XDG_RUNTIME_DIR/weave/weave.sock`. Check environment variable, create directory with mode 0700, create socket with mode 0600. Implement cleanup on shutdown (unlink socket file). Handle stale socket detection (attempt connect, unlink if fails).
 
 **Files to create:**
-- `compute-daemon/src/socket.c`
-- `compute-daemon/include/weave/socket.h`
-- `compute-daemon/test/test_socket.c`
+- `compute/src/socket.c`
+- `compute/include/weave/socket.h`
+- `compute/test/test_socket.c`
 
 **Testing:** Unit tests verify directory creation, socket creation, permissions. Test stale socket cleanup. Test error when XDG_RUNTIME_DIR unset.
 
@@ -114,8 +114,8 @@ Create `compute-daemon/src/socket.c` with functions to create Unix socket at `$X
 In socket.c, add auth_connection() function that calls getsockopt(SOL_SOCKET, SO_PEERCRED) immediately after accept(). Compare cred.uid with daemon's UID (getuid()). If mismatch, close socket and return error. Log rejection at DEBUG level with UID/PID. No output at INFO+ levels for rejections.
 
 **Files to modify:**
-- `compute-daemon/src/socket.c`
-- `compute-daemon/test/test_socket.c`
+- `compute/src/socket.c`
+- `compute/test/test_socket.c`
 
 **Testing:** Integration test simulates different UID (may need sudo or test shim). Verify rejection logged at DEBUG only. Verify matching UID is accepted.
 
@@ -129,8 +129,8 @@ In socket.c, add auth_connection() function that calls getsockopt(SOL_SOCKET, SO
 Create main accept loop in socket.c. Call accept(), authenticate via SO_PEERCRED, set read timeout (60s) and write timeout (5s) via setsockopt(SO_RCVTIMEO/SO_SNDTIMEO). Process one request at a time (serial for MVP). Handle SIGTERM/SIGINT for graceful shutdown.
 
 **Files to modify:**
-- `compute-daemon/src/socket.c`
-- `compute-daemon/src/main.c` (signal handlers)
+- `compute/src/socket.c`
+- `compute/src/main.c` (signal handlers)
 
 **Testing:** Integration test verifies timeout behavior. Test graceful shutdown on signal. Test serial request processing.
 
@@ -226,7 +226,7 @@ Test features:
 - Stale socket detection works correctly
 - XDG_RUNTIME_DIR errors handled on both client and daemon sides
 
-**Note:** Testing UID mismatch rejection in Go integration tests would require root access or complex credential manipulation, which is beyond the scope of standard integration tests. The SO_PEERCRED authentication behavior is verified in C unit tests (compute-daemon/test/test_socket.c)
+**Note:** Testing UID mismatch rejection in Go integration tests would require root access or complex credential manipulation, which is beyond the scope of standard integration tests. The SO_PEERCRED authentication behavior is verified in C unit tests (compute/test/test_socket.c)
 
 ---
 

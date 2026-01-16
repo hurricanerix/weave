@@ -102,7 +102,7 @@ Add the "build" section to electron/package.json with electron-builder configura
 **Status:** done
 **Depends on:** none
 
-Change the weave target in Makefile to output to build/weave instead of bin/weave. Update the path: "go build -o build/weave ./cmd/weave". Keep the compute target unchanged (it builds in compute-daemon/). This establishes the new build directory structure that electron-builder expects (per extraResources config in task 001). Do not change clean target yet (task 005 handles that).
+Change the weave target in Makefile to output to build/weave instead of bin/weave. Update the path: "go build -o build/weave ./cmd/weave". Keep the compute target unchanged (it builds in compute/). This establishes the new build directory structure that electron-builder expects (per extraResources config in task 001). Do not change clean target yet (task 005 handles that).
 
 ---
 
@@ -129,7 +129,7 @@ Add a new .PHONY target called "run" to the Makefile. This target depends on "el
 **Status:** done
 **Depends on:** 002, 003
 
-Update the clean target in Makefile to remove both build/ and electron/dist/ directories. Replace "rm -f bin/weave" with "rm -rf build/" to remove the new build directory. Add "rm -rf electron/dist/" to remove electron-builder output. Keep the compute-daemon clean call unchanged. After this, "make clean" removes all build artifacts including Electron packages.
+Update the clean target in Makefile to remove both build/ and electron/dist/ directories. Replace "rm -f bin/weave" with "rm -rf build/" to remove the new build directory. Add "rm -rf electron/dist/" to remove electron-builder output. Keep the compute clean call unchanged. After this, "make clean" removes all build artifacts including Electron packages.
 
 ---
 

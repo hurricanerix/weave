@@ -1,3 +1,3 @@
-[submodule "compute-daemon/third_party/stable-diffusion.cpp"]
-	path = compute-daemon/third_party/stable-diffusion.cpp
+[submodule "compute/third_party/stable-diffusion.cpp"]
+	path = compute/third_party/stable-diffusion.cpp
 	url = https://github.com/leejet/stable-diffusion.cpp.git

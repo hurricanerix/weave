@@ -1,5 +1,5 @@
 /**
- * Weave Compute Daemon - Request Processing Pipeline
+ * Weave Compute - Request Processing Pipeline
  *
  * This module bridges protocol requests and the SD wrapper, handling:
  * - Parameter conversion from protocol to SD wrapper format

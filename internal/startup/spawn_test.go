@@ -8,12 +8,12 @@ import (
 	"time"
 )
 
-// computeBinaryExists checks if the compute daemon binary exists in any of the expected locations
+// computeBinaryExists checks if the compute binary exists in any of the expected locations
 func computeBinaryExists() bool {
 	candidatePaths := []string{
-		"compute-daemon/weave-compute",
-		"../compute-daemon/weave-compute",
-		"../../compute-daemon/weave-compute",
+		"compute/weave-compute",
+		"../compute/weave-compute",
+		"../../compute/weave-compute",
 	}
 	for _, path := range candidatePaths {
 		if _, err := os.Stat(path); err == nil {
@@ -39,7 +39,7 @@ func TestSpawnCompute(t *testing.T) {
 				// This test requires the actual binary to exist
 				// Skip if not present (e.g., in CI without build)
 				if !computeBinaryExists() {
-					t.Skip("compute daemon binary not found, skipping spawn test")
+					t.Skip("compute binary not found, skipping spawn test")
 				}
 				return func() {}
 			},
@@ -53,9 +53,9 @@ func TestSpawnCompute(t *testing.T) {
 				var renamed []struct{ from, to string }
 
 				candidatePaths := []string{
-					"compute-daemon/weave-compute",
-					"../compute-daemon/weave-compute",
-					"../../compute-daemon/weave-compute",
+					"compute/weave-compute",
+					"../compute/weave-compute",
+					"../../compute/weave-compute",
 				}
 
 				for _, binaryPath := range candidatePaths {
@@ -75,14 +75,14 @@ func TestSpawnCompute(t *testing.T) {
 			},
 			wantErr:       true,
 			wantErrType:   ErrComputeBinaryNotFound,
-			wantErrSubstr: "compute daemon binary not found",
+			wantErrSubstr: "compute binary not found",
 		},
 		{
 			name:       "empty socket path",
 			socketPath: "",
 			setupBinary: func(t *testing.T) func() {
 				if !computeBinaryExists() {
-					t.Skip("compute daemon binary not found, skipping spawn test")
+					t.Skip("compute binary not found, skipping spawn test")
 				}
 				return func() {}
 			},
@@ -166,7 +166,7 @@ func TestSpawnCompute(t *testing.T) {
 func TestSpawnCompute_ProcessLifecycle(t *testing.T) {
 	// Skip if binary doesn't exist
 	if !computeBinaryExists() {
-		t.Skip("compute daemon binary not found, skipping lifecycle test")
+		t.Skip("compute binary not found, skipping lifecycle test")
 	}
 
 	// Create a temporary socket path (doesn't need to exist yet)
@@ -243,7 +243,7 @@ func TestSpawnCompute_ProcessLifecycle(t *testing.T) {
 func TestSpawnCompute_Arguments(t *testing.T) {
 	// Skip if binary doesn't exist
 	if !computeBinaryExists() {
-		t.Skip("compute daemon binary not found, skipping arguments test")
+		t.Skip("compute binary not found, skipping arguments test")
 	}
 
 	tmpDir := t.TempDir()
@@ -297,7 +297,7 @@ func TestSpawnCompute_Arguments(t *testing.T) {
 func TestSpawnCompute_StdioSetup(t *testing.T) {
 	// Skip if binary doesn't exist
 	if !computeBinaryExists() {
-		t.Skip("compute daemon binary not found, skipping stdio test")
+		t.Skip("compute binary not found, skipping stdio test")
 	}
 
 	tmpDir := t.TempDir()

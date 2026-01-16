@@ -7,7 +7,7 @@
  * 3. Closing the write end of the pipe to simulate parent death
  * 4. Verifying that socket_request_shutdown() was called
  *
- * This test does NOT require a full compute-daemon binary or GPU/model.
+ * This test does NOT require a full weave-compute binary or GPU/model.
  */
 
 #include <errno.h>

@@ -23,7 +23,7 @@ const (
 	computeSigkillTimeout = 500 * time.Millisecond
 )
 
-// CleanupCompute terminates the compute daemon process and cleans up resources.
+// CleanupCompute terminates the compute process and cleans up resources.
 // It performs the following steps:
 //  1. Close stdin pipe to signal compute to shutdown
 //  2. Wait up to 1 second for graceful exit

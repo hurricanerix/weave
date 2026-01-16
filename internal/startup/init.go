@@ -32,10 +32,10 @@ var (
 	ErrXDGNotAbsolute = errors.New("XDG_RUNTIME_DIR must be an absolute path")
 	// ErrXDGResolvesToRelative is returned when XDG_RUNTIME_DIR resolves to a relative path after cleaning
 	ErrXDGResolvesToRelative = errors.New("XDG_RUNTIME_DIR resolves to relative path")
-	// ErrComputeBinaryNotFound is returned when the compute daemon binary is not found
-	ErrComputeBinaryNotFound = errors.New("compute daemon binary not found")
-	// ErrComputeSpawnFailed is returned when spawning the compute daemon fails
-	ErrComputeSpawnFailed = errors.New("failed to spawn compute daemon")
+	// ErrComputeBinaryNotFound is returned when the compute binary is not found
+	ErrComputeBinaryNotFound = errors.New("compute binary not found")
+	// ErrComputeSpawnFailed is returned when spawning the compute process fails
+	ErrComputeSpawnFailed = errors.New("failed to spawn compute process")
 )
 
 // Components holds all initialized application components
@@ -52,7 +52,7 @@ type Components struct {
 	ImageStorage      *image.Storage
 }
 
-// CreateSocket creates the Unix socket for compute daemon communication.
+// CreateSocket creates the Unix socket for weave-compute communication.
 // It constructs the socket path from XDG_RUNTIME_DIR, creates the socket
 // directory with mode 0700 if it doesn't exist, removes any existing socket
 // file, and creates a listening Unix socket.
@@ -113,7 +113,7 @@ func CreateSocket() (net.Listener, string, error) {
 	return listener, socketPath, nil
 }
 
-// SpawnCompute spawns the compute daemon as a child process.
+// SpawnCompute spawns the compute process as a child process.
 // It passes the socket path via the --socket-path CLI argument and sets up
 // stdio pipes for lifecycle monitoring and logging.
 //
@@ -130,17 +130,17 @@ func CreateSocket() (net.Listener, string, error) {
 //
 // Returns the *exec.Cmd and stdin WriteCloser, or error if spawning fails.
 func SpawnCompute(socketPath string) (*exec.Cmd, io.WriteCloser, error) {
-	// Find the compute daemon binary
+	// Find the compute binary
 	// Try multiple locations to handle both runtime and test contexts
 	candidatePaths := []string{
-		"compute-daemon/weave-compute",       // From project root
-		"../compute-daemon/weave-compute",    // From cmd/weave
-		"../../compute-daemon/weave-compute", // From internal/startup (tests)
-		"/usr/local/bin/weave-compute",       // System install
-		"/usr/bin/weave-compute",             // System install
+		"compute/weave-compute",        // From project root
+		"../compute/weave-compute",     // From cmd/weave
+		"../../compute/weave-compute",  // From internal/startup (tests)
+		"/usr/local/bin/weave-compute", // System install
+		"/usr/bin/weave-compute",       // System install
 	}
 
-	// Also check for compute daemon next to weave executable (packaged Electron app)
+	// Also check for compute binary next to weave executable (packaged Electron app)
 	if exePath, err := os.Executable(); err == nil {
 		exeDir := filepath.Dir(exePath)
 		siblingPath := filepath.Join(exeDir, "weave-compute")
@@ -225,7 +225,7 @@ func CreateWebServer(cfg *config.Config, ollamaClient *ollama.Client, sessionMan
 //   - ctx: Context for component initialization
 //   - cfg: Configuration
 //   - logger: Logger instance
-//   - computeClient: Connection to compute daemon (from AcceptConnection)
+//   - computeClient: Connection to compute process (from AcceptConnection)
 func InitializeAll(ctx context.Context, cfg *config.Config, logger *logging.Logger, computeClient *client.Conn) (*Components, error) {
 	logger.Debug("Initializing components")
 

@@ -22,11 +22,11 @@
     },
     "extraResources": [
       {
-        "from": "../build/weave",
-        "to": "weave"
+        "from": "../build/weave-backend",
+        "to": "weave-backend"
       },
       {
-        "from": "../compute-daemon/weave-compute",
+        "from": "../compute/weave-compute",
         "to": "weave-compute"
       }
     ]

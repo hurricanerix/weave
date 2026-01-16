@@ -78,7 +78,7 @@ func run() int {
 	}
 	logger.Info("Connected to ollama at %s (model: %s)", cfg.OllamaURL, cfg.OllamaModel)
 
-	// Create socket for compute daemon communication
+	// Create socket for weave-compute communication
 	logger.Debug("Creating socket for weave-compute...")
 	listener, socketPath, err := startup.CreateSocket()
 	if err != nil {
@@ -89,20 +89,20 @@ func run() int {
 	defer listener.Close()
 	logger.Info("Created socket at %s", socketPath)
 
-	// Spawn compute daemon
-	logger.Debug("Spawning weave-compute daemon...")
+	// Spawn compute process
+	logger.Debug("Spawning weave-compute process...")
 	computeProcess, computeStdin, err := startup.SpawnCompute(socketPath)
 	if err != nil {
-		logger.Error("Failed to spawn compute daemon: %v", err)
-		fmt.Fprintf(os.Stderr, "Error: failed to spawn compute daemon: %v\n", err)
-		fmt.Fprintf(os.Stderr, "\nEnsure the compute daemon binary is available.\n")
+		logger.Error("Failed to spawn compute process: %v", err)
+		fmt.Fprintf(os.Stderr, "Error: failed to spawn compute process: %v\n", err)
+		fmt.Fprintf(os.Stderr, "\nEnsure the compute binary is available.\n")
 		fmt.Fprintf(os.Stderr, "See docs/DEVELOPMENT.md for build instructions.\n")
 		return 1
 	}
-	logger.Info("Spawned weave-compute daemon (PID: %d)", computeProcess.Process.Pid)
+	logger.Info("Spawned weave-compute process (PID: %d)", computeProcess.Process.Pid)
 
-	// Accept connection from compute daemon
-	logger.Debug("Waiting for compute daemon to connect...")
+	// Accept connection from compute process
+	logger.Debug("Waiting for compute process to connect...")
 
 	// Create cancellable context for server lifecycle
 	// This context will be cancelled by signal handlers or stdin EOF detection
@@ -122,7 +122,7 @@ func run() int {
 		fmt.Fprintf(os.Stderr, "Error: failed to accept compute connection: %v\n", err)
 		return 1
 	}
-	logger.Info("Accepted connection from weave-compute daemon")
+	logger.Info("Accepted connection from weave-compute process")
 
 	// Initialize all components
 	logger.Debug("Initializing components...")

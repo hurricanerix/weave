@@ -12,7 +12,7 @@ This project uses **component-scoped .gitignore files**. Each component manages 
 | .gitignore Location | Scope | File Types |
 |---------------------|-------|------------|
 | `/.gitignore` | Go project (root) | `*.go`, `go.mod`, `go.sum`, `*.html`, `*.css`, `*.ttf` |
-| `/compute-daemon/.gitignore` | C daemon | `*.c`, `*.cpp`, `*.h`, `*.cu`, `*.o`, `*.so` |
+| `/compute/.gitignore` | C daemon | `*.c`, `*.cpp`, `*.h`, `*.cu`, `*.o`, `*.so` |
 | `/electron/.gitignore` | Electron app | `*.js`, `*.json`, `*.html`, `*.css`, `node_modules/` |
 | `/packaging/.gitignore` | Packaging scripts | `*.yml`, `*.desktop`, `*.sh`, `*.png` |
 
@@ -20,7 +20,7 @@ This project uses **component-scoped .gitignore files**. Each component manages 
 
 ### Never cross boundaries
 
-If you're working on C code in `compute-daemon/`, add ignores to `compute-daemon/.gitignore`, NOT the root.
+If you're working on C code in `compute/`, add ignores to `compute/.gitignore`, NOT the root.
 
 If you're working on Go code, add ignores to the root `.gitignore`.
 
@@ -37,8 +37,8 @@ If you're working on Go code, add ignores to the root `.gitignore`.
 # WRONG - Adding to root
 echo "*.o" >> .gitignore
 
-# RIGHT - Adding to compute-daemon
-echo "*.o" >> compute-daemon/.gitignore
+# RIGHT - Adding to compute
+echo "*.o" >> compute/.gitignore
 ```
 
 **Adding a Go binary:**
@@ -71,6 +71,6 @@ The root `.gitignore` uses an **allowlist pattern** (ignore everything, then exp
 Ask: "Which component owns this file type?"
 
 - `.go` files → root
-- `.c`, `.h`, `.o` files → compute-daemon
+- `.c`, `.h`, `.o` files → compute
 - `.js`, `.json`, `node_modules` → electron
 - `.yml`, `.desktop` → packaging

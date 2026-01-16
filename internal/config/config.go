@@ -233,7 +233,7 @@ EXAMPLES:
 
 REQUIREMENTS:
     - ollama must be running (default: http://localhost:11434)
-    - weave-compute daemon must be running
+    - weave-compute process must be running
 
 For more information, see docs/DEVELOPMENT.md
 `,

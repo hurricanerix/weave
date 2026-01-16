@@ -1293,7 +1293,7 @@ func TestServer_HandleGenerateWithSettings(t *testing.T) {
 
 			server.handleGenerate(w, req)
 
-			// Should return OK status (daemon unavailable is expected, but parsing should work)
+			// Should return OK status (compute process unavailable is expected, but parsing should work)
 			if w.Code != http.StatusOK && w.Code != http.StatusServiceUnavailable {
 				t.Errorf("status code = %d, want %d or %d", w.Code, http.StatusOK, http.StatusServiceUnavailable)
 			}
