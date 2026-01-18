@@ -46,10 +46,10 @@
 /**
  * Model paths (hardcoded for MVP).
  */
-#define MODEL_PATH "./models/sd3.5_medium.safetensors"
-#define CLIP_L_PATH "./models/clip_l.safetensors"
-#define CLIP_G_PATH "./models/clip_g.safetensors"
-#define T5XXL_PATH "./models/t5xxl_fp8_e4m3fn.safetensors"
+#define MODEL_PATH "./config/models/sd3.5_medium.safetensors"
+#define CLIP_L_PATH "./config/models/clip_l.safetensors"
+#define CLIP_G_PATH "./config/models/clip_g.safetensors"
+#define T5XXL_PATH "./config/models/t5xxl_fp8_e4m3fn.safetensors"
 
 /**
  * Global socket file descriptor for cleanup in main thread only.

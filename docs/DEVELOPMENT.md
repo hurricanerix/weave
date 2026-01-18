@@ -1132,7 +1132,7 @@ These are being actively addressed by the project and mostly affect SD 3.5 Large
   - Main model: `stabilityai/stable-diffusion-3.5-medium`
   - Files: `sd3.5_medium.safetensors`, `clip_l.safetensors`, `clip_g.safetensors`, `t5xxl_fp16.safetensors`
 - Load SafeTensors directly or convert to GGUF for quantization
-- Hardcoded path: `./models/sd3.5_medium.safetensors`
+- Hardcoded path: `./config/models/sd3.5_medium.safetensors`
 
 #### Phase 3: Text Encoding
 - Load CLIP-L, CLIP-G, and T5-XXL encoders

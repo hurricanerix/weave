@@ -35,8 +35,11 @@ SOURCES = $(wildcard $(SRC_DIR)/*.c)
 TEST_SOURCES = $(wildcard $(TEST_DIR)/*.c)
 BENCH_SOURCES = $(wildcard $(BENCH_DIR)/*.c)
 
+# Binary output directory
+BIN_DIR = bin
+
 .PHONY: all
-all: weave-compute test
+all: $(BIN_DIR)/weave-compute test
 
 # Build stable-diffusion.cpp library
 $(SD_LIB): $(SD_DIR)/CMakeLists.txt
@@ -62,8 +65,12 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 $(BUILD_DIR)/sd_wrapper.o: $(SRC_DIR)/sd_wrapper.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $(SD_INCLUDES) -c $< -o $@
 
+# Create bin directory
+$(BIN_DIR):
+	mkdir -p $(BIN_DIR)
+
 # Main daemon binary (link with g++ for C++ standard library)
-weave-compute: $(DAEMON_C_OBJS) $(DAEMON_CXX_OBJS) $(SD_LIB)
+$(BIN_DIR)/weave-compute: $(DAEMON_C_OBJS) $(DAEMON_CXX_OBJS) $(SD_LIB) | $(BIN_DIR)
 	$(CXX) -o $@ $(DAEMON_C_OBJS) $(DAEMON_CXX_OBJS) \
 		$(SD_LIB) $(SD_GGML_LIBS) $(LDFLAGS) $(VULKAN_LDFLAGS)
 
@@ -137,7 +144,7 @@ $(BENCH_DIR)/bench_generate: $(BUILD_DIR)/bench_generate.o $(BUILD_DIR)/sd_wrapp
 
 .PHONY: clean
 clean:
-	rm -f weave-compute
+	rm -rf $(BIN_DIR)
 	rm -rf $(BUILD_DIR)
 	rm -f $(TEST_DIR)/test_protocol $(TEST_DIR)/test_protocol_asan $(TEST_DIR)/test_stub_generator
 	rm -f $(TEST_DIR)/test_socket $(TEST_DIR)/test_socket_asan
@@ -206,7 +213,7 @@ stress-test: fuzz/stress_test fuzz/corpus
 help:
 	@echo "Available targets:"
 	@echo "  make all             - Build daemon and run tests (default)"
-	@echo "  make weave-compute   - Build daemon binary"
+	@echo "  make bin/weave-compute - Build daemon binary"
 	@echo "  make stable-diffusion - Build stable-diffusion.cpp library"
 	@echo "  make test            - Build and run unit tests"
 	@echo "  make test-asan       - Build and run tests with AddressSanitizer/UBSan"

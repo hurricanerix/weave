@@ -10,7 +10,8 @@ electron: backend compute
 	cd electron && npm run build
 
 backend:
-	cd backend && go build -o ../build/weave-backend ./cmd/weave
+	mkdir -p backend/bin
+	cd backend && go build -o bin/weave-backend ./cmd/weave
 
 compute:
 	$(MAKE) -C compute
@@ -22,8 +23,7 @@ flatpak-install: flatpak
 	flatpak-builder --user --install --force-clean build-dir packaging/flatpak/com.placeholder.weave.yml
 
 clean:
-	rm -rf bin/
-	rm -rf build/
+	rm -rf backend/bin/
 	rm -rf electron/dist/
 	rm -rf build-dir/
 	$(MAKE) -C compute clean

@@ -23,7 +23,7 @@ A working Vulkan compute core where:
 
 ### Model Loading
 
-- [x] Daemon loads SD 3.5 Medium model from hardcoded path `./models/sd3.5_medium.safetensors`
+- [x] Daemon loads SD 3.5 Medium model from hardcoded path `./config/models/sd3.5_medium.safetensors`
 - [x] If model file is missing, daemon exits with clear error message
 - [x] If model file is corrupted, daemon exits with clear error message
 - [x] Model weights loaded into VRAM using Vulkan memory management
@@ -72,7 +72,7 @@ A working Vulkan compute core where:
 ### Documentation
 
 - [x] `docs/DEVELOPMENT.md` includes section on downloading SD 3.5 Medium from Hugging Face
-- [x] `docs/DEVELOPMENT.md` documents required path: `./models/sd3.5_medium.safetensors`
+- [x] `docs/DEVELOPMENT.md` documents required path: `./config/models/sd3.5_medium.safetensors`
 - [x] `docs/DEVELOPMENT.md` provides exact Hugging Face URL and file to download
 - [x] `docs/DEVELOPMENT.md` documents expected VRAM usage (~6GB VRAM, ~10GB RAM)
 - [x] `docs/DEVELOPMENT.md` documents Vulkan driver requirements (minimum version, how to verify)
@@ -192,7 +192,7 @@ Created `compute/src/generate.c` with `process_generate_request()` function that
 **Depends on:** 007
 
 Updated `compute/src/main.c` to wire everything together:
-- Model loaded at startup via `sd_wrapper_create()` with hardcoded path `./models/sd3.5_medium.safetensors`
+- Model loaded at startup via `sd_wrapper_create()` with hardcoded path `./config/models/sd3.5_medium.safetensors`
 - `handle_connection()` implements full request/response flow:
   - Reads protocol header and payload from socket
   - Validates magic number early
@@ -294,7 +294,7 @@ All required documentation was added as part of Task 001's Vulkan Backend sectio
 
 **Documentation present:**
 - Model download instructions from Hugging Face (`stabilityai/stable-diffusion-3.5-medium`)
-- Required path: `./models/sd3.5_medium.safetensors` (matches hardcoded path in main.c)
+- Required path: `./config/models/sd3.5_medium.safetensors` (matches hardcoded path in main.c)
 - VRAM usage documented: ~10GB (9.9GB model + overhead)
 - Vulkan 1.2 minimum version with verification commands
 - Installation instructions for NVIDIA, AMD, Intel drivers
