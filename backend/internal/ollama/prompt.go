@@ -3,19 +3,13 @@ package ollama
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 )
 
 // Parsing errors returned by parseResponse.
 var (
-	// ErrMissingDelimiter indicates the response does not contain the ResponseDelimiter.
-	// This means the LLM did not follow the required format of ending with "---\n{JSON}".
-	ErrMissingDelimiter = errors.New("response missing delimiter")
-
-	// ErrInvalidJSON indicates the JSON portion after the delimiter could not be parsed.
-	// This means the LLM included the delimiter but the JSON is malformed.
-	ErrInvalidJSON = errors.New("invalid JSON after delimiter")
-
 	// ErrMissingFields indicates the JSON is valid but missing required fields.
 	// All required fields (prompt, steps, cfg, seed) must be present in the metadata.
 	ErrMissingFields = errors.New("JSON missing required fields")
@@ -23,131 +17,243 @@ var (
 
 // parseResponse parses a complete LLM response into conversational text and metadata.
 //
-// The LLM is required to format responses as:
+// This function uses function calling to extract structured generation parameters.
+// The LLM calls the update_generation function with these parameters:
+//   - prompt (string): Image generation prompt
+//   - steps (integer): Inference steps (1-100)
+//   - cfg (number): Classifier-free guidance scale (0-20)
+//   - seed (integer): Random seed (-1 for random, 0+ for deterministic)
+//   - generate_image (boolean): Whether to trigger automatic generation
 //
-//	[conversational text]
-//	---
-//	{"prompt": "...", "steps": N, "cfg": X.X, "seed": N}
+// The response contains conversational text and optionally a __TOOL_CALLS__ marker
+// with JSON tool call data. This function extracts both the conversational text
+// (for display in chat UI) and the structured metadata (for generation).
 //
-// WHY THIS FORMAT:
-// This structured format allows us to:
-// 1. Display conversational text in the chat UI (user sees friendly dialog)
-// 2. Extract structured metadata (prompt, ready flag, generation settings) for automation
-// 3. Detect format errors reliably (missing delimiter or invalid JSON)
-//
-// WHY THREE ERROR TYPES:
-//
-// ErrMissingDelimiter - The LLM didn't include "---" in its response.
-// This usually means the LLM forgot the format or didn't understand the
-// system prompt. Recoverable via Level 1 retry (format reminder).
-//
-// ErrInvalidJSON - The LLM included "---" but the JSON is malformed.
-// This means the LLM attempted to follow the format but made a syntax error
-// (missing quote, invalid escape, etc.). Recoverable via Level 1 retry.
-//
-// ErrMissingFields - The JSON is valid but missing required fields.
-// This means the LLM generated syntactically correct JSON but didn't include
-// all required fields (prompt, steps, cfg, seed). This violates the schema.
-// Recoverable via retry.
-//
-// WHY SEARCH FROM START:
-// We search for the delimiter from the start of the response because some
-// LLMs generate multiple conversation turns with multiple "---" delimiters.
-// The FIRST occurrence gives us the agent's actual response, not hallucinated
-// continuations. If conversational text contains "---" before the delimiter,
-// the LLM should escape it or use a different format.
-//
-// WHY VALIDATE FIELD PRESENCE:
-// Go's json.Unmarshal sets missing fields to zero values (empty string, 0).
-// We need to distinguish between:
-// - {"prompt": "", "steps": 0, "cfg": 0.0, "seed": 0} - Valid (explicit zero values)
-// - {} - Invalid (missing required fields)
-//
-// Without the map check, both would unmarshal successfully but have different
-// semantics. The map check ensures the LLM explicitly provided all four fields.
-func parseResponse(response string) (string, LLMMetadata, error) {
-	// Find the delimiter that separates conversational text from JSON.
-	// WHY SPLIT BY NEWLINES: The delimiter must be on its own line to avoid
-	// false matches. For example, "What do you think of this---no really?" should
-	// not be detected as a delimiter. Only "---" as a standalone line counts.
-	lines := strings.Split(response, "\n")
-	delimiterLineIndex := -1
+// Returns:
+//   - Conversational text (displayed to user)
+//   - LLMMetadata with generation parameters (zero values if no tool call)
+//   - hasToolCall indicates if the LLM called a function
+//   - Error only if tool calls are malformed (not if missing)
+func parseResponse(response string) (string, LLMMetadata, bool, error) {
+	// Extract tool calls from response
+	conversationalText, toolCalls, hasToolCalls := extractToolCallsFromResponse(response)
+	if !hasToolCalls {
+		// No tool calls - this is valid for pure conversational responses
+		// Return the full response as conversational text with empty metadata
+		return response, LLMMetadata{}, false, nil
+	}
 
-	// Find the FIRST line that is exactly the delimiter (with whitespace trimmed).
-	// WHY SEARCH FROM START: The LLM sometimes generates multiple conversation turns
-	// in a single response, with multiple "---" delimiters. For example:
-	//
-	//   "What style of cat?
-	//    ---
-	//    {"prompt": "", ...}
-	//
-	//    Given "tabby"
-	//    Perfect!
-	//    ---
-	//    {"prompt": "tabby cat", ...}"
-	//
-	// The system prompt explicitly forbids this ("Generate ONLY your response"),
-	// but some models do it anyway. Using the FIRST delimiter ensures we get
-	// the agent's actual response, not the hallucinated continuation.
-	for i := 0; i < len(lines); i++ {
-		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == ResponseDelimiter {
-			delimiterLineIndex = i
+	// Parse tool calls to extract metadata
+	metadata, err := parseToolCalls(toolCalls)
+	if err != nil {
+		return "", LLMMetadata{}, false, fmt.Errorf("failed to parse tool calls: %w", err)
+	}
+
+	return conversationalText, metadata, true, nil
+}
+
+// parseToolCalls extracts LLMMetadata from a tool call response.
+// This function parses the tool call arguments to extract generation parameters
+// using the model's native function calling capability.
+//
+// WHY SEPARATE FUNCTION:
+// This isolates tool call parsing logic, making it easier to test and maintain.
+//
+// TOOL CALL FORMAT:
+// The LLM calls the "update_generation" function with these arguments:
+//
+//	{
+//	  "prompt": "...",
+//	  "steps": N,
+//	  "cfg": X.X,
+//	  "seed": N,
+//	  "generate_image": true/false
+//	}
+//
+// This matches the LLMMetadata struct, so we can unmarshal directly.
+func parseToolCalls(toolCalls []ToolCall) (LLMMetadata, error) {
+	if len(toolCalls) == 0 {
+		return LLMMetadata{}, errors.New("no tool calls found")
+	}
+
+	// Look for the update_generation function call.
+	// WHY SEARCH: The LLM might call multiple functions in the future.
+	// We specifically need the update_generation call for image generation.
+	var updateGenCall *ToolCall
+	for i := range toolCalls {
+		if toolCalls[i].Function.Name == "update_generation" {
+			updateGenCall = &toolCalls[i]
 			break
 		}
 	}
 
-	if delimiterLineIndex == -1 {
-		// No delimiter found - LLM didn't follow format
-		// WHY RETURN ERROR: Without a delimiter, we can't reliably separate
-		// conversational text from JSON. The entire response might be text,
-		// or it might be malformed JSON, or both mixed together.
-		return "", LLMMetadata{}, ErrMissingDelimiter
+	if updateGenCall == nil {
+		return LLMMetadata{}, errors.New("update_generation tool call not found")
 	}
 
-	// Split into conversational text (before delimiter) and JSON (after delimiter)
-	conversationalText := strings.TrimSpace(strings.Join(lines[:delimiterLineIndex], "\n"))
-	jsonPortion := strings.TrimSpace(strings.Join(lines[delimiterLineIndex+1:], "\n"))
+	// Parse the function arguments into LLMMetadata.
+	// WHY TWO-STEP UNMARSHAL: Ollama sends Arguments as a JSON-encoded string.
+	// For example: Arguments = `"{\"prompt\":\"a cat\",\"steps\":28,...}"` (a string).
+	// We must first decode it as a string, then parse that string as JSON.
+	//
+	// WHY LENIENT PARSING: LLMs don't always respect JSON schema types.
+	// They may return "4.3" (string) instead of 4.3 (number), or "true" (string)
+	// instead of true (bool). We use rawLLMMetadata to accept any type, then
+	// convert to proper types using parseRawMetadata().
+	//
+	// Step 1: Decode the JSON string to get the actual JSON content
+	var argsJSON string
+	if err := json.Unmarshal(updateGenCall.Function.Arguments, &argsJSON); err != nil {
+		// If unmarshaling as string fails, try unmarshaling directly as object
+		// (in case ollama's API changes or for testing with direct JSON objects)
+		var rawMeta rawLLMMetadata
+		if err2 := json.Unmarshal(updateGenCall.Function.Arguments, &rawMeta); err2 != nil {
+			return LLMMetadata{}, fmt.Errorf("failed to parse tool call arguments: %w", err2)
+		}
+		// Validate required fields are present
+		if rawMeta.Prompt == nil || rawMeta.Steps == nil || rawMeta.CFG == nil || rawMeta.Seed == nil {
+			return LLMMetadata{}, ErrMissingFields
+		}
+		// Convert raw metadata to proper types
+		return parseRawMetadata(rawMeta)
+	}
 
-	// Unmarshal the JSON into metadata struct
-	// WHY CHECK UNMARSHAL ERROR: The LLM might have included the delimiter but
-	// written invalid JSON syntax: missing quotes, trailing commas, etc.
+	// Step 2: Parse the JSON string using lenient rawLLMMetadata
+	var rawMeta rawLLMMetadata
+	if err := json.Unmarshal([]byte(argsJSON), &rawMeta); err != nil {
+		return LLMMetadata{}, fmt.Errorf("failed to parse tool call arguments JSON: %w", err)
+	}
+
+	// Validate that required fields are present.
+	// WHY VALIDATE: Even with function calling, the LLM might omit required fields.
+	// We must check to ensure we have complete metadata.
+	if rawMeta.Prompt == nil || rawMeta.Steps == nil || rawMeta.CFG == nil || rawMeta.Seed == nil {
+		return LLMMetadata{}, ErrMissingFields
+	}
+
+	// Convert raw metadata to proper types
+	return parseRawMetadata(rawMeta)
+}
+
+// rawLLMMetadata is a lenient intermediate struct for parsing LLM responses.
+// LLMs don't always respect JSON schema types - they may return "true" instead
+// of true, or "4.3" instead of 4.3. This struct accepts any JSON value type
+// and then converts to proper types using parseRawMetadata().
+type rawLLMMetadata struct {
+	Prompt        interface{} `json:"prompt"`
+	GenerateImage interface{} `json:"generate_image"`
+	Steps         interface{} `json:"steps"`
+	CFG           interface{} `json:"cfg"`
+	Seed          interface{} `json:"seed"`
+}
+
+// parseRawMetadata converts a rawLLMMetadata with potentially stringified values
+// into a proper LLMMetadata with correct types.
+func parseRawMetadata(raw rawLLMMetadata) (LLMMetadata, error) {
 	var metadata LLMMetadata
-	if err := json.Unmarshal([]byte(jsonPortion), &metadata); err != nil {
-		return "", LLMMetadata{}, ErrInvalidJSON
+
+	// Prompt is always a string
+	if raw.Prompt != nil {
+		metadata.Prompt = fmt.Sprintf("%v", raw.Prompt)
 	}
 
-	// Validate that the JSON contains the required fields.
-	// WHY DOUBLE UNMARSHAL: Go's json.Unmarshal sets missing fields to zero values.
-	// We need to distinguish between:
-	// - {"prompt": "", "ready": false, "steps": 0, "cfg": 0.0, "seed": 0} - Valid (LLM explicitly provided fields)
-	// - {"other": "data"} - Invalid (missing required fields, but unmarshals to zero values)
-	//
-	// The map check tells us which fields were actually present in the JSON,
-	// not just which fields ended up with zero values after unmarshaling.
-	var rawMap map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonPortion), &rawMap); err != nil {
-		// This should not happen since we already unmarshaled successfully above,
-		// but handle it defensively
-		return "", LLMMetadata{}, ErrInvalidJSON
+	// GenerateImage: accept bool or string "true"/"false"
+	if raw.GenerateImage != nil {
+		switch v := raw.GenerateImage.(type) {
+		case bool:
+			metadata.GenerateImage = v
+		case string:
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return LLMMetadata{}, fmt.Errorf("invalid generate_image value: %q", v)
+			}
+			metadata.GenerateImage = b
+		default:
+			return LLMMetadata{}, fmt.Errorf("invalid generate_image type: %T", v)
+		}
 	}
 
-	// Check that all required fields are present in the JSON
-	// WHY REQUIRE ALL FIELDS: The "prompt" field contains the generation prompt
-	// (empty if still asking questions). The "steps", "cfg", and "seed" fields specify
-	// generation settings. All four fields are required for the system to function.
-	// Missing any field means the LLM didn't follow the schema.
-	//
-	// NOTE: "generate_image" is optional and defaults to false if missing. This provides
-	// backward compatibility and graceful degradation if the LLM omits the field.
-	// The absence of "generate_image" is equivalent to "generate_image": false.
-	_, hasPrompt := rawMap["prompt"]
-	_, hasSteps := rawMap["steps"]
-	_, hasCFG := rawMap["cfg"]
-	_, hasSeed := rawMap["seed"]
-	if !hasPrompt || !hasSteps || !hasCFG || !hasSeed {
-		return "", LLMMetadata{}, ErrMissingFields
+	// Steps: accept int or string
+	if raw.Steps != nil {
+		switch v := raw.Steps.(type) {
+		case float64:
+			metadata.Steps = int(v)
+		case string:
+			i, err := strconv.Atoi(v)
+			if err != nil {
+				return LLMMetadata{}, fmt.Errorf("invalid steps value: %q", v)
+			}
+			metadata.Steps = i
+		default:
+			return LLMMetadata{}, fmt.Errorf("invalid steps type: %T", v)
+		}
 	}
 
-	return conversationalText, metadata, nil
+	// CFG: accept float64 or string
+	if raw.CFG != nil {
+		switch v := raw.CFG.(type) {
+		case float64:
+			metadata.CFG = v
+		case string:
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return LLMMetadata{}, fmt.Errorf("invalid cfg value: %q", v)
+			}
+			metadata.CFG = f
+		default:
+			return LLMMetadata{}, fmt.Errorf("invalid cfg type: %T", v)
+		}
+	}
+
+	// Seed: accept int64 or string
+	if raw.Seed != nil {
+		switch v := raw.Seed.(type) {
+		case float64:
+			metadata.Seed = int64(v)
+		case string:
+			i, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				return LLMMetadata{}, fmt.Errorf("invalid seed value: %q", v)
+			}
+			metadata.Seed = i
+		default:
+			return LLMMetadata{}, fmt.Errorf("invalid seed type: %T", v)
+		}
+	}
+
+	return metadata, nil
+}
+
+// extractToolCallsFromResponse checks if the response contains the __TOOL_CALLS__ marker
+// and extracts tool calls if present. This is used to separate conversational text
+// from structured function call data.
+//
+// WHY THIS FUNCTION:
+// parseStreamingResponse() appends tool calls with a marker to the full response.
+// This function detects that marker and extracts the tool calls, separating
+// the conversational text (for display) from the function call data (for metadata).
+//
+// Returns the conversational text, tool calls (if any), and whether tool calls were found.
+func extractToolCallsFromResponse(response string) (conversationalText string, toolCalls []ToolCall, hasToolCalls bool) {
+	// Check for tool call marker
+	toolCallMarker := "\n__TOOL_CALLS__\n"
+	markerIndex := strings.Index(response, toolCallMarker)
+	if markerIndex == -1 {
+		// No tool calls - return full response as conversational text
+		return response, nil, false
+	}
+
+	// Split response: everything before marker is conversational text,
+	// everything after marker is tool call JSON
+	conversationalText = response[:markerIndex]
+	toolCallJSON := response[markerIndex+len(toolCallMarker):]
+
+	// Parse tool calls from JSON
+	var calls []ToolCall
+	if err := json.Unmarshal([]byte(toolCallJSON), &calls); err != nil {
+		// Failed to parse tool calls - treat entire response as conversational text
+		return response, nil, false
+	}
+
+	return conversationalText, calls, true
 }

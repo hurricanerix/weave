@@ -623,6 +623,58 @@ img {
   100% { background-position: -100% 0; }
 }
 
+/* Thinking indicator */
+.message-thinking {
+  align-self: flex-start;
+}
+
+.thinking-bubble {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--border-radius-lg);
+  background-color: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.thinking-dots {
+  display: flex;
+  gap: 4px;
+}
+
+.thinking-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--color-text-muted);
+  animation: thinking-pulse 1.4s ease-in-out infinite;
+}
+
+.thinking-dot:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.thinking-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.thinking-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes thinking-pulse {
+  0%, 60%, 100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
 /* Error message */
 .message-error {
   padding: var(--space-sm) var(--space-md);
@@ -1524,6 +1576,9 @@ img {
         <!-- agent-token: Append token to current agent message -->
         <div id="agent-token-target" sse-swap="agent-token" hx-swap="none"></div>
 
+        <!-- agent-thinking: Show thinking indicator -->
+        <div id="agent-thinking-target" sse-swap="agent-thinking" hx-swap="none"></div>
+
         <!-- agent-done: Mark agent response complete -->
         <div id="agent-done-target" sse-swap="agent-done" hx-swap="none"></div>
 
@@ -1953,6 +2008,9 @@ img {
             console.log('SSE parsed:', eventType, data);
 
             switch (eventType) {
+                case 'agent-thinking':
+                    handleAgentThinking(data);
+                    break;
                 case 'agent-token':
                     handleAgentToken(data);
                     break;
@@ -1983,6 +2041,62 @@ img {
             }
         });
 
+        // Show thinking indicator in chat
+        function showThinkingIndicator() {
+            const chatMessages = document.getElementById('chat-messages');
+
+            // Remove any existing thinking indicator
+            const existing = chatMessages.querySelector('.message-thinking');
+            if (existing) {
+                existing.remove();
+            }
+
+            removeEmptyState();
+
+            // Create thinking indicator
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message message-thinking';
+
+            const sender = document.createElement('div');
+            sender.className = 'message-sender';
+            sender.textContent = 'Ara';
+
+            const bubble = document.createElement('div');
+            bubble.className = 'thinking-bubble';
+
+            const dots = document.createElement('div');
+            dots.className = 'thinking-dots';
+
+            for (let i = 0; i < 3; i++) {
+                const dot = document.createElement('div');
+                dot.className = 'thinking-dot';
+                dots.appendChild(dot);
+            }
+
+            bubble.appendChild(dots);
+            messageDiv.appendChild(sender);
+            messageDiv.appendChild(bubble);
+            chatMessages.appendChild(messageDiv);
+            scrollChatToBottom();
+        }
+
+        // Hide thinking indicator
+        function hideThinkingIndicator() {
+            const chatMessages = document.getElementById('chat-messages');
+            const thinkingMessage = chatMessages.querySelector('.message-thinking');
+            if (thinkingMessage) {
+                thinkingMessage.remove();
+            }
+        }
+
+        // Handle agent thinking: show thinking indicator
+        function handleAgentThinking(data) {
+            console.log('Agent thinking:', data);
+            if (data.started) {
+                showThinkingIndicator();
+            }
+        }
+
         // Handle agent retry: clear the current streaming message because the LLM failed
         // format validation and is retrying. Without this, retry tokens would be
         // concatenated with the failed attempt's tokens.
@@ -2003,6 +2117,9 @@ img {
             let currentMessageDiv = chatMessages.querySelector('.message.message-assistant.streaming');
 
             if (!currentMessageDiv) {
+                // Hide thinking indicator when first token arrives
+                hideThinkingIndicator();
+
                 // Create new agent message if none exists
                 removeEmptyState();
 
@@ -2031,6 +2148,9 @@ img {
 
         // Handle agent done: finalize agent message and re-enable input
         function handleAgentDone(data) {
+            // Hide thinking indicator if still showing (edge case: agent-done without tokens)
+            hideThinkingIndicator();
+
             // Remove streaming indicator from current agent message
             const chatMessages = document.getElementById('chat-messages');
             const streamingMessage = chatMessages.querySelector('.message.message-assistant.streaming');

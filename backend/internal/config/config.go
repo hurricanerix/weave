@@ -9,6 +9,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 const (
@@ -17,15 +20,17 @@ const (
 
 	// Default values for CLI flags
 	defaultPort        = 8080
-	defaultSteps       = 4
-	defaultCFG         = 1.0
+	defaultSteps       = 20
+	defaultCFG         = 3.5
 	defaultWidth       = 1024
 	defaultHeight      = 1024
 	defaultSeed        = -1
 	defaultLLMSeed     = 0
 	defaultOllamaURL   = "http://localhost:11434"
-	defaultOllamaModel = "mistral:7b"
+	defaultOllamaModel = "llama3.1:8b"
 	defaultLogLevel    = "info"
+	// DefaultAgentPrompt is the default path to the agent prompt file
+	DefaultAgentPrompt = "config/agents/ara.md"
 
 	// Validation constraints
 	minPort    = 1024
@@ -65,6 +70,8 @@ var (
 	ErrShowHelp = errors.New("help requested")
 	// ErrShowVersion is returned when --version flag is requested
 	ErrShowVersion = errors.New("version requested")
+	// ErrInvalidPath is returned when agent prompt path is invalid
+	ErrInvalidPath = errors.New("agent prompt path must be relative, not absolute")
 )
 
 // Config holds all configuration values for the weave application.
@@ -87,6 +94,9 @@ type Config struct {
 
 	// Logging configuration
 	LogLevel string
+
+	// Agent configuration
+	AgentPromptPath string
 
 	// Internal flags
 	showHelp    bool
@@ -119,6 +129,9 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 
 	// Logging flags
 	fs.StringVar(&c.LogLevel, "log-level", defaultLogLevel, "Log level (debug, info, warn, error)")
+
+	// Agent flags
+	fs.StringVar(&c.AgentPromptPath, "agent-prompt", DefaultAgentPrompt, "Path to agent prompt file")
 
 	// Special flags
 	fs.BoolVar(&c.showHelp, "help", false, "Show help message")
@@ -215,6 +228,7 @@ FLAGS:
     --ollama-url <URL>         Ollama API endpoint (default: %s)
     --ollama-model <MODEL>     Ollama model name (default: %s)
     --log-level <LEVEL>        Log level: debug, info, warn, error (default: %s)
+    --agent-prompt <PATH>      Path to agent prompt file (default: %s)
     --help                     Show this help message
     --version                  Show version information
 
@@ -238,10 +252,37 @@ REQUIREMENTS:
 For more information, see docs/DEVELOPMENT.md
 `,
 		defaultPort, defaultSteps, defaultCFG, defaultWidth, defaultHeight,
-		defaultSeed, defaultLLMSeed, defaultOllamaURL, defaultOllamaModel, defaultLogLevel)
+		defaultSeed, defaultLLMSeed, defaultOllamaURL, defaultOllamaModel,
+		defaultLogLevel, DefaultAgentPrompt)
 }
 
 // printVersion prints version information
 func printVersion(w io.Writer) {
 	fmt.Fprintf(w, "weave %s\n", Version)
+}
+
+// LoadAgentPrompt loads the agent prompt from a file.
+// Returns the file contents or an error if the file doesn't exist or is unreadable.
+// Only accepts relative paths that stay within the working directory to prevent
+// reading arbitrary system files.
+func LoadAgentPrompt(path string) (string, error) {
+	// Clean the path to resolve any .., ., or redundant separators
+	cleanPath := filepath.Clean(path)
+
+	// Reject absolute paths - only accept relative paths
+	if filepath.IsAbs(cleanPath) {
+		return "", ErrInvalidPath
+	}
+
+	// Reject paths that try to escape the working directory via ..
+	// After Clean(), paths like "../foo" or "foo/../../../bar" become "../foo" or "../../bar"
+	if strings.HasPrefix(cleanPath, "..") {
+		return "", ErrInvalidPath
+	}
+
+	data, err := os.ReadFile(cleanPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to load agent prompt from %s: %w", cleanPath, err)
+	}
+	return string(data), nil
 }

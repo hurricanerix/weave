@@ -410,9 +410,19 @@ func TestChatSuccess(t *testing.T) {
 		responses := []ChatResponse{
 			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "Hello"}, Done: false},
 			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: " there"}, Done: false},
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "!\n"}, Done: false},
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "---\n"}, Done: false},
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "a test prompt", "generate_image": true, "steps": 28, "cfg": 7.5, "seed": 42}`}, Done: true},
+			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "!"}, Done: false},
+			{Model: DefaultModel, Message: Message{
+				Role:    RoleAssistant,
+				Content: "",
+				ToolCalls: []ToolCall{
+					{
+						Function: ToolCallFunction{
+							Name:      "update_generation",
+							Arguments: []byte(`{"prompt": "a test prompt", "generate_image": true, "steps": 28, "cfg": 7.5, "seed": 42}`),
+						},
+					},
+				},
+			}, Done: true},
 		}
 
 		for _, resp := range responses {
@@ -440,12 +450,12 @@ func TestChatSuccess(t *testing.T) {
 		return nil
 	}
 
-	result, err := client.Chat(context.Background(), messages, nil, callback)
+	result, err := client.Chat(context.Background(), messages, nil, nil, callback)
 	if err != nil {
 		t.Errorf("Chat() error = %v, want nil", err)
 	}
 
-	// Check conversational text (before delimiter)
+	// Check conversational text (before tool calls)
 	expectedResponse := "Hello there!"
 	if result.Response != expectedResponse {
 		t.Errorf("Chat() response = %q, want %q", result.Response, expectedResponse)
@@ -457,14 +467,16 @@ func TestChatSuccess(t *testing.T) {
 		t.Errorf("Metadata.Prompt = %q, want %q", result.Metadata.Prompt, expectedPrompt)
 	}
 
-	// Check RawResponse includes full response (text + delimiter + JSON)
-	expectedRawResponse := "Hello there!\n---\n{\"prompt\": \"a test prompt\", \"generate_image\": true, \"steps\": 28, \"cfg\": 7.5, \"seed\": 42}"
-	if result.RawResponse != expectedRawResponse {
-		t.Errorf("RawResponse = %q, want %q", result.RawResponse, expectedRawResponse)
+	// Check RawResponse includes full response (text + tool calls marker + JSON)
+	if !strings.Contains(result.RawResponse, "Hello there!") {
+		t.Errorf("RawResponse missing conversational text, got %q", result.RawResponse)
+	}
+	if !strings.Contains(result.RawResponse, "__TOOL_CALLS__") {
+		t.Errorf("RawResponse missing tool calls marker, got %q", result.RawResponse)
 	}
 
-	// Check that tokens sent to callback only include text before delimiter
-	expectedTokens := []string{"Hello", " there", "!\n"}
+	// Check that tokens sent to callback only include text (not tool calls)
+	expectedTokens := []string{"Hello", " there", "!"}
 	if len(tokens) != len(expectedTokens) {
 		t.Errorf("got %d tokens, want %d", len(tokens), len(expectedTokens))
 	}
@@ -490,10 +502,21 @@ func TestChatWithSeed(t *testing.T) {
 			receivedSeed = chatReq.Options.Seed
 		}
 
-		// Send minimal response with delimiter and JSON
+		// Send minimal response with tool calls
 		responses := []ChatResponse{
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "ok\n---\n"}, Done: false},
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "", "generate_image": false, "steps": 20, "cfg": 7.0, "seed": 0}`}, Done: true},
+			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "ok"}, Done: false},
+			{Model: DefaultModel, Message: Message{
+				Role:    RoleAssistant,
+				Content: "",
+				ToolCalls: []ToolCall{
+					{
+						Function: ToolCallFunction{
+							Name:      "update_generation",
+							Arguments: []byte(`{"prompt": "", "generate_image": false, "steps": 20, "cfg": 7.0, "seed": 0}`),
+						},
+					},
+				},
+			}, Done: true},
 		}
 		for _, resp := range responses {
 			data, _ := json.Marshal(resp)
@@ -513,7 +536,7 @@ func TestChatWithSeed(t *testing.T) {
 
 	// Test with seed
 	seed := int64(42)
-	_, err := client.Chat(context.Background(), messages, &seed, nil)
+	_, err := client.Chat(context.Background(), messages, &seed, nil, nil)
 	if err != nil {
 		t.Errorf("Chat() error = %v", err)
 	}
@@ -538,10 +561,21 @@ func TestChatWithoutSeed(t *testing.T) {
 
 		receivedOptions = chatReq.Options
 
-		// Send minimal response with delimiter and JSON
+		// Send minimal response with tool calls
 		responses := []ChatResponse{
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "ok\n---\n"}, Done: false},
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "", "generate_image": false, "steps": 20, "cfg": 7.0, "seed": 0}`}, Done: true},
+			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "ok"}, Done: false},
+			{Model: DefaultModel, Message: Message{
+				Role:    RoleAssistant,
+				Content: "",
+				ToolCalls: []ToolCall{
+					{
+						Function: ToolCallFunction{
+							Name:      "update_generation",
+							Arguments: []byte(`{"prompt": "", "generate_image": false, "steps": 20, "cfg": 7.0, "seed": 0}`),
+						},
+					},
+				},
+			}, Done: true},
 		}
 		for _, resp := range responses {
 			data, _ := json.Marshal(resp)
@@ -560,7 +594,7 @@ func TestChatWithoutSeed(t *testing.T) {
 	messages := []Message{{Role: RoleUser, Content: "test"}}
 
 	// Test without seed
-	_, err := client.Chat(context.Background(), messages, nil, nil)
+	_, err := client.Chat(context.Background(), messages, nil, nil, nil)
 	if err != nil {
 		t.Errorf("Chat() error = %v", err)
 	}
@@ -598,7 +632,7 @@ func TestChatCallbackError(t *testing.T) {
 		return callbackErr
 	}
 
-	_, err := client.Chat(context.Background(), messages, nil, callback)
+	_, err := client.Chat(context.Background(), messages, nil, nil, callback)
 	if err == nil {
 		t.Error("Chat() should return error when callback fails")
 	}
@@ -622,7 +656,7 @@ func TestChatServerError(t *testing.T) {
 
 	messages := []Message{{Role: RoleUser, Content: "test"}}
 
-	_, err := client.Chat(context.Background(), messages, nil, nil)
+	_, err := client.Chat(context.Background(), messages, nil, nil, nil)
 	if err == nil {
 		t.Error("Chat() should return error on server error")
 	}
@@ -646,7 +680,7 @@ func TestChatInvalidJSON(t *testing.T) {
 
 	messages := []Message{{Role: RoleUser, Content: "test"}}
 
-	_, err := client.Chat(context.Background(), messages, nil, nil)
+	_, err := client.Chat(context.Background(), messages, nil, nil, nil)
 	if err == nil {
 		t.Error("Chat() should return error on invalid JSON")
 	}
@@ -668,7 +702,7 @@ func TestChatConnectionRefused(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	_, err := client.Chat(ctx, messages, nil, nil)
+	_, err := client.Chat(ctx, messages, nil, nil, nil)
 	if err == nil {
 		t.Error("Chat() should return error when connection refused")
 	}
@@ -753,8 +787,19 @@ func TestParseStreamingResponse(t *testing.T) {
 func TestChatNilCallback(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		responses := []ChatResponse{
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "ok\n---\n"}, Done: false},
-			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: `{"prompt": "test", "generate_image": true, "steps": 28, "cfg": 7.5, "seed": 42}`}, Done: true},
+			{Model: DefaultModel, Message: Message{Role: RoleAssistant, Content: "ok"}, Done: false},
+			{Model: DefaultModel, Message: Message{
+				Role:    RoleAssistant,
+				Content: "",
+				ToolCalls: []ToolCall{
+					{
+						Function: ToolCallFunction{
+							Name:      "update_generation",
+							Arguments: []byte(`{"prompt": "test", "generate_image": true, "steps": 28, "cfg": 7.5, "seed": 42}`),
+						},
+					},
+				},
+			}, Done: true},
 		}
 		for _, resp := range responses {
 			data, _ := json.Marshal(resp)
@@ -773,7 +818,7 @@ func TestChatNilCallback(t *testing.T) {
 	messages := []Message{{Role: RoleUser, Content: "test"}}
 
 	// Test with nil callback - should work without panicking
-	result, err := client.Chat(context.Background(), messages, nil, nil)
+	result, err := client.Chat(context.Background(), messages, nil, nil, nil)
 	if err != nil {
 		t.Errorf("Chat() error = %v", err)
 	}
@@ -785,10 +830,12 @@ func TestChatNilCallback(t *testing.T) {
 		t.Errorf("Metadata.Prompt = %q, want %q", result.Metadata.Prompt, "test")
 	}
 
-	// Verify RawResponse contains full response
-	expectedRaw := "ok\n---\n{\"prompt\": \"test\", \"generate_image\": true, \"steps\": 28, \"cfg\": 7.5, \"seed\": 42}"
-	if result.RawResponse != expectedRaw {
-		t.Errorf("RawResponse = %q, want %q", result.RawResponse, expectedRaw)
+	// Verify RawResponse contains full response with tool calls
+	if !strings.Contains(result.RawResponse, "ok") {
+		t.Errorf("RawResponse missing conversational text, got %q", result.RawResponse)
+	}
+	if !strings.Contains(result.RawResponse, "__TOOL_CALLS__") {
+		t.Errorf("RawResponse missing tool calls marker, got %q", result.RawResponse)
 	}
 }
 
@@ -847,7 +894,7 @@ func TestChatCallbackErrorIncludesBytes(t *testing.T) {
 		return errors.New("callback failed")
 	}
 
-	_, err := client.Chat(context.Background(), messages, nil, callback)
+	_, err := client.Chat(context.Background(), messages, nil, nil, callback)
 	if err == nil {
 		t.Error("Chat() should return error when callback fails")
 	}
@@ -862,7 +909,7 @@ func TestChatEmptyMessages(t *testing.T) {
 	client := NewClient()
 
 	// Test with empty messages slice
-	_, err := client.Chat(context.Background(), []Message{}, nil, nil)
+	_, err := client.Chat(context.Background(), []Message{}, nil, nil, nil)
 	if err == nil {
 		t.Error("Chat() should return error for empty messages")
 	}
@@ -872,7 +919,7 @@ func TestChatEmptyMessages(t *testing.T) {
 	}
 
 	// Test with nil messages slice
-	_, err = client.Chat(context.Background(), nil, nil, nil)
+	_, err = client.Chat(context.Background(), nil, nil, nil, nil)
 	if err == nil {
 		t.Error("Chat() should return error for nil messages")
 	}
@@ -932,7 +979,7 @@ func TestChatMessageRoleValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := client.Chat(context.Background(), tt.messages, nil, nil)
+			_, err := client.Chat(context.Background(), tt.messages, nil, nil, nil)
 
 			if tt.wantErr == "" {
 				// Expect no role validation error (may get connection error)
@@ -950,146 +997,17 @@ func TestChatMessageRoleValidation(t *testing.T) {
 	}
 }
 
-func TestParseStreamingResponseDelimiterDetection(t *testing.T) {
+func TestParseStreamingResponseWithToolCalls(t *testing.T) {
 	client := NewClient()
 
-	tests := []struct {
-		name         string
-		input        string
-		wantResponse string
-		wantTokens   []string // Tokens sent to callback (should stop at delimiter)
-		wantErr      bool
-	}{
-		{
-			name: "delimiter at token boundary",
-			input: `{"model":"test","message":{"role":"assistant","content":"Hello there"},"done":false}
-{"model":"test","message":{"role":"assistant","content":"---"},"done":false}
-{"model":"test","message":{"role":"assistant","content":"{\"prompt\":\"\",\"generate_image\":false}"},"done":true}
-`,
-			wantResponse: "Hello there---{\"prompt\":\"\",\"generate_image\":false}",
-			wantTokens:   []string{"Hello there"}, // Callback stops before delimiter
-			wantErr:      false,
-		},
-		{
-			name: "delimiter in middle of token",
-			input: `{"model":"test","message":{"role":"assistant","content":"Hello"},"done":false}
-{"model":"test","message":{"role":"assistant","content":" there\n---\n{\"prompt\":\"\",\"generate_image\":false}"},"done":true}
-`,
-			wantResponse: "Hello there\n---\n{\"prompt\":\"\",\"generate_image\":false}",
-			wantTokens:   []string{"Hello", " there\n"}, // Callback stops at delimiter boundary
-			wantErr:      false,
-		},
-		{
-			name: "no delimiter",
-			input: `{"model":"test","message":{"role":"assistant","content":"Hello"},"done":false}
-{"model":"test","message":{"role":"assistant","content":" world"},"done":true}
-`,
-			wantResponse: "Hello world",
-			wantTokens:   []string{"Hello", " world"}, // All tokens go to callback
-			wantErr:      false,
-		},
-		{
-			name: "delimiter followed by json",
-			input: `{"model":"test","message":{"role":"assistant","content":"Ready to generate!\n"},"done":false}
-{"model":"test","message":{"role":"assistant","content":"---"},"done":false}
-{"model":"test","message":{"role":"assistant","content":"\n"},"done":false}
-{"model":"test","message":{"role":"assistant","content":"{\"prompt\":\"a cat\",\"generate_image\":true}"},"done":true}
-`,
-			wantResponse: "Ready to generate!\n---\n{\"prompt\":\"a cat\",\"generate_image\":true}",
-			wantTokens:   []string{"Ready to generate!\n"}, // Stops before delimiter
-			wantErr:      false,
-		},
-		{
-			name: "delimiter at start of token",
-			input: `{"model":"test","message":{"role":"assistant","content":"Text before"},"done":false}
-{"model":"test","message":{"role":"assistant","content":"---JSON after"},"done":true}
-`,
-			wantResponse: "Text before---JSON after",
-			wantTokens:   []string{"Text before"}, // Stops before delimiter
-			wantErr:      false,
-		},
-		{
-			name: "multiple delimiters (only first matters)",
-			input: `{"model":"test","message":{"role":"assistant","content":"Text"},"done":false}
-{"model":"test","message":{"role":"assistant","content":"---"},"done":false}
-{"model":"test","message":{"role":"assistant","content":"JSON with --- inside"},"done":true}
-`,
-			wantResponse: "Text---JSON with --- inside",
-			wantTokens:   []string{"Text"}, // Stops at first delimiter
-			wantErr:      false,
-		},
-		{
-			name: "empty token before delimiter",
-			input: `{"model":"test","message":{"role":"assistant","content":""},"done":false}
-{"model":"test","message":{"role":"assistant","content":"---"},"done":false}
-{"model":"test","message":{"role":"assistant","content":"{}"},"done":true}
-`,
-			wantResponse: "---{}",
-			wantTokens:   []string{""}, // Empty token still sent
-			wantErr:      false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var tokens []string
-			callback := func(token StreamToken) error {
-				tokens = append(tokens, token.Content)
-				return nil
-			}
-
-			response, err := client.parseStreamingResponse(strings.NewReader(tt.input), callback)
-
-			if (err != nil) != tt.wantErr {
-				t.Errorf("parseStreamingResponse() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-
-			if response != tt.wantResponse {
-				t.Errorf("parseStreamingResponse() response = %q, want %q", response, tt.wantResponse)
-			}
-
-			if !tt.wantErr {
-				if len(tokens) != len(tt.wantTokens) {
-					t.Errorf("got %d tokens, want %d", len(tokens), len(tt.wantTokens))
-					t.Errorf("tokens: %v", tokens)
-					t.Errorf("want: %v", tt.wantTokens)
-				} else {
-					for i, token := range tokens {
-						if token != tt.wantTokens[i] {
-							t.Errorf("token[%d] = %q, want %q", i, token, tt.wantTokens[i])
-						}
-					}
-				}
-			}
-		})
-	}
-}
-
-func TestParseStreamingResponseDelimiterWithCallback(t *testing.T) {
-	client := NewClient()
-
-	// This test verifies that when delimiter is detected:
-	// 1. Callback stops being called
-	// 2. Full response still includes everything
-	// 3. Tokens after delimiter are buffered (not sent to callback)
-
-	input := `{"model":"test","message":{"role":"assistant","content":"Sure! "},"done":false}
-{"model":"test","message":{"role":"assistant","content":"Let me help.\n"},"done":false}
-{"model":"test","message":{"role":"assistant","content":"---"},"done":false}
-{"model":"test","message":{"role":"assistant","content":"\n{\"prompt\":\"a test\","},"done":false}
-{"model":"test","message":{"role":"assistant","content":"\"generate_image\":true}"},"done":true}
+	// Test that tool calls are extracted from the final chunk and appended to response
+	input := `{"model":"test","message":{"role":"assistant","content":"Perfect! "},"done":false}
+{"model":"test","message":{"role":"assistant","content":"Generating now."},"done":false}
+{"model":"test","message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"update_generation","arguments":"{\"prompt\":\"a cat in space\",\"steps\":28,\"cfg\":7.5,\"seed\":42,\"generate_image\":true}"}}]},"done":true}
 `
 
 	var tokens []string
 	callback := func(token StreamToken) error {
-		// Verify delimiter and JSON are never sent to callback
-		if strings.Contains(token.Content, "---") {
-			t.Errorf("callback received delimiter: %q", token.Content)
-		}
-		if strings.Contains(token.Content, "{\"prompt\"") {
-			t.Errorf("callback received JSON: %q", token.Content)
-		}
 		tokens = append(tokens, token.Content)
 		return nil
 	}
@@ -1099,16 +1017,21 @@ func TestParseStreamingResponseDelimiterWithCallback(t *testing.T) {
 		t.Errorf("parseStreamingResponse() error = %v", err)
 	}
 
-	// Full response should include everything
-	expectedResponse := "Sure! Let me help.\n---\n{\"prompt\":\"a test\",\"generate_image\":true}"
-	if response != expectedResponse {
-		t.Errorf("response = %q, want %q", response, expectedResponse)
+	// Response should include conversational text and tool call marker
+	if !strings.Contains(response, "Perfect! Generating now.") {
+		t.Errorf("response missing conversational text: %q", response)
+	}
+	if !strings.Contains(response, "__TOOL_CALLS__") {
+		t.Errorf("response missing tool call marker: %q", response)
+	}
+	if !strings.Contains(response, "update_generation") {
+		t.Errorf("response missing tool call data: %q", response)
 	}
 
-	// Callback should only receive tokens before delimiter
-	expectedTokens := []string{"Sure! ", "Let me help.\n"}
+	// Callback should receive all conversational text (tool calls are not streamed)
+	expectedTokens := []string{"Perfect! ", "Generating now."}
 	if len(tokens) != len(expectedTokens) {
-		t.Errorf("got %d tokens in callback, want %d", len(tokens), len(expectedTokens))
+		t.Errorf("got %d tokens, want %d", len(tokens), len(expectedTokens))
 		t.Errorf("tokens: %v", tokens)
 	} else {
 		for i, token := range tokens {
@@ -1116,5 +1039,39 @@ func TestParseStreamingResponseDelimiterWithCallback(t *testing.T) {
 				t.Errorf("token[%d] = %q, want %q", i, token, expectedTokens[i])
 			}
 		}
+	}
+}
+
+func TestParseStreamingResponseWithToolCallsNoContent(t *testing.T) {
+	client := NewClient()
+
+	// Test tool calls when final chunk has no content (only tool calls)
+	input := `{"model":"test","message":{"role":"assistant","content":"What kind of cat?"},"done":false}
+{"model":"test","message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"update_generation","arguments":"{\"prompt\":\"\",\"steps\":4,\"cfg\":1.0,\"seed\":-1,\"generate_image\":false}"}}]},"done":true}
+`
+
+	var tokens []string
+	callback := func(token StreamToken) error {
+		tokens = append(tokens, token.Content)
+		return nil
+	}
+
+	response, err := client.parseStreamingResponse(strings.NewReader(input), callback)
+	if err != nil {
+		t.Errorf("parseStreamingResponse() error = %v", err)
+	}
+
+	// Response should have conversational text and tool call marker
+	if !strings.Contains(response, "What kind of cat?") {
+		t.Errorf("response missing conversational text: %q", response)
+	}
+	if !strings.Contains(response, "__TOOL_CALLS__") {
+		t.Errorf("response missing tool call marker: %q", response)
+	}
+
+	// Callback should receive conversational text only
+	expectedTokens := []string{"What kind of cat?"}
+	if len(tokens) != len(expectedTokens) {
+		t.Errorf("got %d tokens, want %d", len(tokens), len(expectedTokens))
 	}
 }

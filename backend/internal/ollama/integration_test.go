@@ -11,7 +11,7 @@ import (
 )
 
 // These tests require a running ollama instance.
-// Most tests use the default model (mistral:7b), but some legacy tests use llama3.2:1b.
+// Most tests use the default model (llama3.1:8b), but some legacy tests use llama3.2:1b or mistral:7b.
 // Run with: go test -tags=integration ./internal/ollama/...
 
 // checkOllamaRunning verifies ollama is accessible before running tests.
@@ -71,7 +71,7 @@ func TestIntegrationChatStreaming(t *testing.T) {
 		t.Error("Expected non-empty response")
 	}
 
-	// Verify concatenated tokens match conversational text portion (before delimiter)
+	// Verify concatenated tokens match conversational text portion (before tool calls)
 	concatenated := strings.Join(tokens, "")
 	if concatenated != result.Response {
 		t.Errorf("Concatenated tokens %q != response %q", concatenated, result.Response)
@@ -225,8 +225,8 @@ func checkModelAvailable(t *testing.T, modelName string) {
 }
 
 // TestIntegrationMistral7BMultiTurn runs 10 multi-turn conversations with Mistral 7B
-// to verify that the model consistently follows the structured output format.
-// This test ensures no format drift over extended conversations.
+// to verify that the model consistently uses function calling for structured output.
+// This test ensures reliable function calling over extended conversations.
 func TestIntegrationMistral7BMultiTurn(t *testing.T) {
 	checkOllamaRunning(t)
 
@@ -352,31 +352,31 @@ func TestIntegrationMistral7BMultiTurn(t *testing.T) {
 
 				allResponses = append(allResponses, result)
 
-				// Verify delimiter is present in raw response
-				if !strings.Contains(result.RawResponse, ResponseDelimiter) {
-					t.Errorf("Turn %d: response missing delimiter %q\nResponse: %s",
-						i+1, ResponseDelimiter, result.RawResponse)
+				// Verify tool calls are present in raw response
+				if !strings.Contains(result.RawResponse, "__TOOL_CALLS__") {
+					t.Errorf("Turn %d: response missing tool calls marker\nResponse: %s",
+						i+1, result.RawResponse)
 				}
 
-				// Verify JSON parsed successfully (this is implicit - if parsing failed,
+				// Verify function call parsed successfully (this is implicit - if parsing failed,
 				// Chat() would have returned an error, but we verify metadata is populated)
 				t.Logf("Turn %d metadata: generate_image=%v, prompt=%q",
 					i+1, result.Metadata.GenerateImage, result.Metadata.Prompt)
 
-				// Verify conversational text excludes JSON portion
+				// Verify conversational text excludes function call data
 				if strings.Contains(result.Response, "{") || strings.Contains(result.Response, "}") {
 					// This might be legitimate if the LLM uses braces in conversational text,
-					// but check that it's not the JSON metadata
+					// but check that it's not the function call metadata
 					if strings.Contains(result.Response, "\"prompt\"") || false {
-						t.Errorf("Turn %d: conversational text contains JSON metadata\nResponse: %s",
+						t.Errorf("Turn %d: conversational text contains function call metadata\nResponse: %s",
 							i+1, result.Response)
 					}
 				}
 
-				// Verify conversational text doesn't contain the delimiter
-				if strings.Contains(result.Response, ResponseDelimiter) {
-					t.Errorf("Turn %d: conversational text contains delimiter %q\nResponse: %s",
-						i+1, ResponseDelimiter, result.Response)
+				// Verify conversational text doesn't contain the tool call marker
+				if strings.Contains(result.Response, "__TOOL_CALLS__") {
+					t.Errorf("Turn %d: conversational text contains tool call marker\nResponse: %s",
+						i+1, result.Response)
 				}
 
 				// Check if we got a ready prompt
@@ -392,7 +392,7 @@ func TestIntegrationMistral7BMultiTurn(t *testing.T) {
 				}
 
 				// Add assistant response to conversation history for next turn
-				// Use RawResponse to preserve the complete format (text + delimiter + JSON)
+				// Use RawResponse to preserve the complete format (text + tool calls)
 				messages = append(messages, Message{Role: RoleAssistant, Content: result.RawResponse})
 			}
 
@@ -409,10 +409,10 @@ func TestIntegrationMistral7BMultiTurn(t *testing.T) {
 	}
 }
 
-// TestIntegrationMistral7BDelimiterConsistency verifies that Mistral 7B consistently
-// includes the delimiter in every response, even in edge cases like very short prompts
+// TestIntegrationMistral7BFunctionCallConsistency verifies that Mistral 7B consistently
+// uses function calling in every response, even in edge cases like very short prompts
 // or multi-paragraph responses.
-func TestIntegrationMistral7BDelimiterConsistency(t *testing.T) {
+func TestIntegrationMistral7BFunctionCallConsistency(t *testing.T) {
 	checkOllamaRunning(t)
 
 	client := NewClientWithConfig(DefaultEndpoint, "mistral:7b", time.Duration(DefaultTimeout)*time.Second)
@@ -458,18 +458,18 @@ func TestIntegrationMistral7BDelimiterConsistency(t *testing.T) {
 				t.Fatalf("Chat() failed: %v", err)
 			}
 
-			// Verify delimiter is present
-			if !strings.Contains(result.RawResponse, ResponseDelimiter) {
-				t.Errorf("Response missing delimiter %q\nInput: %q\nResponse: %s",
-					ResponseDelimiter, tt.userMessage, result.RawResponse)
+			// Verify tool calls are present
+			if !strings.Contains(result.RawResponse, "__TOOL_CALLS__") {
+				t.Errorf("Response missing tool calls marker\nInput: %q\nResponse: %s",
+					tt.userMessage, result.RawResponse)
 			}
 
-			// Verify JSON parsed successfully
+			// Verify function call parsed successfully
 			t.Logf("Metadata: prompt=%q", result.Metadata.Prompt)
 
-			// Verify conversational text doesn't include JSON
+			// Verify conversational text doesn't include function call data
 			if strings.Contains(result.Response, "\"prompt\"") || false {
-				t.Errorf("Conversational text contains JSON metadata\nResponse: %s", result.Response)
+				t.Errorf("Conversational text contains function call metadata\nResponse: %s", result.Response)
 			}
 		})
 	}

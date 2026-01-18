@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -760,82 +762,14 @@ func TestHandleImage_InvalidID(t *testing.T) {
 	}
 }
 
-func TestChatWithRetry_FormatReminderAfterParseError(t *testing.T) {
-	tests := []struct {
-		name           string
-		initialError   error
-		wantRetryCount int
-	}{
-		{
-			name:           "missing delimiter triggers retry",
-			initialError:   ollama.ErrMissingDelimiter,
-			wantRetryCount: 2, // initial + 1 retry
-		},
-		{
-			name:           "invalid JSON triggers retry",
-			initialError:   ollama.ErrInvalidJSON,
-			wantRetryCount: 2, // initial + 1 retry
-		},
-		{
-			name:           "missing fields triggers retry",
-			initialError:   ollama.ErrMissingFields,
-			wantRetryCount: 2, // initial + 1 retry
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mock := &mockOllamaClient{
-				responses: []mockResponse{
-					{err: tt.initialError}, // First attempt fails
-					{result: ollama.ChatResult{ // Retry succeeds
-						Response:    "Perfect! Generating now.",
-						Metadata:    ollama.LLMMetadata{Prompt: "test prompt"},
-						RawResponse: "Perfect! Generating now.\n---\n{\"prompt\":\"test prompt\",\"generate_image\":true}",
-					}},
-				},
-			}
-
-			server, err := NewServerWithDeps("", mock, nil, nil, nil, nil)
-			if err != nil {
-				t.Fatalf("NewServerWithDeps failed: %v", err)
-			}
-
-			messages := []ollama.Message{
-				{Role: ollama.RoleUser, Content: "test message"},
-			}
-
-			result, err := server.chatWithRetry(context.Background(), "test-session", messages, nil, nil)
-
-			if err != nil {
-				t.Fatalf("chatWithRetry failed: %v", err)
-			}
-
-			if mock.callCount != tt.wantRetryCount {
-				t.Errorf("call count = %d, want %d", mock.callCount, tt.wantRetryCount)
-			}
-
-			if result.Response != "Perfect! Generating now." {
-				t.Errorf("response = %q, want %q", result.Response, "Perfect! Generating now.")
-			}
-
-			if result.Metadata.Prompt != "test prompt" {
-				t.Errorf("prompt = %q, want %q", result.Metadata.Prompt, "test prompt")
-			}
-		})
-	}
-}
-
-func TestChatWithRetry_ContextCompactionAfterTwoRetries(t *testing.T) {
+func TestChatWithRetry_CompactionAfterMissingFieldsError(t *testing.T) {
 	mock := &mockOllamaClient{
 		responses: []mockResponse{
-			{err: ollama.ErrMissingDelimiter}, // First attempt fails
-			{err: ollama.ErrInvalidJSON},      // First retry fails
-			{err: ollama.ErrMissingDelimiter}, // Second retry fails
+			{err: ollama.ErrMissingFields}, // First attempt fails with missing fields
 			{result: ollama.ChatResult{ // Compaction retry succeeds
-				Response:    "Perfect!",
-				Metadata:    ollama.LLMMetadata{Prompt: "compacted prompt"},
-				RawResponse: "Perfect!\n---\n{\"prompt\":\"compacted prompt\",\"generate_image\":true}",
+				Response:    "Perfect! Generating now.",
+				Metadata:    ollama.LLMMetadata{Prompt: "test prompt"},
+				RawResponse: "Perfect! Generating now.\n__TOOL_CALLS__\n...",
 			}},
 		},
 	}
@@ -846,35 +780,34 @@ func TestChatWithRetry_ContextCompactionAfterTwoRetries(t *testing.T) {
 	}
 
 	messages := []ollama.Message{
-		{Role: ollama.RoleSystem, Content: ollama.SystemPrompt},
-		{Role: ollama.RoleUser, Content: "I want a cat in a hat"},
-		{Role: ollama.RoleAssistant, Content: "What kind of cat?"},
-		{Role: ollama.RoleUser, Content: "A tabby cat"},
+		{Role: ollama.RoleUser, Content: "test message"},
 	}
 
-	result, err := server.chatWithRetry(context.Background(), "test-session", messages, nil, nil)
+	result, err := server.chatWithRetry(context.Background(), "test-session", messages, nil, nil, nil)
 
 	if err != nil {
 		t.Fatalf("chatWithRetry failed: %v", err)
 	}
 
-	// Should have tried: initial + 2 format retries + 1 compaction = 4 calls
-	if mock.callCount != 4 {
-		t.Errorf("call count = %d, want 4", mock.callCount)
+	// Should have tried: initial + 1 compaction retry = 2 calls
+	if mock.callCount != 2 {
+		t.Errorf("call count = %d, want 2", mock.callCount)
 	}
 
-	if result.Metadata.Prompt != "compacted prompt" {
-		t.Errorf("prompt = %q, want %q", result.Metadata.Prompt, "compacted prompt")
+	if result.Response != "Perfect! Generating now." {
+		t.Errorf("response = %q, want %q", result.Response, "Perfect! Generating now.")
+	}
+
+	if result.Metadata.Prompt != "test prompt" {
+		t.Errorf("prompt = %q, want %q", result.Metadata.Prompt, "test prompt")
 	}
 }
 
-func TestChatWithRetry_ErrorReturnedAfterAllRetriesFail(t *testing.T) {
+func TestChatWithRetry_ErrorReturnedAfterCompactionFails(t *testing.T) {
 	mock := &mockOllamaClient{
 		responses: []mockResponse{
-			{err: ollama.ErrMissingDelimiter}, // First attempt fails
-			{err: ollama.ErrInvalidJSON},      // First retry fails
-			{err: ollama.ErrMissingFields},    // Second retry fails
-			{err: ollama.ErrMissingDelimiter}, // Compaction retry fails
+			{err: ollama.ErrMissingFields}, // First attempt fails
+			{err: ollama.ErrMissingFields}, // Compaction retry fails
 		},
 	}
 
@@ -887,91 +820,28 @@ func TestChatWithRetry_ErrorReturnedAfterAllRetriesFail(t *testing.T) {
 		{Role: ollama.RoleUser, Content: "test message"},
 	}
 
-	_, err = server.chatWithRetry(context.Background(), "test-session", messages, nil, nil)
+	_, err = server.chatWithRetry(context.Background(), "test-session", messages, nil, nil, nil)
 
 	if err == nil {
 		t.Fatal("expected error after all retries fail, got nil")
 	}
 
-	// Should be a format error
-	if !errors.Is(err, ollama.ErrMissingDelimiter) &&
-		!errors.Is(err, ollama.ErrInvalidJSON) &&
-		!errors.Is(err, ollama.ErrMissingFields) {
-		t.Errorf("expected format error, got %v", err)
+	// Should be missing fields error
+	if !errors.Is(err, ollama.ErrMissingFields) {
+		t.Errorf("expected missing fields error, got %v", err)
 	}
 
-	// Should have tried: initial + 2 format retries + 1 compaction = 4 calls
-	if mock.callCount != 4 {
-		t.Errorf("call count = %d, want 4", mock.callCount)
+	// Should have tried: initial + 1 compaction = 2 calls
+	if mock.callCount != 2 {
+		t.Errorf("call count = %d, want 2", mock.callCount)
 	}
 }
 
-func TestChatWithRetry_RetryCountResetsOnSuccess(t *testing.T) {
+func TestChatWithRetry_NonRetryableErrorReturnsImmediately(t *testing.T) {
+	connectionErr := errors.New("connection failed")
 	mock := &mockOllamaClient{
 		responses: []mockResponse{
-			{result: ollama.ChatResult{ // First request succeeds
-				Response:    "What kind of cat?",
-				Metadata:    ollama.LLMMetadata{Prompt: ""},
-				RawResponse: "What kind of cat?\n---\n{\"prompt\":\"\",\"generate_image\":false}",
-			}},
-			{err: ollama.ErrMissingDelimiter}, // Second request fails
-			{result: ollama.ChatResult{ // Retry succeeds
-				Response:    "Perfect!",
-				Metadata:    ollama.LLMMetadata{Prompt: "tabby cat"},
-				RawResponse: "Perfect!\n---\n{\"prompt\":\"tabby cat\",\"generate_image\":true}",
-			}},
-		},
-	}
-
-	server, err := NewServerWithDeps("", mock, nil, nil, nil, nil)
-	if err != nil {
-		t.Fatalf("NewServerWithDeps failed: %v", err)
-	}
-
-	messages1 := []ollama.Message{
-		{Role: ollama.RoleUser, Content: "first message"},
-	}
-
-	// First request should succeed without retry
-	result1, err := server.chatWithRetry(context.Background(), "test-session", messages1, nil, nil)
-	if err != nil {
-		t.Fatalf("first chatWithRetry failed: %v", err)
-	}
-
-	if mock.callCount != 1 {
-		t.Errorf("first call count = %d, want 1", mock.callCount)
-	}
-
-	if result1.Response != "What kind of cat?" {
-		t.Errorf("first response = %q, want %q", result1.Response, "What kind of cat?")
-	}
-
-	// Second request should fail then retry (demonstrating retry count is per-request)
-	messages2 := []ollama.Message{
-		{Role: ollama.RoleUser, Content: "second message"},
-	}
-
-	result2, err := server.chatWithRetry(context.Background(), "test-session", messages2, nil, nil)
-	if err != nil {
-		t.Fatalf("second chatWithRetry failed: %v", err)
-	}
-
-	// Total calls should be 3 (1 from first + 2 from second)
-	if mock.callCount != 3 {
-		t.Errorf("total call count = %d, want 3", mock.callCount)
-	}
-
-	if result2.Metadata.Prompt != "tabby cat" {
-		t.Errorf("second prompt = %q, want %q", result2.Metadata.Prompt, "tabby cat")
-	}
-}
-
-func TestChatWithRetry_NonFormatErrorReturnsImmediately(t *testing.T) {
-	nonFormatErr := errors.New("connection error")
-
-	mock := &mockOllamaClient{
-		responses: []mockResponse{
-			{err: nonFormatErr}, // Non-format error
+			{err: connectionErr}, // Non-retryable error
 		},
 	}
 
@@ -984,17 +854,17 @@ func TestChatWithRetry_NonFormatErrorReturnsImmediately(t *testing.T) {
 		{Role: ollama.RoleUser, Content: "test message"},
 	}
 
-	_, err = server.chatWithRetry(context.Background(), "test-session", messages, nil, nil)
-
+	// Should fail immediately without retry
+	_, err = server.chatWithRetry(context.Background(), "test-session", messages, nil, nil, nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
 
-	if !errors.Is(err, nonFormatErr) {
+	if !errors.Is(err, connectionErr) {
 		t.Errorf("expected connection error, got %v", err)
 	}
 
-	// Should have only tried once (no retry for non-format errors)
+	// Should have tried only once (no retry for connection errors)
 	if mock.callCount != 1 {
 		t.Errorf("call count = %d, want 1", mock.callCount)
 	}
@@ -1007,7 +877,7 @@ func TestCompactContext_CorrectFormat(t *testing.T) {
 	}
 
 	messages := []ollama.Message{
-		{Role: ollama.RoleSystem, Content: ollama.SystemPrompt},
+		{Role: ollama.RoleSystem, Content: server.buildSystemPrompt()},
 		{Role: ollama.RoleUser, Content: "I want a cat in a hat"},
 		{Role: ollama.RoleAssistant, Content: "What kind of cat?\n---\n{\"prompt\":\"\",\"generate_image\":false}"},
 		{Role: ollama.RoleUser, Content: "A tabby cat wearing a wizard hat"},
@@ -1040,23 +910,14 @@ func TestCompactContext_CorrectFormat(t *testing.T) {
 		}
 	}
 
-	// Should request JSON-only response
-	if !strings.Contains(content, "ONLY JSON") {
-		t.Errorf("compacted content missing 'ONLY JSON', got: %s", content)
+	// Should mention function calling
+	if !strings.Contains(content, "update_generation") {
+		t.Errorf("compacted content missing 'update_generation' function call, got: %s", content)
 	}
 
-	// Should include delimiter
-	if !strings.Contains(content, "---") {
-		t.Errorf("compacted content missing delimiter '---', got: %s", content)
-	}
-
-	// Should include JSON format example
-	if !strings.Contains(content, `{"prompt":`) {
-		t.Errorf("compacted content missing JSON format example, got: %s", content)
-	}
-
-	if !strings.Contains(content, `"generate_image": true`) {
-		t.Errorf("compacted content missing 'generate_image' field example, got: %s", content)
+	// Should mention generate_image parameter
+	if !strings.Contains(content, "generate_image") {
+		t.Errorf("compacted content missing 'generate_image' parameter, got: %s", content)
 	}
 }
 
@@ -1067,7 +928,7 @@ func TestCompactContext_SkipsSystemInjectedMessages(t *testing.T) {
 	}
 
 	messages := []ollama.Message{
-		{Role: ollama.RoleSystem, Content: ollama.SystemPrompt},
+		{Role: ollama.RoleSystem, Content: server.buildSystemPrompt()},
 		{Role: ollama.RoleUser, Content: "I want a cat"},
 		{Role: ollama.RoleUser, Content: "[user edited prompt to: cat in hat]"}, // Should be skipped
 		{Role: ollama.RoleUser, Content: "[Current prompt: cat in space]"},      // Should be skipped
@@ -1115,14 +976,14 @@ func TestCompactContext_TruncatesLongContent(t *testing.T) {
 
 	// Extract just the "User wants: ..." part before the instructions
 	userWantsPart := content
-	if idx := strings.Index(content, "\n\nRespond with ONLY JSON"); idx != -1 {
+	if idx := strings.Index(content, "\n\nCall the update_generation"); idx != -1 {
 		userWantsPart = content[:idx]
 	}
 
 	// The summary should be truncated (max 200 chars after "User wants: ")
-	// Total should be less than some reasonable upper bound
-	if len(userWantsPart) > 300 {
-		t.Errorf("compacted user wants section too long: %d chars (should be under 300)", len(userWantsPart))
+	// Total should be less than some reasonable upper bound (250 chars for "User wants: " prefix + 200 char summary)
+	if len(userWantsPart) > 250 {
+		t.Errorf("compacted user wants section too long: %d chars (should be under 250)", len(userWantsPart))
 	}
 
 	// Should contain ellipsis if truncated
@@ -1525,5 +1386,123 @@ func TestFormatClampedFeedback(t *testing.T) {
 				t.Errorf("formatClampedFeedback() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestNewServerWithDeps_AgentPromptLoading(t *testing.T) {
+	// Create tmp directory within current test directory (not using .. traversal)
+	tmpDir := "testdata_web"
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
+		t.Fatalf("failed to create tmp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create test agent prompt file
+	testPromptPath := filepath.Join(tmpDir, "test-agent.md")
+	testPromptContent := "You are a test agent.\nBe helpful and concise."
+	if err := os.WriteFile(testPromptPath, []byte(testPromptContent), 0644); err != nil {
+		t.Fatalf("failed to write test prompt file: %v", err)
+	}
+
+	tests := []struct {
+		name            string
+		cfg             *config.Config
+		wantPrompt      string
+		wantErr         bool
+		wantErrContains string
+	}{
+		{
+			name: "loads custom agent prompt",
+			cfg: &config.Config{
+				Steps:           4,
+				CFG:             1.0,
+				Seed:            0,
+				Width:           1024,
+				Height:          1024,
+				AgentPromptPath: testPromptPath,
+			},
+			wantPrompt: testPromptContent,
+			wantErr:    false,
+		},
+		{
+			name: "returns error for non-existent prompt file",
+			cfg: &config.Config{
+				Steps:           4,
+				CFG:             1.0,
+				Seed:            0,
+				Width:           1024,
+				Height:          1024,
+				AgentPromptPath: filepath.Join(tmpDir, "nonexistent.md"),
+			},
+			wantErr:         true,
+			wantErrContains: "failed to load agent prompt",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, err := NewServerWithDeps("", nil, nil, nil, nil, tt.cfg)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("NewServerWithDeps() error = nil, want error")
+				}
+				if !strings.Contains(err.Error(), tt.wantErrContains) {
+					t.Errorf("error = %q, want to contain %q", err.Error(), tt.wantErrContains)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("NewServerWithDeps() error = %v, want nil", err)
+			}
+
+			if server.agentPrompt != tt.wantPrompt {
+				t.Errorf("agentPrompt = %q, want %q", server.agentPrompt, tt.wantPrompt)
+			}
+		})
+	}
+}
+
+func TestNewServerWithDeps_DefaultAgentPrompt(t *testing.T) {
+	// Create tmp directory within current test directory (not using .. traversal)
+	tmpDir := "testdata_web_default"
+	defaultPromptDir := filepath.Join(tmpDir, "config", "agents")
+	if err := os.MkdirAll(defaultPromptDir, 0755); err != nil {
+		t.Fatalf("failed to create tmp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	defaultPromptPath := filepath.Join(defaultPromptDir, "ara.md")
+	defaultContent := "Default agent prompt content."
+	if err := os.WriteFile(defaultPromptPath, []byte(defaultContent), 0644); err != nil {
+		t.Fatalf("failed to write default prompt file: %v", err)
+	}
+
+	// Test with config pointing to default path
+	cfg := &config.Config{
+		Steps:           4,
+		CFG:             1.0,
+		Seed:            0,
+		Width:           1024,
+		Height:          1024,
+		AgentPromptPath: defaultPromptPath,
+	}
+
+	server, err := NewServerWithDeps("", nil, nil, nil, nil, cfg)
+	if err != nil {
+		t.Fatalf("NewServerWithDeps() error = %v, want nil", err)
+	}
+
+	if server.agentPrompt != defaultContent {
+		t.Errorf("agentPrompt = %q, want %q (default)", server.agentPrompt, defaultContent)
+	}
+}
+
+func TestGenerateFallbackResponse(t *testing.T) {
+	want := "Generating image. Try adjusting the style or adding more details to refine the result."
+	got := generateFallbackResponse()
+	if got != want {
+		t.Errorf("generateFallbackResponse() = %q, want %q", got, want)
 	}
 }

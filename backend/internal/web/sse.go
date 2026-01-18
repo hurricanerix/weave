@@ -56,6 +56,12 @@ const (
 	// Example: {"attempt": 2}
 	EventAgentRetry = "agent-retry"
 
+	// EventAgentThinking indicates the agent has begun processing the user's request.
+	// Sent immediately before the LLM call starts so the UI can show thinking state.
+	// Data schema: {"started": bool}
+	// Example: {"started": true}
+	EventAgentThinking = "agent-thinking"
+
 	// MaxConnections is the maximum number of concurrent SSE connections.
 	MaxConnections = 1000
 )

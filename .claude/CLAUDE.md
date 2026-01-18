@@ -21,21 +21,32 @@ Electron (UI) → weave-backend (Go) → weave-compute (C)
 
 ## Development Workflow
 
-### Story to Tasks
+### Design to Tasks
 
-1. **story-writer** - Define the feature (conversational, business-focused)
-2. **task-planner** - Break into technical tasks (codebase-aware)
+1. `/architect` - Technical design discussion (how does it fit the system?)
+2. `/write-story` - Define the feature (conversational, business-focused)
+3. `/plan-tasks` - Break into technical tasks (codebase-aware)
 
 ### Implementation
 
-3. **backend-developer** or **compute-developer** - Implement each task
-4. **code-reviewer** - Review per-task for code quality
+4. **backend-developer** or **compute-developer** - Implement each task
+5. **code-reviewer** - Review per-task for code quality
 
 ### Story Completion
 
-5. **qa-reviewer** - Verify acceptance criteria + user experience (per-story)
-6. **security-reviewer** - Assess security + risk (per-story)
-7. **Human approval** before committing
+6. **qa-reviewer** - Verify acceptance criteria + user experience (per-story)
+7. **security-reviewer** - Assess security + risk (per-story)
+8. **Human approval** before committing
+
+## Commands
+
+Available as slash commands:
+
+| Command | Role | When Used |
+|---------|------|-----------|
+| `/architect` | Technical design discussion | Before defining a feature |
+| `/write-story` | Define features, acceptance criteria | After design is clear |
+| `/plan-tasks` | Break stories into tasks | After story is ready |
 
 ## Specialized Agents
 
@@ -43,8 +54,6 @@ Available in `.claude/agents/`:
 
 | Agent | Role | When Used |
 |-------|------|-----------|
-| **story-writer** | Define features, acceptance criteria | New feature planning |
-| **task-planner** | Break stories into tasks | After story is ready |
 | **backend-developer** | Implement backend (Go) code | Per task |
 | **compute-developer** | Implement compute (C) code | Per task |
 | **electron-developer** | Implement Electron (JS) code | Per task |
@@ -58,7 +67,7 @@ Available in `.claude/agents/`:
 Stories live in `docs/stories/NNN-title.md`. Each story contains:
 - Problem, user, desired outcome
 - Acceptance criteria
-- Tasks (added by task-planner)
+- Tasks (added by `/plan-tasks`)
 
 Tasks are numbered per-story (001, 002, 003...) and assigned to a domain (backend/compute/electron/packaging).
 

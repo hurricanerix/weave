@@ -133,12 +133,12 @@ func SpawnCompute(socketPath string) (*exec.Cmd, io.WriteCloser, error) {
 	// Find the compute binary
 	// Try multiple locations to handle both runtime and test contexts
 	candidatePaths := []string{
-		"compute/weave-compute",           // From project root
-		"../compute/weave-compute",        // From backend/
-		"../../compute/weave-compute",     // From backend/cmd/weave
-		"../../../compute/weave-compute",  // From backend/test/integration/
-		"/usr/local/bin/weave-compute",    // System install
-		"/usr/bin/weave-compute",          // System install
+		"compute/weave-compute",          // From project root
+		"../compute/weave-compute",       // From backend/
+		"../../compute/weave-compute",    // From backend/cmd/weave
+		"../../../compute/weave-compute", // From backend/test/integration/
+		"/usr/local/bin/weave-compute",   // System install
+		"/usr/bin/weave-compute",         // System install
 	}
 
 	// Also check for compute binary next to weave executable (packaged Electron app)

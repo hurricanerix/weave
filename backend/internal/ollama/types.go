@@ -2,21 +2,16 @@
 // It handles streaming chat completions and prompt extraction for image generation.
 package ollama
 
+import "encoding/json"
+
 // Default configuration constants
 const (
 	DefaultEndpoint = "http://localhost:11434"
-	DefaultModel    = "mistral:7b"
+	DefaultModel    = "llama3.1:8b"
 	DefaultTimeout  = 60 // seconds
 )
 
-// Response format constants
-const (
-	// ResponseDelimiter is the delimiter that separates conversational text
-	// from JSON metadata in LLM responses. The LLM is instructed to end
-	// every message with this delimiter followed by JSON containing prompt
-	// and generation settings.
-	ResponseDelimiter = "---"
-)
+// Response format constants (removed - function calling is now the only supported format)
 
 // API endpoints
 const (
@@ -31,133 +26,40 @@ const (
 	RoleAssistant = "assistant"
 )
 
-// SystemPrompt defines the agent's behavior for conversational image generation.
-// The agent asks clarifying questions to understand what the user wants,
-// then outputs a prompt when ready to generate.
-//
-// CRITICAL: Every response MUST end with the delimiter "---" followed by JSON metadata.
-// This format is required for reliable parsing and prompt extraction.
-const SystemPrompt = `You help users create images. Ask clarifying questions, then provide a prompt for the generator.
+// Tool represents a function that can be called by the model.
+// Ollama's function calling API allows models to request function calls
+// as part of their response.
+type Tool struct {
+	Type     string       `json:"type"`     // Always "function"
+	Function ToolFunction `json:"function"` // Function definition
+}
 
-FORMAT REQUIRED: End EVERY response with "---" on its own line, then JSON with these fields:
+// ToolFunction describes a callable function.
+// The schema matches OpenAI's function calling format, which ollama supports.
+type ToolFunction struct {
+	Name        string                 `json:"name"`        // Function name
+	Description string                 `json:"description"` // Human-readable description
+	Parameters  map[string]interface{} `json:"parameters"`  // JSON Schema for parameters
+}
 
-- "prompt" (string): Generation prompt (empty if still asking questions)
-- "generate_image" (boolean): true to automatically trigger generation, false to just update prompt/settings
-- "steps" (integer, 1-100): Inference steps. Controls quality/speed tradeoff. Higher = more detailed but slower.
-- "cfg" (float, 0-20): Classifier-free guidance. Controls prompt adherence. Higher = stricter.
-- "seed" (integer): Random seed. -1 for random, 0+ for deterministic/reproducible results.
+// ToolCall represents a function call made by the model.
+// When the model decides to call a function, it returns a ToolCall
+// in the response message.
+type ToolCall struct {
+	Function ToolCallFunction `json:"function"` // Function call details
+}
 
-Keep prompts SHORT (under 200 chars). Ask about: style, subject details, setting, mood. Preserve user edits marked "[user edited prompt to: ...]".
-
-AUTO-GENERATION BEHAVIOR:
-
-The "generate_image" field controls whether generation automatically triggers:
-- generate_image: true → Backend automatically generates the image (same as user clicking generate button)
-- generate_image: false → Just updates prompt/settings in UI, no automatic generation (user can still click manually)
-
-Users can specify their auto-generation preference conversationally. Track and respect these preferences:
-
-- "generate every time" or "show me previews as you go" → Set generate_image: true for all prompt updates
-- "never auto-generate" or "I'll generate manually" → Set generate_image: false always (just update prompt/settings)
-- "generate every 3 tweaks" or "every few changes" → Track iterations, set generate_image: true every N updates
-- "use your judgment" or no preference stated → Default behavior: set generate_image: true when prompt is ready, false when asking questions
-
-If no preference is stated, use your judgment. Typically:
-- generate_image: false when asking clarifying questions (just exploring)
-- generate_image: true when you have a complete prompt and expect user wants to see results
-- generate_image: true when user explicitly asks to see something ("show me", "let me see")
-- generate_image: true when user delegates decisions to you ("you pick", "you decide", "just generate", "surprise me", "your choice")
-- generate_image: false when making small tweaks unless user asked for previews
-
-IMPORTANT: When user says "you pick", "you decide", "your choice", "just do it", "generate it", or similar delegation phrases, STOP asking questions. Make reasonable creative choices yourself and generate immediately with generate_image: true.
-
-Remember user preferences throughout the conversation. If user says "generate every time", honor that for all subsequent updates.
-
-GENERATION SETTINGS GUIDANCE:
-
-Be conservative with settings - only change when user explicitly asks or implies different quality/speed needs.
-
-Steps (1-100):
-- Default: 4 (fast iteration, good for exploring ideas)
-- Quality: 20-30 (more detailed, slower)
-- User says "more detailed" or "higher quality" → increase steps to 20-30
-- User says "faster" or "quick preview" → decrease steps to 4-8
-
-CFG (0-20):
-- Default: 1.0 (balanced)
-- Strict adherence: 3-7 (when results don't match prompt well)
-- User says results don't match their description → suggest increasing cfg to 3-7
-
-Seed:
-- Default: -1 (random, for exploring variations)
-- Deterministic: 0+ (when user wants reproducibility or to iterate on specific result)
-- Keep at -1 unless user explicitly wants "same result" or "reproduce this"
-
-Invalid values will be clamped to valid ranges and you will receive feedback.
-
-CRITICAL RULES:
-1. Generate ONLY your response - never generate fake user messages or continue conversations
-2. Wait for the user to respond before generating your next message
-3. Each response you generate is ONE assistant turn only
-
-EXAMPLE RESPONSES (these show what YOU should output given user input):
-
-Given "cat in hat":
-What kind of cat? Hat style? Setting? Realistic or cartoon?
----
-{"prompt": "", "generate_image": false, "steps": 4, "cfg": 1.0, "seed": -1}
-
-Given "tabby, wizard hat, library, realistic":
-Perfect! Generating now.
----
-{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "generate_image": true, "steps": 4, "cfg": 1.0, "seed": -1}
-
-Given "make it more detailed":
-I'll increase the quality settings for more detail.
----
-{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "generate_image": true, "steps": 28, "cfg": 1.0, "seed": -1}
-
-Given "I want to reproduce the last one exactly":
-Setting a fixed seed so you get the same result.
----
-{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "generate_image": true, "steps": 28, "cfg": 1.0, "seed": 42}
-
-Given "generate every time you change something":
-I'll automatically generate a preview with every update.
----
-{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "generate_image": true, "steps": 28, "cfg": 1.0, "seed": 42}
-
-Given "actually never auto-generate, I'll do it manually":
-Got it, I'll just update the prompt and settings without triggering generation.
----
-{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "generate_image": false, "steps": 28, "cfg": 1.0, "seed": 42}
-
-Given "you pick the details" or "just generate something":
-I'll make some creative choices and generate! Going with a cozy library setting.
----
-{"prompt": "tabby cat wearing wizard hat in library, realistic photo", "generate_image": true, "steps": 4, "cfg": 1.0, "seed": -1}
-
-WRONG RESPONSES:
-
-Missing delimiter/JSON:
-What kind of cat?
-
-No text before delimiter:
----
-{"prompt": "", "generate_image": false, "steps": 4, "cfg": 1.0, "seed": -1}
-
-Prompt too long:
----
-{"prompt": "A majestic tabby cat with striking amber eyes gracefully perched upon an antique desk wearing an elaborate wizard hat adorned with stars and moons surrounded by towering bookshelves...", "generate_image": true, "steps": 4, "cfg": 1.0, "seed": -1}
-
-Missing required fields:
----
-{"prompt": "cat in hat", "generate_image": true}`
+// ToolCallFunction contains the function name and arguments.
+type ToolCallFunction struct {
+	Name      string          `json:"name"`      // Function name
+	Arguments json.RawMessage `json:"arguments"` // Raw JSON arguments (parse later)
+}
 
 // Message represents a single message in a conversation.
 type Message struct {
-	Role    string `json:"role"`    // "system", "user", or "assistant"
-	Content string `json:"content"` // Message text
+	Role      string     `json:"role"`                 // "system", "user", or "assistant"
+	Content   string     `json:"content"`              // Message text
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"` // Function calls made by the model
 }
 
 // ChatOptions contains optional parameters for chat requests.
@@ -174,6 +76,7 @@ type ChatRequest struct {
 	Messages []Message    `json:"messages"`          // Conversation history
 	Stream   bool         `json:"stream"`            // Whether to stream response
 	Options  *ChatOptions `json:"options,omitempty"` // Optional parameters
+	Tools    []Tool       `json:"tools,omitempty"`   // Available tools for function calling
 }
 
 // ChatResponse represents a streaming response from ollama's /api/chat endpoint.
@@ -214,9 +117,10 @@ type StreamToken struct {
 	Done    bool   // True if this is the final token
 }
 
-// LLMMetadata represents the structured JSON metadata that the LLM includes
-// at the end of every response after the ResponseDelimiter.
-// This replaces text-based prompt extraction with reliable JSON parsing.
+// LLMMetadata represents the structured metadata extracted from function calls.
+// The LLM calls the update_generation function with these parameters instead of
+// outputting formatted text. This provides reliable structured output through
+// the model's native function calling capability.
 type LLMMetadata struct {
 	// Prompt is the image generation prompt. Empty string if the LLM is still
 	// asking questions and not ready to generate.
@@ -244,18 +148,66 @@ type LLMMetadata struct {
 
 // ChatResult represents the complete result of a chat request.
 // It contains both the conversational text (displayed to user) and the
-// parsed metadata (used for prompt extraction).
+// parsed metadata (extracted from function calls).
 type ChatResult struct {
-	// Response is the conversational text only (before ResponseDelimiter).
+	// Response is the conversational text only (before tool call marker).
 	// This is what should be displayed in the chat pane.
 	Response string
 
-	// Metadata is the parsed JSON metadata from the end of the response.
+	// Metadata is the parsed metadata from function call arguments.
 	// Contains the extracted prompt and generation settings.
+	// Only valid when HasToolCall is true.
 	Metadata LLMMetadata
 
-	// RawResponse is the full LLM response including conversational text,
-	// delimiter, and JSON metadata. This is what should be stored in
+	// HasToolCall indicates whether the LLM called the update_generation function.
+	// If false, this is a pure conversational response with no generation metadata.
+	HasToolCall bool
+
+	// RawResponse is the full LLM response including conversational text
+	// and tool call marker/data. This is what should be stored in
 	// conversation history to preserve the complete response format.
 	RawResponse string
+}
+
+// UpdateGenerationTool returns the tool definition for the update_generation function.
+// This function allows the LLM to update generation parameters and optionally trigger
+// image generation through structured function calling.
+func UpdateGenerationTool() Tool {
+	return Tool{
+		Type: "function",
+		Function: ToolFunction{
+			Name:        "update_generation",
+			Description: "Update image generation prompt and settings. Use this to set or modify the generation parameters and optionally trigger image generation.",
+			Parameters: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"prompt": map[string]interface{}{
+						"type":        "string",
+						"description": "Image generation prompt. Should be concise (under 200 characters). Empty string if still asking questions.",
+					},
+					"steps": map[string]interface{}{
+						"type":        "integer",
+						"description": "Number of inference steps (1-100). Higher values produce more detailed images but take longer. Default: 4 for fast iteration.",
+						"minimum":     1,
+						"maximum":     100,
+					},
+					"cfg": map[string]interface{}{
+						"type":        "number",
+						"description": "Classifier-free guidance scale (0-20). Controls how strictly the image adheres to the prompt. Default: 1.0 for balanced results.",
+						"minimum":     0,
+						"maximum":     20,
+					},
+					"seed": map[string]interface{}{
+						"type":        "integer",
+						"description": "Random seed for generation. Use -1 for random (exploring variations), or a specific value (0+) for deterministic/reproducible results.",
+					},
+					"generate_image": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Whether to automatically trigger image generation. Set to true to generate immediately, false to just update settings without generating.",
+					},
+				},
+				"required": []string{"prompt", "steps", "cfg", "seed", "generate_image"},
+			},
+		},
+	}
 }

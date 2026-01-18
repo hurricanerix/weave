@@ -296,7 +296,7 @@ type mockResponse struct {
 }
 
 // Chat simulates streaming tokens to the callback.
-func (m *mockOllamaClient) Chat(ctx context.Context, messages []ollama.Message, seed *int64, callback ollama.StreamCallback) (ollama.ChatResult, error) {
+func (m *mockOllamaClient) Chat(ctx context.Context, messages []ollama.Message, seed *int64, tools []ollama.Tool, callback ollama.StreamCallback) (ollama.ChatResult, error) {
 	// Multi-response mode (for retry testing)
 	if m.responses != nil {
 		if m.callCount >= len(m.responses) {

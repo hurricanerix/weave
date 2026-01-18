@@ -4,320 +4,85 @@ import "testing"
 
 func TestParseResponse(t *testing.T) {
 	tests := []struct {
-		name               string
-		response           string
-		wantText           string
-		wantPrompt         string
-		wantGenerateImage  bool
-		wantSteps          int
-		wantCFG            float64
-		wantSeed           int64
-		wantErr            error
-		wantErrDescription string
+		name              string
+		response          string
+		wantText          string
+		wantPrompt        string
+		wantGenerateImage bool
+		wantSteps         int
+		wantCFG           float64
+		wantSeed          int64
+		wantHasToolCall   bool
+		wantErr           bool
 	}{
 		{
-			name:              "valid response with prompt ready",
-			response:          "Perfect! Generating your image now.\n---\n{\"prompt\": \"a tabby cat wearing a blue wizard hat\", \"steps\": 28, \"cfg\": 7.5, \"seed\": 42}",
-			wantText:          "Perfect! Generating your image now.",
-			wantPrompt:        "a tabby cat wearing a blue wizard hat",
-			wantGenerateImage: false,
-			wantSteps:         28,
-			wantCFG:           7.5,
-			wantSeed:          42,
-			wantErr:           nil,
-		},
-		{
-			name:              "valid response still asking questions",
-			response:          "What kind of cat? Hat style?\n---\n{\"prompt\": \"\", \"steps\": 20, \"cfg\": 7.0, \"seed\": 0}",
-			wantText:          "What kind of cat? Hat style?",
-			wantPrompt:        "",
-			wantGenerateImage: false,
-			wantSteps:         20,
-			wantCFG:           7.0,
-			wantSeed:          0,
-			wantErr:           nil,
-		},
-		{
-			name:              "valid response with empty prompt not ready",
-			response:          "I need more details about the setting.\n---\n{\"prompt\": \"\", \"steps\": 25, \"cfg\": 8.0, \"seed\": 123}",
-			wantText:          "I need more details about the setting.",
-			wantPrompt:        "",
-			wantGenerateImage: false,
-			wantSteps:         25,
-			wantCFG:           8.0,
-			wantSeed:          123,
-			wantErr:           nil,
-		},
-		{
-			name:              "valid response with multiline conversational text",
-			response:          "Great! I have all the details I need.\n\nLet me create that image for you.\n---\n{\"prompt\": \"realistic photo of a golden retriever\", \"steps\": 30, \"cfg\": 7.5, \"seed\": 999}",
-			wantText:          "Great! I have all the details I need.\n\nLet me create that image for you.",
-			wantPrompt:        "realistic photo of a golden retriever",
-			wantGenerateImage: false,
-			wantSteps:         30,
-			wantCFG:           7.5,
-			wantSeed:          999,
-			wantErr:           nil,
-		},
-		{
-			name:              "valid response with whitespace before delimiter",
-			response:          "Here you go!   \n   ---\n{\"prompt\": \"a cat in space\", \"steps\": 15, \"cfg\": 6.0, \"seed\": 555}",
-			wantText:          "Here you go!",
-			wantPrompt:        "a cat in space",
-			wantGenerateImage: false,
-			wantSteps:         15,
-			wantCFG:           6.0,
-			wantSeed:          555,
-			wantErr:           nil,
-		},
-		{
-			name:              "valid response with whitespace after delimiter",
-			response:          "Ready!\n---   \n   {\"prompt\": \"a dog on the moon\", \"steps\": 40, \"cfg\": 9.0, \"seed\": 1234}",
-			wantText:          "Ready!",
-			wantPrompt:        "a dog on the moon",
-			wantGenerateImage: false,
-			wantSteps:         40,
-			wantCFG:           9.0,
-			wantSeed:          1234,
-			wantErr:           nil,
-		},
-		{
-			name:               "missing delimiter",
-			response:           "This response has no delimiter or JSON",
-			wantText:           "",
-			wantPrompt:         "",
-			wantErr:            ErrMissingDelimiter,
-			wantErrDescription: "response missing delimiter",
-		},
-		{
-			name:               "delimiter but no JSON",
-			response:           "Some text\n---\n",
-			wantText:           "",
-			wantPrompt:         "",
-			wantErr:            ErrInvalidJSON,
-			wantErrDescription: "invalid JSON after delimiter",
-		},
-		{
-			name:               "delimiter with invalid JSON",
-			response:           "Some text\n---\n{this is not valid json}",
-			wantText:           "",
-			wantPrompt:         "",
-			wantErr:            ErrInvalidJSON,
-			wantErrDescription: "invalid JSON after delimiter",
-		},
-		{
-			name:               "delimiter with malformed JSON",
-			response:           "Some text\n---\n{\"prompt\": \"missing closing brace\", \"ready\": true",
-			wantText:           "",
-			wantPrompt:         "",
-			wantErr:            ErrInvalidJSON,
-			wantErrDescription: "invalid JSON after delimiter",
-		},
-		{
-			name:               "valid JSON missing prompt field",
-			response:           "Some text\n---\n{\"steps\": 20, \"cfg\": 7.0, \"seed\": 0}",
-			wantText:           "",
-			wantPrompt:         "",
-			wantErr:            ErrMissingFields,
-			wantErrDescription: "JSON missing required fields",
-		},
-		{
-			name:               "valid JSON missing steps, cfg, seed fields",
-			response:           "Some text\n---\n{\"prompt\": \"a cat\"}",
-			wantText:           "",
-			wantPrompt:         "",
-			wantErr:            ErrMissingFields,
-			wantErrDescription: "JSON missing required fields",
-		},
-		{
-			name:               "valid JSON missing all required fields",
-			response:           "Some text\n---\n{\"other\": \"field\"}",
-			wantText:           "",
-			wantPrompt:         "",
-			wantErr:            ErrMissingFields,
-			wantErrDescription: "JSON missing required fields",
-		},
-		{
-			name:               "empty JSON object",
-			response:           "Some text\n---\n{}",
-			wantText:           "",
-			wantPrompt:         "",
-			wantErr:            ErrMissingFields,
-			wantErrDescription: "JSON missing required fields",
-		},
-		{
-			name:               "valid JSON missing steps field",
-			response:           "Some text\n---\n{\"prompt\": \"a cat\", \"cfg\": 7.5, \"seed\": 42}",
-			wantText:           "",
-			wantPrompt:         "",
-			wantErr:            ErrMissingFields,
-			wantErrDescription: "JSON missing required fields",
-		},
-		{
-			name:               "valid JSON missing cfg field",
-			response:           "Some text\n---\n{\"prompt\": \"a cat\", \"steps\": 28, \"seed\": 42}",
-			wantText:           "",
-			wantPrompt:         "",
-			wantErr:            ErrMissingFields,
-			wantErrDescription: "JSON missing required fields",
-		},
-		{
-			name:               "valid JSON missing seed field",
-			response:           "Some text\n---\n{\"prompt\": \"a cat\", \"steps\": 28, \"cfg\": 7.5}",
-			wantText:           "",
-			wantPrompt:         "",
-			wantErr:            ErrMissingFields,
-			wantErrDescription: "JSON missing required fields",
-		},
-		{
-			name:               "valid JSON with only new fields",
-			response:           "Some text\n---\n{\"steps\": 28, \"cfg\": 7.5, \"seed\": 42}",
-			wantText:           "",
-			wantPrompt:         "",
-			wantErr:            ErrMissingFields,
-			wantErrDescription: "JSON missing required fields",
-		},
-		{
-			name:              "delimiter in conversational text",
-			response:          "I'll use --- as a separator in the prompt.\n---\n{\"prompt\": \"image with --- separator\", \"steps\": 20, \"cfg\": 7.5, \"seed\": 42}",
-			wantText:          "I'll use --- as a separator in the prompt.",
-			wantPrompt:        "image with --- separator",
-			wantGenerateImage: false,
-			wantSteps:         20,
-			wantCFG:           7.5,
-			wantSeed:          42,
-			wantErr:           nil,
-		},
-		{
-			name:              "response with extra fields in JSON",
-			response:          "Great!\n---\n{\"prompt\": \"a cat\", \"steps\": 28, \"cfg\": 7.0, \"seed\": 100, \"confidence\": 0.95, \"other\": \"field\"}",
-			wantText:          "Great!",
-			wantPrompt:        "a cat",
-			wantGenerateImage: false,
-			wantSteps:         28,
-			wantCFG:           7.0,
-			wantSeed:          100,
-			wantErr:           nil,
-		},
-		{
-			name:              "response with special characters in prompt",
-			response:          "Done!\n---\n{\"prompt\": \"a cat with \\\"quotes\\\" and \\n newlines\", \"steps\": 25, \"cfg\": 8.5, \"seed\": 777}",
-			wantText:          "Done!",
-			wantPrompt:        "a cat with \"quotes\" and \n newlines",
-			wantGenerateImage: false,
-			wantSteps:         25,
-			wantCFG:           8.5,
-			wantSeed:          777,
-			wantErr:           nil,
-		},
-		{
-			name:              "response with unicode in conversational text",
-			response:          "Perfect! 🎨\n---\n{\"prompt\": \"a cat in Tokyo\", \"steps\": 30, \"cfg\": 7.5, \"seed\": 888}",
-			wantText:          "Perfect! 🎨",
-			wantPrompt:        "a cat in Tokyo",
-			wantGenerateImage: false,
-			wantSteps:         30,
-			wantCFG:           7.5,
-			wantSeed:          888,
-			wantErr:           nil,
-		},
-		{
-			name:              "compact format no whitespace",
-			response:          "Done\n---\n{\"prompt\":\"a cat\",\"ready\":true,\"steps\":20,\"cfg\":7.5,\"seed\":42}",
-			wantText:          "Done",
-			wantPrompt:        "a cat",
-			wantGenerateImage: false,
-			wantSteps:         20,
-			wantCFG:           7.5,
-			wantSeed:          42,
-			wantErr:           nil,
-		},
-		{
-			name:              "formatted JSON with indentation",
-			response:          "Done\n---\n{\n  \"prompt\": \"a cat\",\n  \"ready\": true,\n  \"steps\": 28,\n  \"cfg\": 7.0,\n  \"seed\": 12345\n}",
-			wantText:          "Done",
-			wantPrompt:        "a cat",
-			wantGenerateImage: false,
-			wantSteps:         28,
-			wantCFG:           7.0,
-			wantSeed:          12345,
-			wantErr:           nil,
-		},
-		{
-			name:              "multiple delimiters on own lines uses first",
-			response:          "Here's a separator:\n---\n{\"prompt\": \"a cat\", \"steps\": 22, \"cfg\": 6.5, \"seed\": 9999}",
-			wantText:          "Here's a separator:",
-			wantPrompt:        "a cat",
-			wantGenerateImage: false,
-			wantSteps:         22,
-			wantCFG:           6.5,
-			wantSeed:          9999,
-			wantErr:           nil,
-		},
-		{
-			name:               "JSON with prompt as number",
-			response:           "Done\n---\n{\"prompt\": 123, \"ready\": true}",
-			wantText:           "",
-			wantPrompt:         "",
-			wantErr:            ErrInvalidJSON,
-			wantErrDescription: "invalid JSON after delimiter",
-		},
-		{
-			name:              "generate_image true",
-			response:          "Perfect! Let me generate this for you.\n---\n{\"prompt\": \"a cat in space\", \"generate_image\": true, \"steps\": 28, \"cfg\": 7.5, \"seed\": 42}",
-			wantText:          "Perfect! Let me generate this for you.",
+			name:              "function call with generate_image true",
+			response:          "Perfect! Generating now.\n__TOOL_CALLS__\n[{\"function\":{\"name\":\"update_generation\",\"arguments\":\"{\\\"prompt\\\":\\\"a cat in space\\\",\\\"steps\\\":28,\\\"cfg\\\":7.5,\\\"seed\\\":42,\\\"generate_image\\\":true}\"}}]",
+			wantText:          "Perfect! Generating now.",
 			wantPrompt:        "a cat in space",
 			wantGenerateImage: true,
 			wantSteps:         28,
 			wantCFG:           7.5,
 			wantSeed:          42,
-			wantErr:           nil,
+			wantHasToolCall:   true,
+			wantErr:           false,
 		},
 		{
-			name:              "generate_image false",
-			response:          "I've updated the prompt, but not generating yet.\n---\n{\"prompt\": \"a dog on the moon\", \"generate_image\": false, \"steps\": 20, \"cfg\": 5.0, \"seed\": 123}",
-			wantText:          "I've updated the prompt, but not generating yet.",
-			wantPrompt:        "a dog on the moon",
+			name:              "function call with generate_image false",
+			response:          "What kind of cat?\n__TOOL_CALLS__\n[{\"function\":{\"name\":\"update_generation\",\"arguments\":\"{\\\"prompt\\\":\\\"\\\",\\\"steps\\\":4,\\\"cfg\\\":1.0,\\\"seed\\\":-1,\\\"generate_image\\\":false}\"}}]",
+			wantText:          "What kind of cat?",
+			wantPrompt:        "",
 			wantGenerateImage: false,
-			wantSteps:         20,
-			wantCFG:           5.0,
-			wantSeed:          123,
-			wantErr:           nil,
+			wantSteps:         4,
+			wantCFG:           1.0,
+			wantSeed:          -1,
+			wantHasToolCall:   true,
+			wantErr:           false,
 		},
 		{
-			name:              "generate_image missing defaults to false",
-			response:          "Here's the prompt.\n---\n{\"prompt\": \"a bird in the sky\", \"steps\": 15, \"cfg\": 6.0, \"seed\": 999}",
-			wantText:          "Here's the prompt.",
-			wantPrompt:        "a bird in the sky",
-			wantGenerateImage: false,
-			wantSteps:         15,
-			wantCFG:           6.0,
-			wantSeed:          999,
-			wantErr:           nil,
+			name:            "no tool calls - pure conversational response",
+			response:        "This response has no tool calls",
+			wantText:        "This response has no tool calls",
+			wantHasToolCall: false,
+			wantErr:         false,
+		},
+		{
+			name:            "invalid tool call JSON - falls back to conversational",
+			response:        "Text before\n__TOOL_CALLS__\n{invalid json}",
+			wantText:        "Text before\n__TOOL_CALLS__\n{invalid json}",
+			wantHasToolCall: false,
+			wantErr:         false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotText, gotMetadata, gotErr := parseResponse(tt.response)
+			gotText, gotMetadata, gotHasToolCall, gotErr := parseResponse(tt.response)
 
 			// Check error
-			if gotErr != tt.wantErr {
+			if (gotErr != nil) != tt.wantErr {
 				t.Errorf("parseResponse() error = %v, wantErr %v", gotErr, tt.wantErr)
-				if tt.wantErrDescription != "" && gotErr != nil {
-					t.Errorf("  error description = %q, want %q", gotErr.Error(), tt.wantErrDescription)
-				}
 				return
 			}
 
 			// If we expected an error, don't check the other return values
-			if tt.wantErr != nil {
+			if tt.wantErr {
 				return
+			}
+
+			// Check hasToolCall
+			if gotHasToolCall != tt.wantHasToolCall {
+				t.Errorf("parseResponse() hasToolCall = %v, want %v", gotHasToolCall, tt.wantHasToolCall)
 			}
 
 			// Check conversational text
 			if gotText != tt.wantText {
 				t.Errorf("parseResponse() text = %q, want %q", gotText, tt.wantText)
+			}
+
+			// Only check metadata if we had a tool call
+			if !tt.wantHasToolCall {
+				return
 			}
 
 			// Check metadata fields
@@ -338,4 +103,314 @@ func TestParseResponse(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseToolCalls(t *testing.T) {
+	tests := []struct {
+		name              string
+		toolCalls         []ToolCall
+		wantPrompt        string
+		wantGenerateImage bool
+		wantSteps         int
+		wantCFG           float64
+		wantSeed          int64
+		wantErr           bool
+		wantErrMsg        string
+	}{
+		{
+			name: "valid update_generation call",
+			toolCalls: []ToolCall{
+				{
+					Function: ToolCallFunction{
+						Name:      "update_generation",
+						Arguments: []byte(`{"prompt": "a cat in space", "steps": 28, "cfg": 7.5, "seed": 42, "generate_image": true}`),
+					},
+				},
+			},
+			wantPrompt:        "a cat in space",
+			wantGenerateImage: true,
+			wantSteps:         28,
+			wantCFG:           7.5,
+			wantSeed:          42,
+			wantErr:           false,
+		},
+		{
+			name: "valid update_generation call with generate_image false",
+			toolCalls: []ToolCall{
+				{
+					Function: ToolCallFunction{
+						Name:      "update_generation",
+						Arguments: []byte(`{"prompt": "", "steps": 4, "cfg": 1.0, "seed": -1, "generate_image": false}`),
+					},
+				},
+			},
+			wantPrompt:        "",
+			wantGenerateImage: false,
+			wantSteps:         4,
+			wantCFG:           1.0,
+			wantSeed:          -1,
+			wantErr:           false,
+		},
+		{
+			name: "multiple tool calls, first is update_generation",
+			toolCalls: []ToolCall{
+				{
+					Function: ToolCallFunction{
+						Name:      "update_generation",
+						Arguments: []byte(`{"prompt": "test prompt", "steps": 20, "cfg": 5.0, "seed": 100, "generate_image": true}`),
+					},
+				},
+				{
+					Function: ToolCallFunction{
+						Name:      "other_function",
+						Arguments: []byte(`{"data": "value"}`),
+					},
+				},
+			},
+			wantPrompt:        "test prompt",
+			wantGenerateImage: true,
+			wantSteps:         20,
+			wantCFG:           5.0,
+			wantSeed:          100,
+			wantErr:           false,
+		},
+		{
+			name: "stringified values (LLM type coercion)",
+			toolCalls: []ToolCall{
+				{
+					Function: ToolCallFunction{
+						Name:      "update_generation",
+						Arguments: []byte(`{"prompt": "cat dancing on corner", "steps": "20", "cfg": "4.3", "seed": "-1", "generate_image": "true"}`),
+					},
+				},
+			},
+			wantPrompt:        "cat dancing on corner",
+			wantGenerateImage: true,
+			wantSteps:         20,
+			wantCFG:           4.3,
+			wantSeed:          -1,
+			wantErr:           false,
+		},
+		{
+			name: "mixed types (some string, some proper)",
+			toolCalls: []ToolCall{
+				{
+					Function: ToolCallFunction{
+						Name:      "update_generation",
+						Arguments: []byte(`{"prompt": "a cat", "steps": 28, "cfg": "7.5", "seed": -1, "generate_image": "false"}`),
+					},
+				},
+			},
+			wantPrompt:        "a cat",
+			wantGenerateImage: false,
+			wantSteps:         28,
+			wantCFG:           7.5,
+			wantSeed:          -1,
+			wantErr:           false,
+		},
+		{
+			name:       "empty tool calls",
+			toolCalls:  []ToolCall{},
+			wantErr:    true,
+			wantErrMsg: "no tool calls found",
+		},
+		{
+			name: "wrong function name",
+			toolCalls: []ToolCall{
+				{
+					Function: ToolCallFunction{
+						Name:      "other_function",
+						Arguments: []byte(`{"data": "value"}`),
+					},
+				},
+			},
+			wantErr:    true,
+			wantErrMsg: "update_generation tool call not found",
+		},
+		{
+			name: "invalid JSON in arguments",
+			toolCalls: []ToolCall{
+				{
+					Function: ToolCallFunction{
+						Name:      "update_generation",
+						Arguments: []byte(`{invalid json}`),
+					},
+				},
+			},
+			wantErr:    true,
+			wantErrMsg: "failed to parse tool call arguments",
+		},
+		{
+			name: "missing required field prompt",
+			toolCalls: []ToolCall{
+				{
+					Function: ToolCallFunction{
+						Name:      "update_generation",
+						Arguments: []byte(`{"steps": 28, "cfg": 7.5, "seed": 42, "generate_image": true}`),
+					},
+				},
+			},
+			wantErr:    true,
+			wantErrMsg: "JSON missing required fields",
+		},
+		{
+			name: "missing required field steps",
+			toolCalls: []ToolCall{
+				{
+					Function: ToolCallFunction{
+						Name:      "update_generation",
+						Arguments: []byte(`{"prompt": "a cat", "cfg": 7.5, "seed": 42, "generate_image": true}`),
+					},
+				},
+			},
+			wantErr:    true,
+			wantErrMsg: "JSON missing required fields",
+		},
+		{
+			name: "missing required field cfg",
+			toolCalls: []ToolCall{
+				{
+					Function: ToolCallFunction{
+						Name:      "update_generation",
+						Arguments: []byte(`{"prompt": "a cat", "steps": 28, "seed": 42, "generate_image": true}`),
+					},
+				},
+			},
+			wantErr:    true,
+			wantErrMsg: "JSON missing required fields",
+		},
+		{
+			name: "missing required field seed",
+			toolCalls: []ToolCall{
+				{
+					Function: ToolCallFunction{
+						Name:      "update_generation",
+						Arguments: []byte(`{"prompt": "a cat", "steps": 28, "cfg": 7.5, "generate_image": true}`),
+					},
+				},
+			},
+			wantErr:    true,
+			wantErrMsg: "JSON missing required fields",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			metadata, err := parseToolCalls(tt.toolCalls)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("parseToolCalls() expected error, got nil")
+					return
+				}
+				if tt.wantErrMsg != "" && !contains(err.Error(), tt.wantErrMsg) {
+					t.Errorf("parseToolCalls() error = %q, want containing %q", err.Error(), tt.wantErrMsg)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("parseToolCalls() unexpected error: %v", err)
+				return
+			}
+
+			if metadata.Prompt != tt.wantPrompt {
+				t.Errorf("Prompt = %q, want %q", metadata.Prompt, tt.wantPrompt)
+			}
+			if metadata.GenerateImage != tt.wantGenerateImage {
+				t.Errorf("GenerateImage = %v, want %v", metadata.GenerateImage, tt.wantGenerateImage)
+			}
+			if metadata.Steps != tt.wantSteps {
+				t.Errorf("Steps = %d, want %d", metadata.Steps, tt.wantSteps)
+			}
+			if metadata.CFG != tt.wantCFG {
+				t.Errorf("CFG = %f, want %f", metadata.CFG, tt.wantCFG)
+			}
+			if metadata.Seed != tt.wantSeed {
+				t.Errorf("Seed = %d, want %d", metadata.Seed, tt.wantSeed)
+			}
+		})
+	}
+}
+
+func TestExtractToolCallsFromResponse(t *testing.T) {
+	tests := []struct {
+		name                  string
+		response              string
+		wantConversational    string
+		wantHasToolCalls      bool
+		wantToolCallCount     int
+		wantFirstFunctionName string
+	}{
+		{
+			name:                  "response with tool calls",
+			response:              "Here's the image!\n__TOOL_CALLS__\n[{\"function\":{\"name\":\"update_generation\",\"arguments\":\"{\\\"prompt\\\":\\\"a cat\\\",\\\"steps\\\":28,\\\"cfg\\\":7.5,\\\"seed\\\":42,\\\"generate_image\\\":true}\"}}]",
+			wantConversational:    "Here's the image!",
+			wantHasToolCalls:      true,
+			wantToolCallCount:     1,
+			wantFirstFunctionName: "update_generation",
+		},
+		{
+			name:               "response without tool calls",
+			response:           "Just a regular response",
+			wantConversational: "Just a regular response",
+			wantHasToolCalls:   false,
+			wantToolCallCount:  0,
+		},
+		{
+			name:               "response with marker but invalid JSON",
+			response:           "Text before\n__TOOL_CALLS__\n{invalid json}",
+			wantConversational: "Text before\n__TOOL_CALLS__\n{invalid json}",
+			wantHasToolCalls:   false,
+			wantToolCallCount:  0,
+		},
+		{
+			name:               "empty response",
+			response:           "",
+			wantConversational: "",
+			wantHasToolCalls:   false,
+			wantToolCallCount:  0,
+		},
+		{
+			name:               "only marker, no JSON",
+			response:           "Text\n__TOOL_CALLS__\n",
+			wantConversational: "Text\n__TOOL_CALLS__\n",
+			wantHasToolCalls:   false,
+			wantToolCallCount:  0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conversational, toolCalls, hasToolCalls := extractToolCallsFromResponse(tt.response)
+
+			if conversational != tt.wantConversational {
+				t.Errorf("conversational = %q, want %q", conversational, tt.wantConversational)
+			}
+			if hasToolCalls != tt.wantHasToolCalls {
+				t.Errorf("hasToolCalls = %v, want %v", hasToolCalls, tt.wantHasToolCalls)
+			}
+			if len(toolCalls) != tt.wantToolCallCount {
+				t.Errorf("toolCallCount = %d, want %d", len(toolCalls), tt.wantToolCallCount)
+			}
+			if tt.wantToolCallCount > 0 && toolCalls[0].Function.Name != tt.wantFirstFunctionName {
+				t.Errorf("first function name = %q, want %q", toolCalls[0].Function.Name, tt.wantFirstFunctionName)
+			}
+		})
+	}
+}
+
+// Helper function to check if a string contains a substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

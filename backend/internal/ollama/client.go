@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"syscall"
@@ -138,6 +139,7 @@ type StreamCallback func(token StreamToken) error
 //   - messages: Conversation history (system prompt should be first). Must not be empty.
 //   - seed: Optional seed for deterministic responses. nil = random (ollama default),
 //     any non-nil value (including 0) produces deterministic output with that seed.
+//   - tools: Function calling tools to send with the request (may be nil/empty)
 //   - callback: Function called for each streamed token (may be nil to collect silently)
 //
 // Returns the parsed ChatResult containing conversational text and metadata.
@@ -145,8 +147,8 @@ type StreamCallback func(token StreamToken) error
 //
 // Returns ErrNotRunning if ollama is not reachable.
 // Returns an error if messages is empty.
-// Returns ErrMissingDelimiter, ErrInvalidJSON, or ErrMissingFields if response parsing fails.
-func (c *Client) Chat(ctx context.Context, messages []Message, seed *int64, callback StreamCallback) (ChatResult, error) {
+// Returns ErrMissingFields if response parsing fails.
+func (c *Client) Chat(ctx context.Context, messages []Message, seed *int64, tools []Tool, callback StreamCallback) (ChatResult, error) {
 	// Validate messages
 	if len(messages) == 0 {
 		return ChatResult{}, errors.New("messages cannot be empty")
@@ -181,6 +183,11 @@ func (c *Client) Chat(ctx context.Context, messages []Message, seed *int64, call
 	// Add seed if provided
 	if seed != nil {
 		chatReq.Options = &ChatOptions{Seed: seed}
+	}
+
+	// Add tools if provided
+	if len(tools) > 0 {
+		chatReq.Tools = tools
 	}
 
 	body, err := json.Marshal(chatReq)
@@ -225,7 +232,7 @@ func (c *Client) Chat(ctx context.Context, messages []Message, seed *int64, call
 	}
 
 	// Parse the response to extract conversational text and metadata
-	conversationalText, metadata, err := parseResponse(fullResponse)
+	conversationalText, metadata, hasToolCall, err := parseResponse(fullResponse)
 	if err != nil {
 		return ChatResult{}, err
 	}
@@ -233,6 +240,7 @@ func (c *Client) Chat(ctx context.Context, messages []Message, seed *int64, call
 	return ChatResult{
 		Response:    conversationalText,
 		Metadata:    metadata,
+		HasToolCall: hasToolCall,
 		RawResponse: fullResponse,
 	}, nil
 }
@@ -243,34 +251,11 @@ const maxResponseSize = 1024 * 1024
 // parseStreamingResponse reads newline-delimited JSON from the response body
 // and calls the callback for each token.
 //
-// This function implements delimiter detection for structured output. The LLM is
-// required to format responses as:
-//
-//	[conversational text]
-//	---
-//	{"prompt": "...", "steps": N, "cfg": X.X, "seed": N}
-//
-// WHY DELIMITER DETECTION:
-// We want to preserve the streaming UX (live typing effect) for conversational
-// text while hiding the JSON metadata from the user. The delimiter signals when
-// to stop displaying tokens and start buffering JSON.
-//
-// WHY STREAMING STOPS AT DELIMITER:
-// The JSON portion contains structured metadata (prompt, generation settings) that should
-// not be displayed in the chat UI. By stopping the callback when we detect "---",
-// we ensure the user sees only conversational text. The JSON is buffered silently
-// and parsed after the stream completes.
-//
-// DELIMITER SPLIT HANDLING:
-// The delimiter may appear in the middle of a token (ollama's tokenization doesn't
-// respect our delimiter boundary). For example, a token might be "text---{". We
-// must split this token:
-// - "text" goes to callback (conversational text)
-// - "---{" goes to JSON buffer (metadata)
-//
-// Without this split logic, we'd either:
-// - Show part of the delimiter/JSON to the user (bad UX)
-// - Skip the pre-delimiter text in that token (lost content)
+// FUNCTION CALL HANDLING:
+// Conversational text streams normally, giving the user a live typing effect.
+// When Done=true, the final chunk may contain tool_calls with the update_generation
+// function arguments. Tool calls are appended to the full response for parsing
+// after the stream completes.
 //
 // RESPONSE SIZE LIMIT:
 // We enforce a 1MB limit to prevent unbounded memory usage if the LLM generates
@@ -278,15 +263,17 @@ const maxResponseSize = 1024 * 1024
 func (c *Client) parseStreamingResponse(body io.Reader, callback StreamCallback) (string, error) {
 	scanner := bufio.NewScanner(body)
 	var fullResponse bytes.Buffer
-	var jsonBuffer bytes.Buffer
-	delimiterFound := false
+	var toolCalls []ToolCall // Collect tool calls from any chunk
 
+	chunkCount := 0
 	for scanner.Scan() {
 		line := scanner.Bytes()
+		chunkCount++
 		if len(line) == 0 {
 			// Skip empty lines in newline-delimited JSON stream.
 			// WHY SKIP: Ollama's streaming format may include blank lines between
 			// JSON objects. These are not part of the protocol and should be ignored.
+			log.Printf("DEBUG: Chunk %d: empty line, skipping", chunkCount)
 			continue
 		}
 
@@ -298,16 +285,27 @@ func (c *Client) parseStreamingResponse(body io.Reader, callback StreamCallback)
 			// Parsing failed - malformed JSON from ollama.
 			// WHY FAIL IMMEDIATELY: If ollama sends malformed JSON, we can't trust
 			// the rest of the stream. Better to fail fast than continue with corrupted data.
+			log.Printf("DEBUG: Chunk %d: failed to parse JSON: %v, raw: %s", chunkCount, err, string(line))
 			return "", fmt.Errorf("failed to parse response: %w", err)
+		}
+
+		// Log each chunk for debugging
+		log.Printf("DEBUG: Chunk %d: Done=%v, Content=%q, ToolCalls=%d", chunkCount, chatResp.Done, chatResp.Message.Content, len(chatResp.Message.ToolCalls))
+
+		// Collect tool calls from ANY chunk (not just the final one).
+		// WHY: Ollama may return tool calls in non-final chunks with Done=false.
+		// We need to capture them regardless of which chunk they appear in.
+		if len(chatResp.Message.ToolCalls) > 0 {
+			toolCalls = append(toolCalls, chatResp.Message.ToolCalls...)
+			log.Printf("DEBUG: Captured %d tool calls from chunk %d", len(chatResp.Message.ToolCalls), chunkCount)
 		}
 
 		token := chatResp.Message.Content
 
 		// Append token to full response (always include everything).
-		// WHY ALWAYS APPEND: We need the complete response for parsing and storage,
-		// regardless of what gets displayed. The fullResponse includes both
-		// conversational text and JSON metadata. Even if we stop displaying tokens
-		// at the delimiter, we must preserve everything for parseResponse().
+		// WHY ALWAYS APPEND: We need the complete response for parsing and storage.
+		// The fullResponse includes conversational text and will have tool calls
+		// appended at the end (if present).
 		fullResponse.WriteString(token)
 
 		// Check response size limit to prevent unbounded memory usage
@@ -317,55 +315,16 @@ func (c *Client) parseStreamingResponse(body io.Reader, callback StreamCallback)
 			return fullResponse.String(), fmt.Errorf("response too large (>%d bytes)", maxResponseSize)
 		}
 
-		// If delimiter already found, buffer everything as JSON
-		// WHY: Once we've seen "---", everything after it is JSON metadata that
-		// should not be displayed to the user. We buffer it for parsing after
-		// the stream completes.
-		if delimiterFound {
-			jsonBuffer.WriteString(token)
-		} else {
-			// Check if this token contains the delimiter
-			// WHY: We check each token because the delimiter can appear at any time.
-			// Ollama's tokenization doesn't align with our delimiter, so we must
-			// search within each token.
-			delimiterIndex := bytes.Index([]byte(token), []byte(ResponseDelimiter))
-			if delimiterIndex != -1 {
-				// Delimiter found in this token - split it
-				delimiterFound = true
-
-				// Part before delimiter goes to callback (conversational text)
-				// WHY: This ensures we display all conversational text up to the
-				// delimiter, even if the delimiter appears mid-token. Without this,
-				// we'd lose the text that appears before "---" in this token.
-				beforeDelimiter := token[:delimiterIndex]
-				if callback != nil && beforeDelimiter != "" {
-					streamToken := StreamToken{
-						Content: beforeDelimiter,
-						Done:    false,
-					}
-					if err := callback(streamToken); err != nil {
-						return fullResponse.String(), fmt.Errorf("callback error after %d bytes: %w", fullResponse.Len(), err)
-					}
-				}
-
-				// Part after delimiter (including delimiter) goes to JSON buffer
-				// WHY: We include the delimiter in the JSON buffer so that parseResponse()
-				// can find it when splitting the full response later. The delimiter is
-				// part of the structured format, not conversational text.
-				jsonBuffer.WriteString(token[delimiterIndex:])
-			} else {
-				// No delimiter yet - send entire token to callback
-				// WHY: Before we've seen the delimiter, all tokens are conversational
-				// text that should be displayed to the user for the live typing effect.
-				if callback != nil {
-					streamToken := StreamToken{
-						Content: token,
-						Done:    false,
-					}
-					if err := callback(streamToken); err != nil {
-						return fullResponse.String(), fmt.Errorf("callback error after %d bytes: %w", fullResponse.Len(), err)
-					}
-				}
+		// Send token to callback for live streaming display.
+		// WHY SKIP EMPTY: Tool calls may appear in a chunk with empty content.
+		// Empty tokens provide no value to the UI and should be filtered out.
+		if callback != nil && token != "" {
+			streamToken := StreamToken{
+				Content: token,
+				Done:    false,
+			}
+			if err := callback(streamToken); err != nil {
+				return fullResponse.String(), fmt.Errorf("callback error after %d bytes: %w", fullResponse.Len(), err)
 			}
 		}
 
@@ -384,6 +343,32 @@ func (c *Client) parseStreamingResponse(body io.Reader, callback StreamCallback)
 	// (network failure, connection closed). Scanner.Err() tells us which it was.
 	if err := scanner.Err(); err != nil {
 		return fullResponse.String(), fmt.Errorf("stream read error: %w", err)
+	}
+
+	// DEBUG: Log raw response and tool calls
+	log.Printf("DEBUG: Raw LLM response: %q, has tool calls: %v", fullResponse.String(), len(toolCalls) > 0)
+	if len(toolCalls) > 0 {
+		log.Printf("DEBUG: Tool calls: %+v", toolCalls)
+	}
+
+	// If we collected any tool calls (from any chunk), append them to the response
+	// in a format that parseResponse() can extract.
+	//
+	// WHY APPEND TOOL CALLS: parseResponse() expects to find tool calls at the end
+	// of the response. By appending them with a marker, we preserve both the
+	// conversational text (for display) and the structured function call data
+	// (for parameter extraction).
+	//
+	// NOTE: Tool calls may appear in non-final chunks (Done=false), so we collect
+	// them from all chunks during streaming rather than only the last chunk.
+	if len(toolCalls) > 0 {
+		// Append tool calls as JSON array with marker
+		toolCallData, err := json.Marshal(toolCalls)
+		if err == nil {
+			// Append tool calls with a marker that parseResponse() can detect
+			fullResponse.WriteString("\n__TOOL_CALLS__\n")
+			fullResponse.Write(toolCallData)
+		}
 	}
 
 	return fullResponse.String(), nil
