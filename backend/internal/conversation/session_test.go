@@ -116,7 +116,7 @@ func TestSessionIsolation(t *testing.T) {
 
 	// Modify session 1
 	session1.AddUserMessage("hello from session 1")
-	session1.AddAssistantMessage("response 1", "prompt 1")
+	session1.AddAssistantMessage("response 1", "prompt 1", nil)
 
 	// Modify session 2 differently
 	session2.AddUserMessage("hello from session 2")

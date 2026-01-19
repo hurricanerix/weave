@@ -19,6 +19,7 @@ func TestMultiTurnConversationFlow(t *testing.T) {
 	m.AddAssistantMessage(
 		"A cat! I can help with that. Here's a starting prompt:\n\nPrompt: a cute cat sitting on a windowsill",
 		"a cute cat sitting on a windowsill",
+		nil,
 	)
 
 	// Verify state after turn 1
@@ -81,6 +82,7 @@ func TestMultiTurnConversationFlow(t *testing.T) {
 	m.AddAssistantMessage(
 		"I've made it more magical:\n\nPrompt: a fluffy tabby cat sitting on a sunny windowsill, magical sparkles, fantasy style",
 		"a fluffy tabby cat sitting on a sunny windowsill, magical sparkles, fantasy style",
+		nil,
 	)
 
 	// Build context again - edit notification should still be in history
@@ -106,7 +108,7 @@ func TestMultiTurnConversationFlow(t *testing.T) {
 func TestMultipleEditsBeforeNotify(t *testing.T) {
 	m := NewManager()
 
-	m.AddAssistantMessage("Initial prompt", "prompt v1")
+	m.AddAssistantMessage("Initial prompt", "prompt v1", nil)
 
 	// User edits multiple times before we notify
 	m.UpdatePrompt("prompt v2")
@@ -149,7 +151,7 @@ func TestClearResetsAllState(t *testing.T) {
 
 	// Build up state
 	m.AddUserMessage("message 1")
-	m.AddAssistantMessage("response 1", "prompt 1")
+	m.AddAssistantMessage("response 1", "prompt 1", nil)
 	m.UpdatePrompt("edited prompt")
 
 	// Verify state exists
@@ -206,7 +208,7 @@ func TestSessionIsolationIntegration(t *testing.T) {
 			// Each session has unique messages
 			for j := 0; j < messagesPerSession; j++ {
 				m.AddUserMessage("user " + sessionID)
-				m.AddAssistantMessage("assistant "+sessionID, "prompt "+sessionID)
+				m.AddAssistantMessage("assistant "+sessionID, "prompt "+sessionID, nil)
 			}
 
 			// Update prompt uniquely per session
@@ -250,7 +252,7 @@ func TestContextWithoutPrompt(t *testing.T) {
 	systemPrompt := "You are helpful."
 
 	m.AddUserMessage("Hello")
-	m.AddAssistantMessage("Hi there! How can I help?", "") // No prompt
+	m.AddAssistantMessage("Hi there! How can I help?", "", nil) // No prompt
 
 	context := m.BuildLLMContext(systemPrompt, 0, 0, 0)
 
@@ -272,7 +274,7 @@ func TestEditNotificationFlow(t *testing.T) {
 
 	// Initial conversation
 	m.AddUserMessage("Make me a cat")
-	m.AddAssistantMessage("Here's a cat prompt", "a cat")
+	m.AddAssistantMessage("Here's a cat prompt", "a cat", nil)
 
 	// No edit yet - context has: system, user, assistant, trailing (3 non-system)
 	// Note: trailing context is RoleUser, not RoleSystem, because ollama
@@ -315,7 +317,7 @@ func TestPromptEvolution(t *testing.T) {
 	m := NewManager()
 
 	// Agent sets initial prompt
-	m.AddAssistantMessage("Initial", "v1")
+	m.AddAssistantMessage("Initial", "v1", nil)
 	if m.GetCurrentPrompt() != "v1" {
 		t.Errorf("After agent v1: got %q", m.GetCurrentPrompt())
 	}
@@ -327,7 +329,7 @@ func TestPromptEvolution(t *testing.T) {
 	}
 
 	// Agent updates (should replace user edit)
-	m.AddAssistantMessage("Updated", "v3")
+	m.AddAssistantMessage("Updated", "v3", nil)
 	if m.GetCurrentPrompt() != "v3" {
 		t.Errorf("After agent v3: got %q", m.GetCurrentPrompt())
 	}

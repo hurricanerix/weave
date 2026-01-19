@@ -18,8 +18,8 @@ const (
 	EventAgentToken = "agent-token"
 
 	// EventAgentDone indicates agent response streaming is complete.
-	// Data schema: {"done": bool}
-	// Example: {"done": true}
+	// Data schema: {"done": bool, "message_id": int, "has_snapshot": bool}
+	// Example: {"done": true, "message_id": 42, "has_snapshot": true}
 	EventAgentDone = "agent-done"
 
 	// EventPromptUpdate indicates the image generation prompt has changed.
@@ -29,8 +29,8 @@ const (
 	EventPromptUpdate = "prompt-update"
 
 	// EventImageReady indicates a generated image is available for download.
-	// Data schema: {"url": string, "width": int, "height": int}
-	// Example: {"url": "/images/abc123.png", "width": 512, "height": 512}
+	// Data schema: {"url": string, "width": int, "height": int, "message_id": int}
+	// Example: {"url": "/images/abc123.png", "width": 512, "height": 512, "message_id": 42}
 	EventImageReady = "image-ready"
 
 	// EventError indicates an error occurred during processing.
@@ -303,4 +303,22 @@ func (b *Broker) Shutdown(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// AgentDoneData represents the data sent with EventAgentDone.
+// It includes the message ID of the assistant message that just completed
+// and whether the message has a state snapshot (prompt/settings changed).
+type AgentDoneData struct {
+	Done        bool `json:"done"`
+	MessageID   int  `json:"message_id"`
+	HasSnapshot bool `json:"has_snapshot"`
+}
+
+// ImageReadyData represents the data sent with EventImageReady.
+// It includes the URL, dimensions, and message ID the image is associated with.
+type ImageReadyData struct {
+	URL       string `json:"url"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+	MessageID int    `json:"message_id"`
 }

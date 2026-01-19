@@ -48,7 +48,7 @@ func TestAddAssistantMessage(t *testing.T) {
 	m := NewManager()
 
 	m.AddUserMessage("I want a cat")
-	m.AddAssistantMessage("What kind of cat?", "")
+	m.AddAssistantMessage("What kind of cat?", "", nil)
 
 	history := m.GetHistory()
 	if len(history) != 2 {
@@ -70,14 +70,14 @@ func TestAddAssistantMessageWithPrompt(t *testing.T) {
 	m := NewManager()
 
 	m.AddUserMessage("I want a cat")
-	m.AddAssistantMessage("Here's your prompt:\n\nPrompt: a cute tabby cat", "a cute tabby cat")
+	m.AddAssistantMessage("Here's your prompt:\n\nPrompt: a cute tabby cat", "a cute tabby cat", nil)
 
 	if m.GetCurrentPrompt() != "a cute tabby cat" {
 		t.Errorf("Prompt = %q, want %q", m.GetCurrentPrompt(), "a cute tabby cat")
 	}
 
 	// Add another message with updated prompt
-	m.AddAssistantMessage("Updated prompt:\n\nPrompt: a fluffy tabby cat", "a fluffy tabby cat")
+	m.AddAssistantMessage("Updated prompt:\n\nPrompt: a fluffy tabby cat", "a fluffy tabby cat", nil)
 
 	if m.GetCurrentPrompt() != "a fluffy tabby cat" {
 		t.Errorf("Prompt = %q, want %q", m.GetCurrentPrompt(), "a fluffy tabby cat")
@@ -88,9 +88,9 @@ func TestGetHistoryMaintainsOrder(t *testing.T) {
 	m := NewManager()
 
 	m.AddUserMessage("first")
-	m.AddAssistantMessage("second", "")
+	m.AddAssistantMessage("second", "", nil)
 	m.AddUserMessage("third")
-	m.AddAssistantMessage("fourth", "")
+	m.AddAssistantMessage("fourth", "", nil)
 
 	history := m.GetHistory()
 	if len(history) != 4 {
@@ -142,7 +142,7 @@ func TestClear(t *testing.T) {
 	m := NewManager()
 
 	m.AddUserMessage("hello")
-	m.AddAssistantMessage("hi", "test prompt")
+	m.AddAssistantMessage("hi", "test prompt", nil)
 
 	if len(m.GetHistory()) != 2 {
 		t.Fatalf("Expected 2 messages before clear, got %d", len(m.GetHistory()))
@@ -206,7 +206,7 @@ func TestUpdatePromptNoChangeDoesNotSetFlag(t *testing.T) {
 	m := NewManager()
 
 	// Set initial prompt via assistant
-	m.AddAssistantMessage("Here's your prompt", "initial prompt")
+	m.AddAssistantMessage("Here's your prompt", "initial prompt", nil)
 
 	// Update with same value
 	m.UpdatePrompt("initial prompt")
@@ -220,7 +220,7 @@ func TestUpdatePromptDetectsChange(t *testing.T) {
 	m := NewManager()
 
 	// Set initial prompt
-	m.AddAssistantMessage("Here's your prompt", "initial prompt")
+	m.AddAssistantMessage("Here's your prompt", "initial prompt", nil)
 
 	// Update with different value
 	m.UpdatePrompt("modified prompt")
@@ -238,7 +238,7 @@ func TestNotifyPromptEditedInjectsMessage(t *testing.T) {
 	m := NewManager()
 
 	m.AddUserMessage("I want a cat")
-	m.AddAssistantMessage("Here's your prompt", "a cat")
+	m.AddAssistantMessage("Here's your prompt", "a cat", nil)
 	m.UpdatePrompt("a fluffy cat")
 
 	m.NotifyPromptEdited()
@@ -373,7 +373,7 @@ func TestBuildLLMContextHistoryOnly(t *testing.T) {
 	m := NewManager()
 
 	m.AddUserMessage("hello")
-	m.AddAssistantMessage("hi there", "")
+	m.AddAssistantMessage("hi there", "", nil)
 
 	// No system prompt
 	context := m.BuildLLMContext("", 0, 0, 0)
@@ -394,7 +394,7 @@ func TestBuildLLMContextHistoryOnly(t *testing.T) {
 func TestBuildLLMContextCurrentPromptOnly(t *testing.T) {
 	m := NewManager()
 
-	m.AddAssistantMessage("Here's a prompt", "a cute cat")
+	m.AddAssistantMessage("Here's a prompt", "a cute cat", nil)
 
 	// No system prompt, but has current prompt
 	context := m.BuildLLMContext("", 0, 0, 0)
@@ -420,7 +420,7 @@ func TestBuildLLMContextFull(t *testing.T) {
 	m := NewManager()
 
 	m.AddUserMessage("I want a cat")
-	m.AddAssistantMessage("Here's a cat prompt", "a cute cat")
+	m.AddAssistantMessage("Here's a cat prompt", "a cute cat", nil)
 	m.AddUserMessage("Make it fluffy")
 
 	context := m.BuildLLMContext("You help users create images.", 0, 0, 0)
@@ -457,7 +457,7 @@ func TestBuildLLMContextWithEditNotification(t *testing.T) {
 	m := NewManager()
 
 	m.AddUserMessage("I want a cat")
-	m.AddAssistantMessage("Here's a cat prompt", "a cute cat")
+	m.AddAssistantMessage("Here's a cat prompt", "a cute cat", nil)
 	m.UpdatePrompt("a fluffy cat")
 	m.NotifyPromptEdited()
 	m.AddUserMessage("Now make it orange")
@@ -492,7 +492,7 @@ func TestBuildLLMContextDoesNotModifyHistory(t *testing.T) {
 	m := NewManager()
 
 	m.AddUserMessage("hello")
-	m.AddAssistantMessage("hi", "test prompt")
+	m.AddAssistantMessage("hi", "test prompt", nil)
 
 	// Build context
 	_ = m.BuildLLMContext("system prompt", 0, 0, 0)
@@ -508,7 +508,7 @@ func TestBuildLLMContextNoTrailingWhenNoPrompt(t *testing.T) {
 	m := NewManager()
 
 	m.AddUserMessage("hello")
-	m.AddAssistantMessage("hi there", "") // No prompt provided
+	m.AddAssistantMessage("hi there", "", nil) // No prompt provided
 
 	context := m.BuildLLMContext("You are helpful.", 0, 0, 0)
 
@@ -604,7 +604,7 @@ func TestTrimHistory_MixedMessageTypes(t *testing.T) {
 		if i%2 == 0 {
 			m.AddUserMessage("user message")
 		} else {
-			m.AddAssistantMessage("assistant message", "")
+			m.AddAssistantMessage("assistant message", "", nil)
 		}
 	}
 
@@ -615,7 +615,7 @@ func TestTrimHistory_MixedMessageTypes(t *testing.T) {
 
 	// Add 3 more messages (should trigger trim)
 	m.AddUserMessage("final user 1")
-	m.AddAssistantMessage("final assistant", "")
+	m.AddAssistantMessage("final assistant", "", nil)
 	m.AddUserMessage("final user 2")
 
 	history := m.GetHistory()
@@ -664,7 +664,7 @@ func TestBuildLLMContextWithSettings(t *testing.T) {
 	m := NewManager()
 
 	m.AddUserMessage("I want a cat")
-	m.AddAssistantMessage("Here's a cat prompt", "a cute cat")
+	m.AddAssistantMessage("Here's a cat prompt", "a cute cat", nil)
 
 	// Build context with settings
 	context := m.BuildLLMContext("You help users create images.", 20, 7.5, 42)
@@ -733,7 +733,7 @@ func TestBuildLLMContextZeroSettingsSkipped(t *testing.T) {
 	m := NewManager()
 
 	m.AddUserMessage("hello")
-	m.AddAssistantMessage("hi", "test prompt")
+	m.AddAssistantMessage("hi", "test prompt", nil)
 
 	// Build context with all zero settings
 	context := m.BuildLLMContext("You are helpful.", 0, 0, 0)
@@ -815,7 +815,7 @@ func TestBuildLLMContextSettingsPositionBeforeHistory(t *testing.T) {
 
 	// Add several messages to history
 	m.AddUserMessage("first")
-	m.AddAssistantMessage("second", "")
+	m.AddAssistantMessage("second", "", nil)
 	m.AddUserMessage("third")
 
 	// Build context with settings
@@ -845,7 +845,7 @@ func TestBuildLLMContextSettingsWithTrailing(t *testing.T) {
 
 	// Add messages with a current prompt
 	m.AddUserMessage("I want a dog")
-	m.AddAssistantMessage("Here's a dog", "a happy dog")
+	m.AddAssistantMessage("Here's a dog", "a happy dog", nil)
 	m.AddUserMessage("make it bigger")
 
 	// Build context with settings

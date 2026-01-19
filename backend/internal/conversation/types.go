@@ -72,12 +72,70 @@ import "github.com/hurricanerix/weave/internal/ollama"
 // when constructing LLM context.
 type Message = ollama.Message
 
+// StateSnapshot captures generation parameters at a specific point in conversation.
+// This is attached to assistant messages that change the prompt or generation settings,
+// allowing users to see and restore historical generation states.
+type StateSnapshot struct {
+	// Prompt is the image generation prompt at this point.
+	Prompt string `json:"prompt"`
+
+	// Steps is the number of inference steps (1-100).
+	Steps int `json:"steps"`
+
+	// CFG is the classifier-free guidance scale (0-20).
+	CFG float64 `json:"cfg"`
+
+	// Seed is the random seed for generation.
+	// -1 means random, 0+ means deterministic.
+	Seed int64 `json:"seed"`
+
+	// PreviewStatus indicates the state of the preview image for this message.
+	// Values: "none" (no preview generated), "generating" (in progress), "complete" (done).
+	PreviewStatus string `json:"preview_status"`
+
+	// PreviewURL is the URL or path to the preview image.
+	// Empty if PreviewStatus is "none" or "generating".
+	PreviewURL string `json:"preview_url"`
+}
+
+// ConversationMessage represents a message with additional metadata for conversation history.
+// This wraps the basic message concept with stable IDs and optional state snapshots.
+// Unlike the ollama.Message which is used for LLM API communication, this type is for
+// internal conversation history storage and persistence.
+type ConversationMessage struct {
+	// ID is a stable integer identifier within the session.
+	// IDs are assigned sequentially starting from 1.
+	ID int `json:"id"`
+
+	// Role is the message role: "user", "assistant", or "system".
+	Role string `json:"role"`
+
+	// Content is the message text.
+	Content string `json:"content"`
+
+	// ToolCalls preserves compatibility with ollama.Message.
+	// Contains function calls made by the LLM.
+	ToolCalls []ollama.ToolCall `json:"tool_calls,omitempty"`
+
+	// Snapshot is the generation state at this point in the conversation.
+	// Only set for assistant messages that changed the prompt or settings.
+	// Nil for user messages and assistant messages that are pure conversation.
+	Snapshot *StateSnapshot `json:"snapshot,omitempty"`
+}
+
 // Role constants for message roles.
 // These are re-exported from ollama for convenience.
 const (
 	RoleSystem    = ollama.RoleSystem
 	RoleUser      = ollama.RoleUser
 	RoleAssistant = ollama.RoleAssistant
+)
+
+// Preview status constants for StateSnapshot.PreviewStatus.
+const (
+	PreviewStatusNone       = "none"       // No preview generated yet
+	PreviewStatusGenerating = "generating" // Generation in progress
+	PreviewStatusComplete   = "complete"   // Generation complete
 )
 
 // GenerationSettings holds the current generation parameters for a session.
@@ -107,7 +165,8 @@ type GenerationSettings struct {
 type Conversation struct {
 	// messages is the ordered history of user and assistant messages.
 	// System messages for edit notifications are also stored here.
-	messages []Message
+	// Each message has a stable ID and optional state snapshot.
+	messages []ConversationMessage
 
 	// currentPrompt is the current image generation prompt.
 	// Updated when the agent outputs a "Prompt: " line or when the user edits.
@@ -121,11 +180,72 @@ type Conversation struct {
 	// previousPrompt tracks the prompt value before the last UpdatePrompt call.
 	// Used to detect whether the prompt actually changed.
 	previousPrompt string
+
+	// nextMessageID is the next ID to assign to a new message.
+	// IDs start at 1 and increment sequentially.
+	nextMessageID int
 }
 
 // NewConversation creates a new empty conversation.
 func NewConversation() *Conversation {
 	return &Conversation{
-		messages: make([]Message, 0),
+		messages:      make([]ConversationMessage, 0),
+		nextMessageID: 1, // Start IDs at 1
 	}
+}
+
+// GetMessages returns a copy of all messages in the conversation.
+// This is used for persistence and serialization.
+func (c *Conversation) GetMessages() []ConversationMessage {
+	return append([]ConversationMessage(nil), c.messages...)
+}
+
+// SetMessages replaces all messages in the conversation.
+// This is used when deserializing from persistence.
+func (c *Conversation) SetMessages(messages []ConversationMessage) {
+	c.messages = messages
+}
+
+// GetNextMessageID returns the next message ID that will be assigned.
+func (c *Conversation) GetNextMessageID() int {
+	return c.nextMessageID
+}
+
+// SetNextMessageID sets the next message ID to be assigned.
+// This is used when deserializing from persistence.
+func (c *Conversation) SetNextMessageID(id int) {
+	c.nextMessageID = id
+}
+
+// GetCurrentPrompt returns the current prompt.
+func (c *Conversation) GetCurrentPrompt() string {
+	return c.currentPrompt
+}
+
+// SetCurrentPrompt sets the current prompt.
+// This is used when deserializing from persistence.
+func (c *Conversation) SetCurrentPrompt(prompt string) {
+	c.currentPrompt = prompt
+}
+
+// GetPreviousPrompt returns the previous prompt.
+func (c *Conversation) GetPreviousPrompt() string {
+	return c.previousPrompt
+}
+
+// SetPreviousPrompt sets the previous prompt.
+// This is used when deserializing from persistence.
+func (c *Conversation) SetPreviousPrompt(prompt string) {
+	c.previousPrompt = prompt
+}
+
+// IsPromptEdited returns whether the prompt has been edited.
+func (c *Conversation) IsPromptEdited() bool {
+	return c.promptEdited
+}
+
+// SetPromptEdited sets the prompt edited flag.
+// This is used when deserializing from persistence.
+func (c *Conversation) SetPromptEdited(edited bool) {
+	c.promptEdited = edited
 }

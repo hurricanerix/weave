@@ -3,11 +3,13 @@ package web
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -19,6 +21,7 @@ import (
 	"github.com/hurricanerix/weave/internal/conversation"
 	"github.com/hurricanerix/weave/internal/image"
 	"github.com/hurricanerix/weave/internal/ollama"
+	"github.com/hurricanerix/weave/internal/persistence"
 	"github.com/hurricanerix/weave/internal/protocol"
 )
 
@@ -70,8 +73,11 @@ type Server struct {
 	sessionManager *conversation.SessionManager
 	rateLimiter    *rateLimiter
 
-	// Image storage for generated images
+	// Image storage for generated images (in-memory)
 	imageStorage *image.Storage
+
+	// Image store for session-specific persistent images
+	imageStore *persistence.ImageStore
 
 	// Compute client for image generation (persistent connection)
 	computeClient *client.Conn
@@ -107,7 +113,7 @@ type indexTemplateData struct {
 // Deprecated: Use NewServerWithDeps to inject dependencies.
 // This function creates default clients for backward compatibility with tests.
 func NewServer(addr string) (*Server, error) {
-	return NewServerWithDeps(addr, nil, nil, nil, nil, nil)
+	return NewServerWithDeps(addr, nil, nil, nil, nil, nil, nil)
 }
 
 // NewServerWithDeps creates a new Server with injected dependencies.
@@ -115,10 +121,11 @@ func NewServer(addr string) (*Server, error) {
 // If ollamaClient is nil, a default client is created.
 // If sessionManager is nil, a default session manager is created.
 // If imageStorage is nil, a default image storage is created.
+// If imageStore is nil, a default image store is created.
 // If computeClient is nil, generation requests will fail (for testing only).
 // If cfg is nil, default generation settings are used (steps=20, cfg=3.5, seed=0).
 // Returns an error if templates cannot be parsed or agent prompt file cannot be loaded.
-func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *conversation.SessionManager, imageStorage *image.Storage, computeClient *client.Conn, cfg *config.Config) (*Server, error) {
+func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *conversation.SessionManager, imageStorage *image.Storage, imageStore *persistence.ImageStore, computeClient *client.Conn, cfg *config.Config) (*Server, error) {
 	if addr == "" {
 		addr = DefaultAddr
 	}
@@ -132,6 +139,9 @@ func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *c
 	}
 	if imageStorage == nil {
 		imageStorage = image.NewStorage()
+	}
+	if imageStore == nil {
+		imageStore = persistence.NewImageStore("config/sessions")
 	}
 
 	// Extract default generation settings from config
@@ -175,6 +185,7 @@ func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *c
 		sessionManager: sessionManager,
 		rateLimiter:    newRateLimiter(),
 		imageStorage:   imageStorage,
+		imageStore:     imageStore,
 		computeClient:  computeClient,
 		defaultSteps:   defaultSteps,
 		defaultCFG:     defaultCFG,
@@ -223,8 +234,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /generate", s.handleGenerate)
 	mux.HandleFunc("POST /new-chat", s.handleNewChat)
 
-	// Image serving endpoint
+	// Image serving endpoints
 	mux.HandleFunc("GET /images/{id}", s.handleImage)
+	mux.HandleFunc("GET /sessions/{sessionID}/images/{filename}", s.handleSessionImage)
+
+	// Message state endpoint for loading historical snapshots
+	mux.HandleFunc("GET /message/{id}/state", s.handleMessageState)
 
 	// Health check endpoint for Electron
 	mux.HandleFunc("GET /ready", s.handleReady)
@@ -453,7 +468,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Send agent-done to finalize any partial message
-		_ = s.broker.SendEvent(sessionID, EventAgentDone, map[string]bool{"done": true})
+		// No message ID available in error case (use 0 as sentinel)
+		_ = s.broker.SendEvent(sessionID, EventAgentDone, AgentDoneData{
+			Done:        true,
+			MessageID:   0,
+			HasSnapshot: false,
+		})
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK) // Return OK so HTMX doesn't show error
 		fmt.Fprintf(w, `{"status":"ok","session_id":"%s"}`, sessionID)
@@ -475,8 +495,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// This happens when the LLM responds without updating generation settings.
 	if !result.HasToolCall {
 		// Just save the conversational response and send done event
-		manager.AddAssistantMessage(result.Response, "")
-		_ = s.broker.SendEvent(sessionID, EventAgentDone, map[string]bool{"done": true})
+		messageID := manager.AddAssistantMessage(result.Response, "", nil)
+		_ = s.broker.SendEvent(sessionID, EventAgentDone, AgentDoneData{
+			Done:        true,
+			MessageID:   messageID,
+			HasSnapshot: false, // No snapshot since metadata is nil
+		})
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -508,7 +532,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// Use conversational text only (Response), not the full protocol format (RawResponse).
 	// Storing RawResponse would pollute history with tool call markers and JSON metadata,
 	// which confuses the LLM on subsequent turns.
-	manager.AddAssistantMessage(responseText, prompt)
+	messageID := manager.AddAssistantMessage(responseText, prompt, &result.Metadata)
+
+	// Determine if message has a snapshot (prompt changed)
+	hasSnapshot := prompt != ""
 
 	// Send prompt-update event if prompt was extracted
 	if prompt != "" {
@@ -545,7 +572,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	// Send agent-done event BEFORE generation starts
 	// This finalizes the agent's message bubble so generation indicator appears separately
-	_ = s.broker.SendEvent(sessionID, EventAgentDone, map[string]bool{"done": true})
+	_ = s.broker.SendEvent(sessionID, EventAgentDone, AgentDoneData{
+		Done:        true,
+		MessageID:   messageID,
+		HasSnapshot: hasSnapshot,
+	})
 
 	// Trigger generation if agent requested it
 	if result.Metadata.GenerateImage {
@@ -559,12 +590,13 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			// Use session's current prompt and settings
 			currentPrompt := session.Manager().GetCurrentPrompt()
 			if currentPrompt != "" {
-				// Notify UI that generation is starting
-				_ = s.broker.SendEvent(sessionID, EventGenerationStarted, map[string]string{
-					"source": "agent",
+				// Notify UI that generation is starting with message ID
+				_ = s.broker.SendEvent(sessionID, EventGenerationStarted, map[string]interface{}{
+					"source":     "agent",
+					"message_id": messageID,
 				})
-				// Ignore error return - errors are already sent via SSE events
-				_ = s.generateImage(r.Context(), sessionID, currentPrompt, clampedSteps, clampedCFG, clampedSeed)
+				// Associate generated image with the assistant message that triggered it
+				_ = s.generateImage(r.Context(), sessionID, currentPrompt, clampedSteps, clampedCFG, clampedSeed, messageID)
 			} else {
 				log.Printf("Skipping auto-generation for session %s: empty prompt", sessionID)
 				s.sendErrorEvent(sessionID, "Cannot generate: no prompt available")
@@ -965,10 +997,11 @@ func (s *Server) handleNewChat(w http.ResponseWriter, r *http.Request) {
 //   - steps: Number of inference steps (1-100)
 //   - cfg: CFG scale (0-20)
 //   - seed: Random seed (-1 for random, >= 0 for deterministic)
+//   - messageID: Optional message ID to associate the image with (0 means no association)
 //
 // Returns:
 //   - error: Connection or generation error (for HTTP status code handling in handleGenerate)
-func (s *Server) generateImage(ctx context.Context, sessionID string, prompt string, steps int, cfg float64, seed int64) error {
+func (s *Server) generateImage(ctx context.Context, sessionID string, prompt string, steps int, cfg float64, seed int64, messageID int) error {
 	// Truncate prompt if it exceeds maximum length
 	// This works around the CLIP/T5 token mismatch bug in stable-diffusion.cpp
 	// where T5 producing more tokens than CLIP causes GGML assertion failures.
@@ -1071,26 +1104,47 @@ func (s *Server) generateImage(ctx context.Context, sessionID string, prompt str
 			return fmt.Errorf("failed to encode PNG: %w", err)
 		}
 
-		// Store image
-		imageID, err := s.imageStorage.Store(pngData, int(resp.ImageWidth), int(resp.ImageHeight))
-		if err != nil {
-			log.Printf("Failed to store image for session %s: %v", sessionID, err)
-			if errors.Is(err, image.ErrImageTooLarge) {
-				s.sendErrorEvent(sessionID, "Image is too large to store")
-			} else {
-				s.sendErrorEvent(sessionID, "Failed to store image. Please try again.")
+		// Determine storage strategy based on message ID
+		var imageURL string
+		if messageID > 0 {
+			// Save to persistent session-specific storage
+			if err := s.imageStore.Save(sessionID, messageID, pngData); err != nil {
+				log.Printf("Failed to save session image for session %s, message %d: %v", sessionID, messageID, err)
+				s.sendErrorEvent(sessionID, "Failed to save image. Please try again.")
+				return fmt.Errorf("failed to save session image: %w", err)
 			}
-			return fmt.Errorf("failed to store image: %w", err)
+
+			// Update message preview status to complete
+			session := s.sessionManager.GetSession(sessionID)
+			manager := session.Manager()
+			manager.UpdateMessagePreview(messageID, conversation.PreviewStatusComplete, s.imageStore.GetURL(sessionID, messageID))
+
+			imageURL = s.imageStore.GetURL(sessionID, messageID)
+			log.Printf("Saved image to session storage: %s", imageURL)
+		} else {
+			// Use in-memory storage (fallback for legacy/non-message generation)
+			imageID, err := s.imageStorage.Store(pngData, int(resp.ImageWidth), int(resp.ImageHeight))
+			if err != nil {
+				log.Printf("Failed to store image for session %s: %v", sessionID, err)
+				if errors.Is(err, image.ErrImageTooLarge) {
+					s.sendErrorEvent(sessionID, "Image is too large to store")
+				} else {
+					s.sendErrorEvent(sessionID, "Failed to store image. Please try again.")
+				}
+				return fmt.Errorf("failed to store image: %w", err)
+			}
+			imageURL = fmt.Sprintf("/images/%s.png", imageID)
 		}
 
 		log.Printf("Generated image for session %s: %dx%d in %dms",
 			sessionID, resp.ImageWidth, resp.ImageHeight, resp.GenerationTime)
 
-		// Send image-ready event
-		_ = s.broker.SendEvent(sessionID, EventImageReady, map[string]interface{}{
-			"url":    fmt.Sprintf("/images/%s.png", imageID),
-			"width":  resp.ImageWidth,
-			"height": resp.ImageHeight,
+		// Send image-ready event with message ID
+		_ = s.broker.SendEvent(sessionID, EventImageReady, ImageReadyData{
+			URL:       imageURL,
+			Width:     int(resp.ImageWidth),
+			Height:    int(resp.ImageHeight),
+			MessageID: messageID,
 		})
 
 	case *protocol.ErrorResponse:
@@ -1165,11 +1219,32 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	cfg := s.parseCFG(r.FormValue("cfg"))
 	seed := s.parseSeed(r.FormValue("seed"))
 
+	// Parse optional message_id parameter
+	// If provided, the generated image will be associated with that message
+	messageID := 0
+	if messageIDStr := r.FormValue("message_id"); messageIDStr != "" {
+		var err error
+		messageID, err = strconv.Atoi(messageIDStr)
+		if err != nil || messageID <= 0 {
+			log.Printf("Invalid message_id for session %s: %s", sessionID, messageIDStr)
+			messageID = 0 // Reset to 0 if invalid
+		}
+	}
+
 	// Store settings in session for consistency
 	session.SetGenerationSettings(int(steps), cfg, seed)
 
+	// Send generation-started event with message ID if provided
+	eventData := map[string]interface{}{
+		"source": "manual",
+	}
+	if messageID > 0 {
+		eventData["message_id"] = messageID
+	}
+	_ = s.broker.SendEvent(sessionID, EventGenerationStarted, eventData)
+
 	// Call shared generation logic
-	err := s.generateImage(r.Context(), sessionID, prompt, int(steps), cfg, seed)
+	err := s.generateImage(r.Context(), sessionID, prompt, int(steps), cfg, seed, messageID)
 	if err != nil {
 		// Error already sent via SSE and logged
 		// Determine appropriate HTTP status code based on error type
@@ -1245,6 +1320,71 @@ func (s *Server) handleImage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleSessionImage serves a session-specific image by message ID.
+// GET /sessions/{sessionID}/images/{messageID}.png
+func (s *Server) handleSessionImage(w http.ResponseWriter, r *http.Request) {
+	// SECURITY: Get authenticated session ID from context
+	authenticatedSessionID := GetSessionID(r.Context())
+	if authenticatedSessionID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Extract session ID and filename from path parameters
+	requestedSessionID := r.PathValue("sessionID")
+	filename := r.PathValue("filename")
+
+	if requestedSessionID == "" || filename == "" {
+		http.Error(w, "Missing session ID or filename", http.StatusBadRequest)
+		return
+	}
+
+	// Extract message ID from filename (format: {messageID}.png)
+	messageIDStr := strings.TrimSuffix(filename, ".png")
+	if messageIDStr == filename {
+		// No .png extension found
+		http.Error(w, "Invalid image filename (must be .png)", http.StatusBadRequest)
+		return
+	}
+
+	// SECURITY: Verify that the requesting session matches the sessionID in the path
+	// This prevents users from accessing images from other sessions
+	if authenticatedSessionID != requestedSessionID {
+		log.Printf("SECURITY: Session %s attempted to access images from session %s", authenticatedSessionID, requestedSessionID)
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	// Parse message ID as integer
+	messageID, err := strconv.Atoi(messageIDStr)
+	if err != nil || messageID <= 0 {
+		http.Error(w, "Invalid message ID", http.StatusBadRequest)
+		return
+	}
+
+	// Load image from persistent storage
+	pngData, err := s.imageStore.Load(requestedSessionID, messageID)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			http.Error(w, "Image not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("Failed to load session image %s/%d: %v", requestedSessionID, messageID, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Set headers for image serving
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+
+	// Write PNG data
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(pngData); err != nil {
+		log.Printf("Failed to write image data for session %s, message %d: %v", requestedSessionID, messageID, err)
+	}
+}
+
 // setOllamaClientForTesting replaces the ollama client with a test mock.
 // This is only used in tests to inject mock implementations.
 func (s *Server) setOllamaClientForTesting(client ollamaClient) {
@@ -1296,6 +1436,75 @@ func (s *Server) parseSeed(value string) int64 {
 	}
 
 	return parsed
+}
+
+// messageStateResponse is the JSON response for the message state endpoint.
+type messageStateResponse struct {
+	MessageID     int     `json:"message_id"`
+	Prompt        string  `json:"prompt"`
+	Steps         int     `json:"steps"`
+	CFG           float64 `json:"cfg"`
+	Seed          int64   `json:"seed"`
+	PreviewStatus string  `json:"preview_status"`
+	PreviewURL    string  `json:"preview_url"`
+}
+
+// handleMessageState handles requests to load historical message state.
+// GET /message/{id}/state
+// Returns the snapshot data for a given message ID.
+func (s *Server) handleMessageState(w http.ResponseWriter, r *http.Request) {
+	sessionID := GetSessionID(r.Context())
+
+	// Extract message ID from path parameter
+	idStr := r.PathValue("id")
+	if idStr == "" {
+		http.Error(w, "Missing message ID", http.StatusBadRequest)
+		return
+	}
+
+	// Parse message ID as integer
+	messageID, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, "Invalid message ID", http.StatusBadRequest)
+		return
+	}
+
+	// Get session and manager
+	session := s.sessionManager.GetSession(sessionID)
+	manager := session.Manager()
+
+	// Look up message by ID
+	msg := manager.GetMessage(messageID)
+	if msg == nil {
+		http.Error(w, "Message not found", http.StatusNotFound)
+		return
+	}
+
+	// Check if message has a snapshot
+	if msg.Snapshot == nil {
+		http.Error(w, "Message has no snapshot", http.StatusNotFound)
+		return
+	}
+
+	// Build response from snapshot
+	response := messageStateResponse{
+		MessageID:     msg.ID,
+		Prompt:        msg.Snapshot.Prompt,
+		Steps:         msg.Snapshot.Steps,
+		CFG:           msg.Snapshot.CFG,
+		Seed:          msg.Snapshot.Seed,
+		PreviewStatus: msg.Snapshot.PreviewStatus,
+		PreviewURL:    msg.Snapshot.PreviewURL,
+	}
+
+	// Return JSON response
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		log.Printf("Failed to encode message state response: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
 }
 
 // handleReady is a health check endpoint for Electron.

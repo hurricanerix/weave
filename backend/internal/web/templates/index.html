@@ -82,6 +82,7 @@
   --chat-width: 400px;
   --header-height: 48px;
   --max-content-width: 75ch;
+  --preview-size: 96px;
 
   /* Shadows */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
@@ -475,6 +476,7 @@ img {
 }
 
 .message-bubble {
+  position: relative;
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--border-radius-lg);
   font-size: var(--font-size-sm);
@@ -491,6 +493,91 @@ img {
   background-color: var(--color-bg-tertiary);
   color: var(--color-text-primary);
   border-bottom-left-radius: var(--space-xs);
+}
+
+.message-bubble.has-preview {
+  padding-right: calc(var(--preview-size) + var(--space-md) + var(--space-md));
+  min-height: var(--preview-size);
+}
+
+.message-preview {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: var(--preview-size);
+  height: var(--preview-size);
+  z-index: 10;
+  border-left: 1px solid var(--color-border);
+  transition: background 0.4s ease, opacity 0.4s ease;
+  overflow: hidden;
+}
+
+.message-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: opacity 0.4s ease;
+  opacity: 0;
+}
+
+/* Placeholder state - show icon */
+.message-preview[data-status="none"] {
+  background: var(--color-bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.message-preview[data-status="none"]::before {
+  content: "";
+  display: block;
+  width: 24px;
+  height: 24px;
+  background-image: url('data:image/svg+xml;utf8,<svg viewBox="0 0 24 24" fill="none" stroke="%238a7a68" stroke-width="2" xmlns="http://www.w3.org/2000/svg"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>');
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  opacity: 0.5;
+}
+
+/* Generating state - show loading animation */
+.message-preview[data-status="generating"] {
+  background: var(--color-bg-tertiary) url('/static/images/loading.webp') center/cover no-repeat;
+}
+
+/* Complete state - show image with fade in */
+.message-preview[data-status="complete"] img {
+  opacity: 1;
+}
+
+/* Clickable preview feedback */
+.message-preview[data-status="complete"] {
+  cursor: pointer;
+}
+
+.message-preview[data-status="complete"]:hover {
+  transform: scale(1.02);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* Message loaded highlight animation */
+.message-loaded .message-bubble {
+  animation: message-highlight 1s ease-out;
+}
+
+@keyframes message-highlight {
+  0% {
+    background-color: var(--color-accent);
+    opacity: 0.3;
+  }
+  50% {
+    background-color: var(--color-accent);
+    opacity: 0.5;
+  }
+  100% {
+    background-color: var(--color-bg-tertiary);
+    opacity: 1;
+  }
 }
 
 .message-system {
@@ -626,6 +713,7 @@ img {
 /* Thinking indicator */
 .message-thinking {
   align-self: flex-start;
+  transition: all 0.3s ease;
 }
 
 .thinking-bubble {
@@ -637,6 +725,23 @@ img {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  min-width: 60px;
+  transition: all 0.3s ease;
+}
+
+.message-bubble.expanding {
+  animation: expand 0.3s ease;
+}
+
+@keyframes expand {
+  from {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 
 .thinking-dots {
@@ -1818,12 +1923,28 @@ img {
                             </div>
                         </div>
 
+                        <!-- UI Preferences -->
+                        <div class="settings-section">
+                            <h3 class="settings-section-title">UI Preferences</h3>
+
+                            <!-- Preview Size -->
+                            <div class="form-group">
+                                <label class="form-label" for="preview-size-select">Preview Size</label>
+                                <select id="preview-size-select" class="form-select" onchange="setPreviewSize(this.value)">
+                                    <option value="small">Small (64px)</option>
+                                    <option value="medium" selected>Medium (96px)</option>
+                                    <option value="large">Large (128px)</option>
+                                </select>
+                            </div>
+                        </div>
+
                         <!-- Actions -->
                         <div class="settings-section">
                             <div class="flex flex-col gap-sm">
                                 <button id="generate-button" class="btn btn--primary"
                                     hx-post="/generate"
                                     hx-include="#resolved-prompt, #steps-input, #cfg-input, #seed-input, #width-input, #height-input"
+                                    hx-vals="js:{message_id: activeMessageId}"
                                     hx-trigger="click"
                                     hx-swap="none">Generate</button>
                                 <button type="button" class="btn" onclick="copySettings()">Copy Settings</button>
@@ -1853,6 +1974,11 @@ img {
         let isStepsFocused = false;
         let isCfgFocused = false;
         let isSeedFocused = false;
+
+        // Active message ID for generation (set when user clicks a message with snapshot)
+        let activeMessageId = null;
+        // Flag to prevent clearing activeMessageId when loading state programmatically
+        let isLoadingState = false;
 
         // Validate image URL to prevent XSS via javascript: or data: URLs
         function isValidImageURL(url) {
@@ -1892,6 +2018,147 @@ img {
             const emptyState = chatMessages.querySelector('.empty-state');
             if (emptyState) {
                 emptyState.remove();
+            }
+        }
+
+        // Update preview state for a message
+        function updatePreviewState(messageId, status, imageUrl) {
+            console.log('updatePreviewState:', messageId, status, imageUrl);
+
+            // Find message by data-message-id
+            const message = document.querySelector(`.message[data-message-id="${messageId}"]`);
+            if (!message) {
+                console.warn('Message not found for id:', messageId);
+                return;
+            }
+
+            // Find preview element within the message
+            const preview = message.querySelector('.message-preview');
+            if (!preview) {
+                console.warn('Preview not found for message:', messageId);
+                return;
+            }
+
+            // Update status attribute
+            preview.setAttribute('data-status', status);
+
+            // If complete and imageUrl provided, add/update image
+            if (status === 'complete' && imageUrl) {
+                // Validate URL to prevent XSS
+                if (!isValidImageURL(imageUrl)) {
+                    console.error('Invalid image URL for preview:', imageUrl);
+                    return;
+                }
+
+                // Check if img already exists
+                let img = preview.querySelector('img');
+                if (!img) {
+                    img = document.createElement('img');
+                    img.alt = 'Generated image';
+                    preview.appendChild(img);
+                }
+                img.src = imageUrl;
+            }
+        }
+
+        // Load historical message state into input fields
+        async function loadMessageState(messageId) {
+            try {
+                const response = await fetch(`/message/${messageId}/state`);
+                if (!response.ok) {
+                    console.error('Failed to load message state:', response.status);
+                    return;
+                }
+
+                const state = await response.json();
+
+                // Set flag to prevent input event handler from clearing activeMessageId
+                isLoadingState = true;
+
+                // Populate input fields
+                const promptInput = document.getElementById('resolved-prompt');
+                const stepsInput = document.getElementById('steps-input');
+                const cfgInput = document.getElementById('cfg-input');
+                const seedInput = document.getElementById('seed-input');
+
+                if (promptInput) {
+                    promptInput.value = state.prompt;
+                    hasPrompt = state.prompt.trim() !== '';
+                    updateGenerateButtonState();
+                }
+                if (stepsInput) {
+                    stepsInput.value = state.steps;
+                    updateStepsValue(state.steps);
+                }
+                if (cfgInput) {
+                    cfgInput.value = state.cfg;
+                    updateCFGValue(state.cfg);
+                }
+                if (seedInput) {
+                    seedInput.value = state.seed;
+                }
+
+                // Set active message for generation
+                activeMessageId = messageId;
+
+                // Visual feedback - highlight the message
+                highlightMessage(messageId);
+
+                // Reset flag
+                isLoadingState = false;
+
+            } catch (error) {
+                console.error('Error loading message state:', error);
+                isLoadingState = false;
+            }
+        }
+
+        // Highlight message to indicate state was loaded
+        function highlightMessage(messageId) {
+            // Remove previous highlight
+            const previousHighlight = document.querySelector('.message-loaded');
+            if (previousHighlight) {
+                previousHighlight.classList.remove('message-loaded');
+            }
+
+            // Add highlight to current message
+            const message = document.querySelector(`.message[data-message-id="${messageId}"]`);
+            if (message) {
+                message.classList.add('message-loaded');
+                // Remove highlight after animation
+                setTimeout(() => {
+                    message.classList.remove('message-loaded');
+                }, 1000);
+            }
+        }
+
+        // Handle message click to load state
+        function handleMessageClick(event) {
+            // Only handle clicks on assistant messages with snapshots
+            const message = event.target.closest('.message.message-assistant[data-message-id]');
+            if (!message) return;
+
+            // Check if message has a preview (indicates it has a snapshot)
+            const preview = message.querySelector('.message-preview');
+            if (!preview) return;
+
+            // Ignore if user is selecting text
+            const selection = window.getSelection();
+            if (selection && selection.toString().length > 0) return;
+
+            // Handle click on preview area - show full-size image
+            if (event.target.closest('.message-preview')) {
+                const previewImg = preview.querySelector('img');
+                if (previewImg && preview.dataset.status === 'complete') {
+                    showImageWithOverlay(previewImg.src, previewImg.alt || 'Generated image');
+                }
+                return;
+            }
+
+            // Load the message state
+            const messageId = message.dataset.messageId;
+            if (messageId) {
+                loadMessageState(messageId);
             }
         }
 
@@ -2117,25 +2384,60 @@ img {
             let currentMessageDiv = chatMessages.querySelector('.message.message-assistant.streaming');
 
             if (!currentMessageDiv) {
-                // Hide thinking indicator when first token arrives
-                hideThinkingIndicator();
+                // Check if thinking indicator exists - if so, transform it
+                const thinkingMessage = chatMessages.querySelector('.message-thinking');
 
-                // Create new agent message if none exists
-                removeEmptyState();
+                if (thinkingMessage) {
+                    // Transform thinking indicator into message bubble
+                    currentMessageDiv = thinkingMessage;
 
-                currentMessageDiv = document.createElement('div');
-                currentMessageDiv.className = 'message message-assistant streaming';
+                    // Update classes
+                    currentMessageDiv.classList.remove('message-thinking');
+                    currentMessageDiv.classList.add('message-assistant', 'streaming');
 
-                const sender = document.createElement('div');
-                sender.className = 'message-sender';
-                sender.textContent = 'Ara';
+                    // Store message ID if available
+                    if (data.message_id !== undefined) {
+                        currentMessageDiv.setAttribute('data-message-id', data.message_id);
+                    }
 
-                const bubble = document.createElement('div');
-                bubble.className = 'message-bubble';
+                    // Find and replace thinking bubble with message bubble
+                    const thinkingBubble = currentMessageDiv.querySelector('.thinking-bubble');
+                    if (thinkingBubble) {
+                        const bubble = document.createElement('div');
+                        bubble.className = 'message-bubble expanding';
+                        bubble.textContent = '';
 
-                currentMessageDiv.appendChild(sender);
-                currentMessageDiv.appendChild(bubble);
-                chatMessages.appendChild(currentMessageDiv);
+                        // Replace thinking bubble with message bubble
+                        thinkingBubble.replaceWith(bubble);
+
+                        // Remove expanding animation after it completes
+                        setTimeout(() => {
+                            bubble.classList.remove('expanding');
+                        }, 300);
+                    }
+                } else {
+                    // No thinking indicator - create new message as fallback
+                    removeEmptyState();
+
+                    currentMessageDiv = document.createElement('div');
+                    currentMessageDiv.className = 'message message-assistant streaming';
+
+                    // Store message ID if available
+                    if (data.message_id !== undefined) {
+                        currentMessageDiv.setAttribute('data-message-id', data.message_id);
+                    }
+
+                    const sender = document.createElement('div');
+                    sender.className = 'message-sender';
+                    sender.textContent = 'Ara';
+
+                    const bubble = document.createElement('div');
+                    bubble.className = 'message-bubble';
+
+                    currentMessageDiv.appendChild(sender);
+                    currentMessageDiv.appendChild(bubble);
+                    chatMessages.appendChild(currentMessageDiv);
+                }
             }
 
             // Append token to content
@@ -2156,6 +2458,28 @@ img {
             const streamingMessage = chatMessages.querySelector('.message.message-assistant.streaming');
             if (streamingMessage) {
                 streamingMessage.classList.remove('streaming');
+
+                // Set message ID for later preview updates
+                if (data.message_id !== undefined) {
+                    streamingMessage.setAttribute('data-message-id', data.message_id);
+                }
+
+                // Add preview area if message has snapshot
+                if (data.has_snapshot) {
+                    const bubble = streamingMessage.querySelector('.message-bubble');
+                    if (bubble) {
+                        // Add has-preview class to adjust padding
+                        bubble.classList.add('has-preview');
+
+                        // Create preview area
+                        const previewDiv = document.createElement('div');
+                        previewDiv.className = 'message-preview';
+                        previewDiv.setAttribute('data-status', 'none');
+
+                        // Append preview to bubble
+                        bubble.appendChild(previewDiv);
+                    }
+                }
             }
 
             // Re-enable chat input
@@ -2236,7 +2560,14 @@ img {
             console.log('Generation started:', data);
             isGenerating = true;
             setGenerateButtonEnabled(false);
-            showGeneratingIndicator();
+
+            // Update preview state to generating if message_id is provided
+            if (data.message_id !== undefined) {
+                updatePreviewState(data.message_id, 'generating');
+            } else {
+                // Only show old indicator if no preview bubble exists
+                showGeneratingIndicator();
+            }
         }
 
         // Show image with overlay action buttons (replaces empty state)
@@ -2337,13 +2668,23 @@ img {
             // Display image with overlay actions
             showImageWithOverlay(data.url, 'Generated image');
 
-            // Hide generating indicator and display image inline in chat
+            // Update preview state to complete if message_id is provided
+            if (data.message_id !== undefined) {
+                updatePreviewState(data.message_id, 'complete', data.url);
+            } else {
+                // Only add separate chat image if not associated with a message preview
+                addImageToChat(data.url);
+            }
+
+            // Hide generating indicator
             hideGeneratingIndicator();
-            addImageToChat(data.url);
 
             // Re-enable generate button
             isGenerating = false;
             setGenerateButtonEnabled(true);
+
+            // Clear active message after successful generation
+            activeMessageId = null;
         }
 
         // Add generated image to chat messages
@@ -2527,6 +2868,11 @@ img {
                 resolvedPrompt.addEventListener('input', function() {
                     hasPrompt = resolvedPrompt.value.trim() !== '';
                     updateGenerateButtonState();
+                    // Clear active message when user types (new content, not from history)
+                    // Skip if we're loading state programmatically
+                    if (!isLoadingState) {
+                        activeMessageId = null;
+                    }
                 });
             }
 
@@ -2560,6 +2906,15 @@ img {
                     isSeedFocused = false;
                 });
             }
+
+            // Add click handler for messages with snapshots
+            const chatMessages = document.getElementById('chat-messages');
+            if (chatMessages) {
+                chatMessages.addEventListener('click', handleMessageClick);
+            }
+
+            // Load preview size preference
+            loadPreviewSize();
         });
 
         // Start a new chat by clearing conversation history
@@ -2607,6 +2962,8 @@ img {
                     // Update button state
                     hasPrompt = false;
                     updateGenerateButtonState();
+                    // Clear active message
+                    activeMessageId = null;
                     // Focus chat input
                     const chatInput = document.getElementById('chat-input');
                     if (chatInput) {
@@ -2647,6 +3004,33 @@ img {
             const stepsValue = document.getElementById('steps-value');
             if (stepsValue) {
                 stepsValue.textContent = value;
+            }
+        }
+
+        // Preview size preference
+        const PREVIEW_SIZES = {
+            small: '64px',
+            medium: '96px',
+            large: '128px'
+        };
+
+        function setPreviewSize(size) {
+            if (!PREVIEW_SIZES[size]) {
+                console.warn('Invalid preview size:', size);
+                return;
+            }
+            document.documentElement.style.setProperty('--preview-size', PREVIEW_SIZES[size]);
+            localStorage.setItem('previewSize', size);
+        }
+
+        function loadPreviewSize() {
+            const size = localStorage.getItem('previewSize') || 'medium';
+            setPreviewSize(size);
+
+            // Update the select element to match loaded preference
+            const select = document.getElementById('preview-size-select');
+            if (select) {
+                select.value = size;
             }
         }
 

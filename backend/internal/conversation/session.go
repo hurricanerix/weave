@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+// persistence is the interface for session persistence operations.
+// This allows SessionManager to save and load sessions without directly
+// depending on the persistence package (avoiding import cycles).
+type persistence interface {
+	Save(sessionID string, conv *Conversation) error
+	Load(sessionID string) (*Conversation, error)
+}
+
 const (
 	// SessionInactivityTimeout is how long a session can be inactive before cleanup.
 	SessionInactivityTimeout = 24 * time.Hour
@@ -48,6 +56,7 @@ type Session struct {
 type SessionManager struct {
 	mu            sync.RWMutex
 	sessions      map[string]*Session
+	store         persistence // Optional persistence backend
 	cancelCleanup context.CancelFunc
 	cleanupDone   chan struct{}
 }
@@ -55,10 +64,18 @@ type SessionManager struct {
 // NewSessionManager creates a new session manager with an empty session map.
 // It starts a background goroutine that periodically cleans up inactive sessions.
 func NewSessionManager() *SessionManager {
+	return NewSessionManagerWithPersistence(nil)
+}
+
+// NewSessionManagerWithPersistence creates a session manager with persistence support.
+// If store is nil, sessions are not persisted (in-memory only).
+// If store is provided, sessions are automatically saved on changes and loaded on-demand.
+func NewSessionManagerWithPersistence(store persistence) *SessionManager {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	sm := &SessionManager{
 		sessions:      make(map[string]*Session),
+		store:         store,
 		cancelCleanup: cancel,
 		cleanupDone:   make(chan struct{}),
 	}
@@ -70,7 +87,8 @@ func NewSessionManager() *SessionManager {
 }
 
 // GetSession returns the Session for the given session ID.
-// If the session does not exist, a new Session is created and stored.
+// If the session does not exist in memory, it attempts to load from persistence.
+// If not found in persistence, a new Session is created and stored.
 // Updates the last activity time for the session.
 //
 // This method is thread-safe and can be called concurrently from multiple
@@ -90,7 +108,7 @@ func (sm *SessionManager) GetSession(sessionID string) *Session {
 	}
 	sm.mu.RUnlock()
 
-	// Session doesn't exist, need write lock to create
+	// Session doesn't exist in memory, need write lock to create or load
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -106,8 +124,31 @@ func (sm *SessionManager) GetSession(sessionID string) *Session {
 		sm.evictLRU()
 	}
 
-	// Create new session
-	manager := NewManager()
+	// Try to load from persistence if available
+	var manager *Manager
+	if sm.store != nil {
+		conv, err := sm.store.Load(sessionID)
+		if err != nil {
+			log.Printf("Failed to load session %s from persistence: %v", sessionID, err)
+			// Fall through to create new session
+			manager = NewManager()
+		} else {
+			// Session recovered from disk
+			log.Printf("Recovered session %s from persistence", sessionID)
+			manager = NewManagerWithConversation(conv)
+		}
+	} else {
+		// No persistence configured
+		manager = NewManager()
+	}
+
+	// Set up persistence callback
+	if sm.store != nil {
+		manager.SetOnChange(func() {
+			sm.saveSession(sessionID, manager)
+		})
+	}
+
 	session := &Session{
 		manager:      manager,
 		lastActivity: now,
@@ -255,5 +296,19 @@ func (sm *SessionManager) evictLRU() {
 	if oldestID != "" {
 		delete(sm.sessions, oldestID)
 		log.Printf("Evicted LRU session %s (was inactive for %v)", oldestID, time.Since(oldestTime))
+	}
+}
+
+// saveSession saves a session's conversation to persistence.
+// This is called by the onChange callback when conversation state changes.
+// Errors are logged but not returned - persistence failures don't block the request.
+func (sm *SessionManager) saveSession(sessionID string, manager *Manager) {
+	if sm.store == nil {
+		return
+	}
+
+	conv := manager.GetConversation()
+	if err := sm.store.Save(sessionID, conv); err != nil {
+		log.Printf("Failed to save session %s: %v", sessionID, err)
 	}
 }

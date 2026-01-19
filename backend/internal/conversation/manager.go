@@ -3,6 +3,8 @@ package conversation
 import (
 	"fmt"
 	"sync"
+
+	"github.com/hurricanerix/weave/internal/ollama"
 )
 
 const (
@@ -19,8 +21,9 @@ const (
 // Manager is thread-safe. All methods are protected by a mutex to allow
 // concurrent access from multiple HTTP request handlers.
 type Manager struct {
-	mu   sync.Mutex
-	conv *Conversation
+	mu       sync.Mutex
+	conv     *Conversation
+	onChange func() // Called after any mutation to trigger persistence
 }
 
 // NewManager creates a new conversation manager with an empty conversation.
@@ -30,32 +33,90 @@ func NewManager() *Manager {
 	}
 }
 
+// NewManagerWithConversation creates a manager from an existing conversation.
+// This is used for session recovery when loading from persistence.
+func NewManagerWithConversation(conv *Conversation) *Manager {
+	return &Manager{
+		conv: conv,
+	}
+}
+
+// SetOnChange sets the callback to be invoked after any mutation.
+// This is used by SessionManager to trigger persistence saves.
+func (m *Manager) SetOnChange(callback func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onChange = callback
+}
+
+// triggerOnChangeLocked invokes the onChange callback if set.
+// Must be called while holding the mutex (hence the Locked suffix).
+func (m *Manager) triggerOnChangeLocked() {
+	if m.onChange != nil {
+		m.onChange()
+	}
+}
+
 // AddUserMessage adds a user message to the conversation history.
 // If the history exceeds MaxHistorySize, the oldest messages are removed.
-func (m *Manager) AddUserMessage(content string) {
+// Returns the assigned message ID.
+func (m *Manager) AddUserMessage(content string) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.conv.messages = append(m.conv.messages, Message{
-		Role:    RoleUser,
-		Content: content,
+	id := m.conv.nextMessageID
+	m.conv.nextMessageID++
+
+	m.conv.messages = append(m.conv.messages, ConversationMessage{
+		ID:       id,
+		Role:     RoleUser,
+		Content:  content,
+		Snapshot: nil, // User messages don't have snapshots
 	})
 	m.trimHistoryLocked()
+	m.triggerOnChangeLocked()
+	return id
 }
 
 // AddAssistantMessage adds an assistant message to the conversation history
-// and updates the current prompt if provided.
+// and optionally creates a state snapshot if generation parameters changed.
 //
-// The prompt parameter should be the extracted prompt from the assistant's
-// response. If empty, the current prompt is unchanged.
-// If the history exceeds MaxHistorySize, the oldest messages are removed.
-func (m *Manager) AddAssistantMessage(content string, prompt string) {
+// When metadata is provided, this method compares the metadata against the last
+// snapshot state. If the prompt or generation settings differ, a StateSnapshot is
+// created and attached to the message.
+//
+// Returns the assigned message ID.
+func (m *Manager) AddAssistantMessage(content string, prompt string, metadata *ollama.LLMMetadata) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.conv.messages = append(m.conv.messages, Message{
-		Role:    RoleAssistant,
-		Content: content,
+	id := m.conv.nextMessageID
+	m.conv.nextMessageID++
+
+	// Determine if we need to create a snapshot.
+	// A snapshot is created if metadata differs from the last snapshot state.
+	var snapshot *StateSnapshot
+	if metadata != nil && metadata.Prompt != "" {
+		lastSnapshot := m.getLastSnapshotLocked()
+
+		// Create snapshot if prompt changed or this is the first prompt
+		if lastSnapshot == nil || lastSnapshot.Prompt != metadata.Prompt {
+			snapshot = &StateSnapshot{
+				Prompt:        metadata.Prompt,
+				Steps:         0, // Settings not tracked in LLMMetadata yet
+				CFG:           0,
+				Seed:          0,
+				PreviewStatus: PreviewStatusNone,
+				PreviewURL:    "",
+			}
+		}
+	}
+
+	m.conv.messages = append(m.conv.messages, ConversationMessage{
+		ID:       id,
+		Role:     RoleAssistant,
+		Content:  content,
+		Snapshot: snapshot,
 	})
 
 	// Update current prompt if the assistant provided one.
@@ -67,10 +128,13 @@ func (m *Manager) AddAssistantMessage(content string, prompt string) {
 	}
 
 	m.trimHistoryLocked()
+	m.triggerOnChangeLocked()
+	return id
 }
 
-// GetHistory returns a copy of the message history.
+// GetHistory returns a copy of the message history as ollama.Message for LLM API.
 // The returned slice is safe to modify without affecting the conversation.
+// This converts ConversationMessage to Message by extracting Role, Content, and ToolCalls.
 func (m *Manager) GetHistory() []Message {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -78,10 +142,24 @@ func (m *Manager) GetHistory() []Message {
 	if len(m.conv.messages) == 0 {
 		return nil
 	}
-	// Return a copy to prevent external modification
+
+	// Convert ConversationMessage to Message (for ollama API compatibility)
 	history := make([]Message, len(m.conv.messages))
-	copy(history, m.conv.messages)
+	for i, msg := range m.conv.messages {
+		history[i] = Message{
+			Role:      msg.Role,
+			Content:   msg.Content,
+			ToolCalls: msg.ToolCalls,
+		}
+	}
 	return history
+}
+
+// GetConversation returns the underlying Conversation.
+// This is used by SessionManager to access conversation state for persistence.
+// The returned Conversation is NOT thread-safe - caller must hold Manager's mutex.
+func (m *Manager) GetConversation() *Conversation {
+	return m.conv
 }
 
 // GetCurrentPrompt returns the current image generation prompt.
@@ -106,6 +184,8 @@ func (m *Manager) Clear() {
 	m.conv.currentPrompt = ""
 	m.conv.previousPrompt = ""
 	m.conv.promptEdited = false
+	m.conv.nextMessageID = 1 // Reset message ID counter
+	m.triggerOnChangeLocked()
 }
 
 // UpdatePrompt updates the current prompt with a user-provided value.
@@ -122,6 +202,7 @@ func (m *Manager) UpdatePrompt(newPrompt string) {
 		m.conv.previousPrompt = m.conv.currentPrompt
 		m.conv.currentPrompt = newPrompt
 		m.conv.promptEdited = true
+		m.triggerOnChangeLocked()
 	}
 }
 
@@ -161,11 +242,16 @@ func (m *Manager) NotifyPromptEdited() {
 		return
 	}
 
+	id := m.conv.nextMessageID
+	m.conv.nextMessageID++
+
 	// Inject user message with the current prompt (not system - ollama
 	// requires system messages to be first in conversation)
-	notification := Message{
-		Role:    RoleUser,
-		Content: `[user edited prompt to: "` + m.conv.currentPrompt + `"]`,
+	notification := ConversationMessage{
+		ID:       id,
+		Role:     RoleUser,
+		Content:  `[user edited prompt to: "` + m.conv.currentPrompt + `"]`,
+		Snapshot: nil, // Edit notifications don't have snapshots
 	}
 	m.conv.messages = append(m.conv.messages, notification)
 
@@ -173,6 +259,7 @@ func (m *Manager) NotifyPromptEdited() {
 	m.conv.promptEdited = false
 
 	m.trimHistoryLocked()
+	m.triggerOnChangeLocked()
 }
 
 // trimHistoryLocked removes the oldest messages if the history exceeds MaxHistorySize.
@@ -270,8 +357,14 @@ func (m *Manager) BuildLLMContext(systemPrompt string, currentSteps int, current
 		})
 	}
 
-	// Add all conversation history
-	context = append(context, m.conv.messages...)
+	// Add all conversation history (convert ConversationMessage to Message)
+	for _, msg := range m.conv.messages {
+		context = append(context, Message{
+			Role:      msg.Role,
+			Content:   msg.Content,
+			ToolCalls: msg.ToolCalls,
+		})
+	}
 
 	// Append trailing context with current prompt if set.
 	// Note: We use RoleUser instead of RoleSystem because Ollama requires
@@ -285,4 +378,50 @@ func (m *Manager) BuildLLMContext(systemPrompt string, currentSteps int, current
 	}
 
 	return context
+}
+
+// getLastSnapshotLocked returns the most recent state snapshot from the conversation.
+// Returns nil if no snapshots exist.
+//
+// This method must be called while holding the mutex (hence the Locked suffix).
+func (m *Manager) getLastSnapshotLocked() *StateSnapshot {
+	// Iterate backwards to find the most recent snapshot
+	for i := len(m.conv.messages) - 1; i >= 0; i-- {
+		if m.conv.messages[i].Snapshot != nil {
+			return m.conv.messages[i].Snapshot
+		}
+	}
+	return nil
+}
+
+// GetMessage returns the message with the specified ID.
+// Returns nil if no message with that ID exists.
+func (m *Manager) GetMessage(id int) *ConversationMessage {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i := range m.conv.messages {
+		if m.conv.messages[i].ID == id {
+			return &m.conv.messages[i]
+		}
+	}
+	return nil
+}
+
+// UpdateMessagePreview updates the preview status and URL for a message with a snapshot.
+// This is called when a preview image is generated or generation completes.
+//
+// If the message doesn't exist or has no snapshot, this method does nothing.
+func (m *Manager) UpdateMessagePreview(id int, status string, url string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i := range m.conv.messages {
+		if m.conv.messages[i].ID == id && m.conv.messages[i].Snapshot != nil {
+			m.conv.messages[i].Snapshot.PreviewStatus = status
+			m.conv.messages[i].Snapshot.PreviewURL = url
+			m.triggerOnChangeLocked()
+			return
+		}
+	}
 }

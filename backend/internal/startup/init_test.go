@@ -46,7 +46,12 @@ func TestCreateOllamaClient(t *testing.T) {
 }
 
 func TestCreateSessionManager(t *testing.T) {
-	manager := CreateSessionManager()
+	cfg := &config.Config{
+		LogLevel: "info",
+	}
+	logger := CreateLogger(cfg)
+
+	manager := CreateSessionManager(logger)
 
 	if manager == nil {
 		t.Fatal("CreateSessionManager() returned nil")
@@ -62,12 +67,13 @@ func TestCreateWebServer(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	ollamaClient := CreateOllamaClient(cfg)
-	sessionManager := CreateSessionManager()
-	imageStorage := CreateImageStorage(ctx, CreateLogger(cfg))
 	logger := CreateLogger(cfg)
+	ollamaClient := CreateOllamaClient(cfg)
+	sessionManager := CreateSessionManager(logger)
+	imageStorage := CreateImageStorage(ctx, logger)
+	imageStore := CreateImageStore(logger)
 
-	server, err := CreateWebServer(cfg, ollamaClient, sessionManager, imageStorage, nil, logger)
+	server, err := CreateWebServer(cfg, ollamaClient, sessionManager, imageStorage, imageStore, nil, logger)
 	if err != nil {
 		t.Fatalf("CreateWebServer() error = %v, want nil", err)
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/hurricanerix/weave/internal/image"
 	"github.com/hurricanerix/weave/internal/logging"
 	"github.com/hurricanerix/weave/internal/ollama"
+	"github.com/hurricanerix/weave/internal/persistence"
 	"github.com/hurricanerix/weave/internal/web"
 )
 
@@ -42,6 +43,7 @@ var (
 type Components struct {
 	OllamaClient      *ollama.Client
 	SessionManager    *conversation.SessionManager
+	ImageStore        *persistence.ImageStore
 	ComputeClient     *client.Conn
 	ComputeListener   net.Listener
 	ComputeSocketPath string
@@ -194,9 +196,25 @@ func CreateOllamaClient(cfg *config.Config) *ollama.Client {
 	return ollama.NewClientWithConfig(cfg.OllamaURL, cfg.OllamaModel, 60*time.Second)
 }
 
-// CreateSessionManager creates a session manager for conversation state
-func CreateSessionManager() *conversation.SessionManager {
-	return conversation.NewSessionManager()
+// CreateSessionManager creates a session manager with persistence support.
+// Sessions are stored in config/sessions/ and automatically loaded on-demand.
+func CreateSessionManager(logger *logging.Logger) *conversation.SessionManager {
+	// Create session store with base path
+	store := persistence.NewSessionStore("config/sessions")
+
+	// Create session manager with persistence
+	sm := conversation.NewSessionManagerWithPersistence(store)
+
+	logger.Debug("Created session manager with persistence at config/sessions")
+	return sm
+}
+
+// CreateImageStore creates an image store for session-specific images.
+// Images are stored in config/sessions/{session_id}/images/
+func CreateImageStore(logger *logging.Logger) *persistence.ImageStore {
+	store := persistence.NewImageStore("config/sessions")
+	logger.Debug("Created image store at config/sessions")
+	return store
 }
 
 // CreateImageStorage creates image storage and starts cleanup goroutine
@@ -207,11 +225,11 @@ func CreateImageStorage(ctx context.Context, logger *logging.Logger) *image.Stor
 }
 
 // CreateWebServer creates the HTTP server with all dependencies wired
-func CreateWebServer(cfg *config.Config, ollamaClient *ollama.Client, sessionManager *conversation.SessionManager, imageStorage *image.Storage, computeClient *client.Conn, logger *logging.Logger) (*web.Server, error) {
+func CreateWebServer(cfg *config.Config, ollamaClient *ollama.Client, sessionManager *conversation.SessionManager, imageStorage *image.Storage, imageStore *persistence.ImageStore, computeClient *client.Conn, logger *logging.Logger) (*web.Server, error) {
 	addr := fmt.Sprintf("localhost:%d", cfg.Port)
 
 	// Create server with dependencies including config for default generation settings
-	server, err := web.NewServerWithDeps(addr, ollamaClient, sessionManager, imageStorage, computeClient, cfg)
+	server, err := web.NewServerWithDeps(addr, ollamaClient, sessionManager, imageStorage, imageStore, computeClient, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create web server: %w", err)
 	}
@@ -234,16 +252,18 @@ func InitializeAll(ctx context.Context, cfg *config.Config, logger *logging.Logg
 	ollamaClient := CreateOllamaClient(cfg)
 	logger.Debug("Created ollama client: endpoint=%s, model=%s", cfg.OllamaURL, cfg.OllamaModel)
 
-	// Create session manager
-	sessionManager := CreateSessionManager()
-	logger.Debug("Created session manager")
+	// Create session manager with persistence
+	sessionManager := CreateSessionManager(logger)
+
+	// Create image store for session-specific images
+	imageStore := CreateImageStore(logger)
 
 	// Create image storage with cleanup goroutine
 	imageStorage := CreateImageStorage(ctx, logger)
 	logger.Debug("Created image storage with cleanup enabled")
 
 	// Create web server with compute client
-	webServer, err := CreateWebServer(cfg, ollamaClient, sessionManager, imageStorage, computeClient, logger)
+	webServer, err := CreateWebServer(cfg, ollamaClient, sessionManager, imageStorage, imageStore, computeClient, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create web server: %w", err)
 	}
@@ -252,6 +272,7 @@ func InitializeAll(ctx context.Context, cfg *config.Config, logger *logging.Logg
 	return &Components{
 		OllamaClient:      ollamaClient,
 		SessionManager:    sessionManager,
+		ImageStore:        imageStore,
 		ComputeClient:     computeClient,
 		ComputeListener:   nil, // Set by caller
 		ComputeSocketPath: "",  // Set by caller
