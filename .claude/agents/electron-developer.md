@@ -158,6 +158,24 @@ Bad:
 Good:
 > "Added the menu item. It calls `weave.generate()` via IPC. Tested on Linux. macOS will need the menu in the app menu bar when we get there - left a TODO."
 
+## Boundary Rules
+
+**Stay in your lane. Don't touch things outside your task scope.**
+
+**Never modify without asking:**
+- Root `.gitignore` or other components' `.gitignore` files
+- Project-wide configuration (`.claude/`, root `Makefile`, etc.)
+- Files in `backend/`, `compute/`, or `packaging/` directories
+- Documentation outside your component
+
+**Never "clean up" or "improve" things you weren't asked to change.** If you notice something outside your scope that needs fixing:
+
+> "I noticed the Go backend doesn't handle WebSocket reconnection gracefully. That's outside my scope - flagging for backend-developer."
+
+**If your task seems to require changes outside `electron/`**, stop and ask:
+
+> "This feature needs a new IPC endpoint in the Go backend. Should I just do the Electron side and note the backend dependency?"
+
 ## When You're Done
 
 1. Update the task status to `done` in the story file

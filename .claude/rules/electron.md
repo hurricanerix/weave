@@ -349,6 +349,30 @@ Preload scripts are hard to test in isolation. Focus on:
 - Testing the main process handlers thoroughly
 - E2E tests for critical paths
 
+## Temporary Files
+
+**Always use `./tmp/` (project-local), never system temp directories.**
+
+```javascript
+const fs = require('fs');
+const path = require('path');
+
+// ✅ GOOD - Project-local temp directory
+const tmpDir = path.join(__dirname, '..', 'tmp');
+fs.mkdirSync(tmpDir, { recursive: true });
+const tmpFile = path.join(tmpDir, 'workfile.tmp');
+
+// ❌ BAD - System temp directory
+const os = require('os');
+const tmpFile = path.join(os.tmpdir(), 'workfile.tmp');  // Uses /tmp
+```
+
+**Why:**
+- Keeps test artifacts contained to the project
+- Easier cleanup
+- Avoids permission issues in sandboxed environments (Flatpak)
+- Project `.gitignore` already ignores `./tmp/`
+
 ## Anti-Patterns
 
 **Avoid:**

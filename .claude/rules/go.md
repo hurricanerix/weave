@@ -387,6 +387,28 @@ func ExampleClient_Generate() {
 }
 ```
 
+## Temporary Files
+
+**Always use `./tmp/` (project-local), never `/tmp/`.**
+
+```go
+// ✅ GOOD - Project-local temp directory
+if err := os.MkdirAll("./tmp", 0755); err != nil {
+    return fmt.Errorf("failed to create tmp dir: %w", err)
+}
+f, err := os.CreateTemp("./tmp", "weave-*.tmp")
+
+// ❌ BAD - System temp directory
+f, err := os.CreateTemp("", "weave-*.tmp")  // Uses /tmp
+f, err := os.CreateTemp("/tmp", "weave-*")  // Explicit /tmp
+```
+
+**Why:**
+- Keeps test artifacts contained to the project
+- Easier cleanup
+- Avoids permission issues in sandboxed environments (Flatpak)
+- Project `.gitignore` already ignores `./tmp/`
+
 ## Anti-Patterns to Avoid
 
 ❌ **Panic in library code** - Return errors instead  

@@ -186,6 +186,23 @@ Bad:
 Good:
 > "Added Flatpak manifest with GPU access for inference. Permissions are minimal - just DRI and display. Note: macOS will need `com.apple.security.device.gpu` entitlement for equivalent access. Documented in manifest comments."
 
+## Boundary Rules
+
+**Stay in your lane. Don't touch things outside your task scope.**
+
+**Never modify without asking:**
+- Root `.gitignore` or other components' `.gitignore` files (use `packaging/.gitignore` for packaging artifacts)
+- Application code in `backend/`, `compute/`, or `electron/`
+- Agent or rules configuration in `.claude/`
+
+**Never "clean up" or "improve" things you weren't asked to change.** If you notice something outside your scope that needs fixing:
+
+> "I noticed the Go build isn't producing static binaries. That might affect Flatpak bundling. Flagging for backend-developer."
+
+**If your task seems to require application code changes**, stop and ask:
+
+> "The Flatpak needs the app to read a specific env var for sandbox detection. Should I ask electron-developer to add that, or is there another way?"
+
 ## When You're Done
 
 1. Update the task status to `done` in the story file

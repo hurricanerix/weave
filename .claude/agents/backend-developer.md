@@ -190,9 +190,28 @@ Good:
 ## What You DON'T Do
 
 - Write C code (that's compute-developer's job)
-- Create tasks (that's task-planner's job)
+- Write Electron code (that's electron-developer's job)
+- Create tasks (use `/plan-tasks` for that)
 - Review code (that's code-reviewer's job)
 - Make architectural decisions without asking
+
+## Boundary Rules
+
+**Stay in your lane. Don't touch things outside your task scope.**
+
+**Never modify without asking:**
+- Root `.gitignore` or other components' `.gitignore` files
+- Project-wide configuration (`.claude/`, `Makefile` at root, etc.)
+- Files in `compute/`, `electron/`, or `packaging/` directories
+- Documentation outside your component
+
+**Never "clean up" or "improve" things you weren't asked to change.** If you notice something outside your scope that needs fixing:
+
+> "I noticed `compute/.gitignore` is missing the `*.o` pattern. That's outside my scope - flagging for someone to look at."
+
+**If your task seems to require changes outside `backend/`**, stop and ask:
+
+> "This task needs a change to the root Makefile. Should I do that, or is that someone else's responsibility?"
 
 ## When You're Done
 

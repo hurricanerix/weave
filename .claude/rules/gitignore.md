@@ -5,6 +5,18 @@ paths:
 
 # Gitignore Rules for Weave
 
+## Critical Rule
+
+**NEVER consolidate, merge, or "clean up" .gitignore files.**
+
+Each component has its own `.gitignore` for a reason. Do not:
+- Move patterns from a component `.gitignore` to the root
+- Merge multiple `.gitignore` files into one
+- Delete a component's `.gitignore` after "consolidating" it
+- "Simplify" by centralizing ignore patterns
+
+If you think the gitignore structure should change, **stop and ask first**.
+
 ## Structure
 
 This project uses **component-scoped .gitignore files**. Each component manages its own ignores.

@@ -609,6 +609,29 @@ int protocol_encode(const request_t *req, uint8_t *buffer,
                     size_t buf_size, size_t *out_len);
 ```
 
+## Temporary Files
+
+**Always use `./tmp/` (project-local), never `/tmp/`.**
+
+```c
+#include <sys/stat.h>
+#include <stdio.h>
+
+// ✅ GOOD - Project-local temp directory
+mkdir("./tmp", 0755);  // Create if doesn't exist (ignore EEXIST)
+FILE *f = fopen("./tmp/workfile.tmp", "wb");
+
+// ❌ BAD - System temp directory
+FILE *f = fopen("/tmp/workfile.tmp", "wb");
+char *path = tmpnam(NULL);  // Uses system temp
+```
+
+**Why:**
+- Keeps test artifacts contained to the project
+- Easier cleanup
+- Avoids permission issues in sandboxed environments (Flatpak)
+- Project `.gitignore` already ignores `./tmp/`
+
 ## Anti-Patterns
 
 ❌ **VLAs on the stack** - Use heap or fixed size  
