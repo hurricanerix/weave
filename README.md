@@ -16,13 +16,13 @@ Prerequisites:
 - Go 1.25.5+
 - Node.js 18+
 - Make
-- [ollama](https://ollama.com/) with `mistral:7b` model
+- [ollama](https://ollama.com/) with `llama3.1:8b` model
 
 Pull the LLM model
 Build and run
 
 ```bash
-ollama pull mistral:7b
+ollama pull llama3.1:8b
 make run
 ```
 
