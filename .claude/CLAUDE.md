@@ -102,6 +102,7 @@ RTX 4070 SUPER (12GB VRAM):
 - **Security**: Auth on socket, input validation, no UB
 - **Testing**: Fast unit tests, slow integration tests (tagged), detailed benchmarks
 - **Temp files**: Use `./tmp/` (project-local), never `/tmp/`. Create the directory if it does not exist.
+- **Component boundaries**: Each component (`backend/`, `compute/`, `electron/`, `packaging/`) owns its own files. Don't modify files outside your assigned component without asking. Never consolidate or merge configuration files (especially `.gitignore`) across components.
 
 ## Implementing Stories
 
