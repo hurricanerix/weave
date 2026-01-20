@@ -47,6 +47,7 @@ Available as slash commands:
 | `/architect` | Technical design discussion | Before defining a feature |
 | `/write-story` | Define features, acceptance criteria | After design is clear |
 | `/plan-tasks` | Break stories into tasks | After story is ready |
+| `/tune-ara` | Tune Ara's LLM prompt | When Ara misbehaves |
 
 ## Specialized Agents
 
