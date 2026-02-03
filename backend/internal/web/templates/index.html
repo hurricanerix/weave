@@ -540,9 +540,34 @@ img {
   opacity: 0.5;
 }
 
-/* Generating state - show loading animation */
+/* Generating state - show mist animation */
 .message-preview[data-status="generating"] {
-  background: var(--color-bg-tertiary) url('/static/images/loading.webp') center/cover no-repeat;
+  background: var(--color-bg-tertiary);
+  overflow: hidden;
+}
+
+.message-preview[data-status="generating"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at 20% 40%, var(--color-accent), transparent 60%),
+              radial-gradient(ellipse at 80% 60%, var(--color-text-muted), transparent 60%);
+  animation: mist 3s ease-in-out infinite alternate;
+  opacity: 0.4;
+}
+
+@keyframes mist {
+  0% {
+    transform: scale(1) translateX(-10%);
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(1.2) translateX(10%);
+    opacity: 0.25;
+  }
 }
 
 /* Complete state - show image with fade in */
@@ -727,6 +752,14 @@ img {
   gap: var(--space-sm);
   min-width: 60px;
   transition: all 0.3s ease;
+}
+
+.thinking-bubble.expanded {
+  position: relative;
+  min-width: 200px;
+  min-height: 2.5em;
+  justify-content: center;
+  border-bottom-left-radius: var(--space-xs);
 }
 
 .message-bubble.expanding {
@@ -2357,10 +2390,27 @@ img {
         }
 
         // Handle agent thinking: show thinking indicator
+        // When expanded is false or missing, show small thinking bubble (Stage 1).
+        // When expanded is true, expand to full-size bubble (Stage 1 complete, Stage 2 starting).
         function handleAgentThinking(data) {
             console.log('Agent thinking:', data);
             if (data.started) {
-                showThinkingIndicator();
+                if (data.expanded) {
+                    // Ensure thinking bubble exists
+                    const chatMessages = document.getElementById('chat-messages');
+                    let thinkingMessage = chatMessages.querySelector('.message-thinking');
+                    if (!thinkingMessage) {
+                        showThinkingIndicator();
+                        thinkingMessage = chatMessages.querySelector('.message-thinking');
+                    }
+                    // Expand to full-size bubble
+                    const bubble = thinkingMessage?.querySelector('.thinking-bubble');
+                    if (bubble) {
+                        bubble.classList.add('expanded');
+                    }
+                } else {
+                    showThinkingIndicator();
+                }
             }
         }
 
@@ -2405,7 +2455,14 @@ img {
                     if (thinkingBubble) {
                         const bubble = document.createElement('div');
                         bubble.className = 'message-bubble expanding';
-                        bubble.textContent = '';
+
+                        // Preserve any preview area that was already created
+                        // by handleGenerationStarted on the thinking bubble
+                        const existingPreview = thinkingBubble.querySelector('.message-preview');
+                        if (existingPreview) {
+                            bubble.classList.add('has-preview');
+                            bubble.appendChild(existingPreview);
+                        }
 
                         // Replace thinking bubble with message bubble
                         thinkingBubble.replaceWith(bubble);
@@ -2440,9 +2497,19 @@ img {
                 }
             }
 
-            // Append token to content
+            // Append token to content using a text node to preserve child elements
+            // (such as the preview area created by handleGenerationStarted)
             const currentMessage = currentMessageDiv.querySelector('.message-bubble');
-            currentMessage.textContent += data.token || '';
+            const token = data.token || '';
+            if (token) {
+                let textNode = Array.from(currentMessage.childNodes)
+                    .find(node => node.nodeType === Node.TEXT_NODE);
+                if (!textNode) {
+                    textNode = document.createTextNode('');
+                    currentMessage.insertBefore(textNode, currentMessage.firstChild);
+                }
+                textNode.textContent += token;
+            }
 
             // Auto-scroll to bottom
             scrollChatToBottom();
@@ -2462,23 +2529,6 @@ img {
                 // Set message ID for later preview updates
                 if (data.message_id !== undefined) {
                     streamingMessage.setAttribute('data-message-id', data.message_id);
-                }
-
-                // Add preview area if message has snapshot
-                if (data.has_snapshot) {
-                    const bubble = streamingMessage.querySelector('.message-bubble');
-                    if (bubble) {
-                        // Add has-preview class to adjust padding
-                        bubble.classList.add('has-preview');
-
-                        // Create preview area
-                        const previewDiv = document.createElement('div');
-                        previewDiv.className = 'message-preview';
-                        previewDiv.setAttribute('data-status', 'none');
-
-                        // Append preview to bubble
-                        bubble.appendChild(previewDiv);
-                    }
                 }
             }
 
@@ -2555,17 +2605,49 @@ img {
             console.log('Settings updated:', data);
         }
 
-        // Handle generation started: show generating indicator for agent-triggered generation
+        // Handle generation started: create preview area with mist animation
         function handleGenerationStarted(data) {
             console.log('Generation started:', data);
             isGenerating = true;
             setGenerateButtonEnabled(false);
 
-            // Update preview state to generating if message_id is provided
             if (data.message_id !== undefined) {
-                updatePreviewState(data.message_id, 'generating');
+                // Find the message bubble (streaming or thinking)
+                const chatMessages = document.getElementById('chat-messages');
+                let targetMessage = chatMessages.querySelector(`.message[data-message-id="${data.message_id}"]`);
+
+                // If no message with that ID yet, check the thinking bubble or streaming message
+                if (!targetMessage) {
+                    targetMessage = chatMessages.querySelector('.message.message-assistant.streaming')
+                        || chatMessages.querySelector('.message-thinking');
+                }
+
+                if (targetMessage) {
+                    // Set message ID if not already set
+                    if (!targetMessage.getAttribute('data-message-id')) {
+                        targetMessage.setAttribute('data-message-id', data.message_id);
+                    }
+
+                    // Find the bubble (message-bubble or thinking-bubble)
+                    const bubble = targetMessage.querySelector('.message-bubble')
+                        || targetMessage.querySelector('.thinking-bubble');
+
+                    if (bubble && !bubble.querySelector('.message-preview')) {
+                        bubble.classList.add('has-preview');
+
+                        const previewDiv = document.createElement('div');
+                        previewDiv.className = 'message-preview';
+                        previewDiv.setAttribute('data-status', 'generating');
+
+                        bubble.appendChild(previewDiv);
+                    } else if (bubble) {
+                        console.log('Preview already exists for message:', data.message_id);
+                    }
+                } else {
+                    // No message found - fall back to old indicator
+                    showGeneratingIndicator();
+                }
             } else {
-                // Only show old indicator if no preview bubble exists
                 showGeneratingIndicator();
             }
         }

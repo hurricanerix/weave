@@ -1,7 +1,7 @@
 # Story: Enhanced Visual Feedback for Two-Stage Generation
 
 ## Status
-Ready
+Done
 
 ## Problem
 With the two-stage LLM flow, there are now distinct phases during response generation. Users need visual feedback that something is happening at each phase, especially when image generation and conversation response happen in parallel.
@@ -54,7 +54,7 @@ Existing events (`agent-token`, `image-ready`, `agent-done`) continue to work as
 
 ### Task 001: Add CSS for mist animation in preview area
 **Domain:** electron
-**Status:** pending
+**Status:** done
 
 Add new `@keyframes mist` animation using existing shimmer/pulse patterns. Style `.message-preview[data-status="generating"]` with mist animation instead of current `loading.webp` background. CSS-only solution, no new image files.
 
@@ -67,7 +67,7 @@ Add new `@keyframes mist` animation using existing shimmer/pulse patterns. Style
 
 ### Task 002: Add CSS for expanded thinking state
 **Domain:** electron
-**Status:** pending
+**Status:** done
 
 Add `.thinking-bubble.expanded` styles for full-width bubble with text area appearance. Ensure thinking dots display correctly inside expanded bubble (centered in text area).
 
@@ -80,7 +80,7 @@ Add `.thinking-bubble.expanded` styles for full-width bubble with text area appe
 
 ### Task 003: Update handleAgentThinking for expanded parameter
 **Domain:** electron
-**Status:** pending
+**Status:** done
 
 Modify `handleAgentThinking()` to check `data.expanded` boolean:
 - When `expanded: false` (or missing): show small thinking bubble (current behavior)
@@ -97,7 +97,7 @@ Handle both initial event and transition from small to expanded state.
 
 ### Task 004: Update handleGenerationStarted to create preview area
 **Domain:** electron
-**Status:** pending
+**Status:** done
 
 Move preview area creation from `handleAgentDone` to `handleGenerationStarted`. When `generation-started` fires with `message_id`:
 - Find the message bubble (or the thinking bubble if tokens haven't arrived yet)
@@ -113,7 +113,7 @@ Move preview area creation from `handleAgentDone` to `handleGenerationStarted`. 
 
 ### Task 005: Update handleAgentDone to not create preview area
 **Domain:** electron
-**Status:** pending
+**Status:** done
 
 Remove preview area creation logic from `handleAgentDone`. The `has_snapshot` field may still be useful for other purposes but should NOT trigger preview creation. Preview creation is now handled by `handleGenerationStarted`.
 
@@ -126,7 +126,7 @@ Remove preview area creation logic from `handleAgentDone`. The `has_snapshot` fi
 
 ### Task 006: Handle agent-token transition from expanded thinking state
 **Domain:** electron
-**Status:** pending
+**Status:** done
 
 Update `handleAgentToken` to detect expanded thinking state and handle transition:
 - If message bubble doesn't exist, convert thinking bubble to message bubble (existing logic)
