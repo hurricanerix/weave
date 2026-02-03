@@ -137,24 +137,20 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 	fs.BoolVar(&c.showHelp, "help", false, "Show help message")
 	fs.BoolVar(&c.showVersion, "version", false, "Show version information")
 
-	// Parse flags
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
 
-	// Handle --help
 	if c.showHelp {
 		printHelp(output)
 		return nil, ErrShowHelp
 	}
 
-	// Handle --version
 	if c.showVersion {
 		printVersion(output)
 		return nil, ErrShowVersion
 	}
 
-	// Validate configuration
 	if err := c.validate(); err != nil {
 		return nil, err
 	}

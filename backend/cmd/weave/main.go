@@ -18,12 +18,12 @@ func main() {
 	os.Exit(run())
 }
 
-// monitorStdin monitors the provided reader for EOF and cancels the context when detected.
+// monitorForOrphanProcesses using the provided reader by monitoring for EOF and cancels the context when detected.
 // This is used to detect parent process death when running as a child process.
 // When stdin reaches EOF (parent died), the context is cancelled to trigger graceful shutdown.
 //
 // This function blocks until EOF is reached or an error occurs.
-func monitorStdin(cancel context.CancelFunc, stdin io.Reader, logger *logging.Logger) {
+func monitorForOrphanProcesses(cancel context.CancelFunc, stdin io.Reader, logger *logging.Logger) {
 	buf := make([]byte, 32)
 	for {
 		_, err := stdin.Read(buf)
@@ -44,10 +44,8 @@ func monitorStdin(cancel context.CancelFunc, stdin io.Reader, logger *logging.Lo
 }
 
 func run() int {
-	// Parse configuration from CLI flags
 	cfg, err := config.Parse(os.Args[1:], os.Stderr)
 	if errors.Is(err, config.ErrShowHelp) || errors.Is(err, config.ErrShowVersion) {
-		// Help or version was shown, exit successfully
 		return 0
 	}
 	if err != nil {
@@ -55,17 +53,14 @@ func run() int {
 		return 1
 	}
 
-	// Create logger early
 	logger := startup.CreateLogger(cfg)
 
-	// Log startup
 	logger.Info("Starting weave...")
 	logger.Debug("Configuration: port=%d, steps=%d, cfg=%.1f, width=%d, height=%d, seed=%d, llm-seed=%d",
 		cfg.Port, cfg.Steps, cfg.CFG, cfg.Width, cfg.Height, cfg.Seed, cfg.LLMSeed)
 	logger.Debug("Ollama: url=%s, model=%s", cfg.OllamaURL, cfg.OllamaModel)
 	logger.Debug("Log level: %s", cfg.LogLevel)
 
-	// Validate ollama is running
 	logger.Debug("Validating ollama connection...")
 	if err := startup.ValidateOllama(cfg.OllamaURL); err != nil {
 		logger.Error("Ollama validation failed: %v", err)
@@ -78,7 +73,6 @@ func run() int {
 	}
 	logger.Info("Connected to ollama at %s (model: %s)", cfg.OllamaURL, cfg.OllamaModel)
 
-	// Create socket for weave-compute communication
 	logger.Debug("Creating socket for weave-compute...")
 	listener, socketPath, err := startup.CreateSocket()
 	if err != nil {
@@ -89,7 +83,6 @@ func run() int {
 	defer listener.Close()
 	logger.Info("Created socket at %s", socketPath)
 
-	// Spawn compute process
 	logger.Debug("Spawning weave-compute process...")
 	computeProcess, computeStdin, err := startup.SpawnCompute(socketPath)
 	if err != nil {
@@ -101,17 +94,12 @@ func run() int {
 	}
 	logger.Info("Spawned weave-compute process (PID: %d)", computeProcess.Process.Pid)
 
-	// Accept connection from compute process
 	logger.Debug("Waiting for compute process to connect...")
 
-	// Create cancellable context for server lifecycle
-	// This context will be cancelled by signal handlers or stdin EOF detection
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Start stdin monitoring for orphan process detection
-	// When parent process dies, stdin EOF triggers graceful shutdown
-	go monitorStdin(cancel, os.Stdin, logger)
+	go monitorForOrphanProcesses(cancel, os.Stdin, logger)
 
 	acceptCtx, acceptCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer acceptCancel()

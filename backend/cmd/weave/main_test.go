@@ -48,7 +48,7 @@ func TestMonitorStdin(t *testing.T) {
 
 			// Start monitoring in background
 			go func() {
-				monitorStdin(cancel, tt.input, logger)
+				monitorForOrphanProcesses(cancel, tt.input, logger)
 				close(done)
 			}()
 
