@@ -344,6 +344,7 @@ func TestPrintHelp(t *testing.T) {
 		"--ollama-model",
 		"--log-level",
 		"--agent-prompt",
+		"--agent-tools-prompt",
 		"--help",
 		"--version",
 		"EXAMPLES:",
@@ -534,6 +535,39 @@ func TestParse_AgentPromptFlag(t *testing.T) {
 
 			if cfg.AgentPromptPath != tt.wantPromptPath {
 				t.Errorf("AgentPromptPath = %s, want %s", cfg.AgentPromptPath, tt.wantPromptPath)
+			}
+		})
+	}
+}
+
+func TestParse_AgentToolsPromptFlag(t *testing.T) {
+	tests := []struct {
+		name           string
+		args           []string
+		wantPromptPath string
+	}{
+		{
+			name:           "default agent tools prompt path",
+			args:           []string{},
+			wantPromptPath: DefaultAgentToolsPrompt,
+		},
+		{
+			name:           "custom agent tools prompt path",
+			args:           []string{"--agent-tools-prompt", "custom/path/tools.md"},
+			wantPromptPath: "custom/path/tools.md",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := &bytes.Buffer{}
+			cfg, err := Parse(tt.args, output)
+			if err != nil {
+				t.Fatalf("Parse() error = %v, want nil", err)
+			}
+
+			if cfg.AgentToolsPromptPath != tt.wantPromptPath {
+				t.Errorf("AgentToolsPromptPath = %s, want %s", cfg.AgentToolsPromptPath, tt.wantPromptPath)
 			}
 		})
 	}

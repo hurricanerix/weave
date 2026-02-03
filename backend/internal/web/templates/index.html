@@ -495,7 +495,8 @@ img {
   border-bottom-left-radius: var(--space-xs);
 }
 
-.message-bubble.has-preview {
+.message-bubble.has-preview,
+.thinking-bubble.has-preview {
   padding-right: calc(var(--preview-size) + var(--space-md) + var(--space-md));
   min-height: var(--preview-size);
 }
@@ -508,6 +509,8 @@ img {
   height: var(--preview-size);
   z-index: 10;
   border-left: 1px solid var(--color-border);
+  border-top-right-radius: var(--border-radius-lg);
+  border-bottom-right-radius: var(--border-radius-lg);
   transition: background 0.4s ease, opacity 0.4s ease;
   overflow: hidden;
 }
@@ -759,6 +762,11 @@ img {
   min-width: 200px;
   min-height: 2.5em;
   justify-content: center;
+  border-bottom-left-radius: var(--space-xs);
+}
+
+.thinking-bubble.has-preview {
+  position: relative;
   border-bottom-left-radius: var(--space-xs);
 }
 
@@ -2632,6 +2640,8 @@ img {
                     const bubble = targetMessage.querySelector('.message-bubble')
                         || targetMessage.querySelector('.thinking-bubble');
 
+                    console.log('Generation started: target=', targetMessage.className, 'bubble=', bubble?.className);
+
                     if (bubble && !bubble.querySelector('.message-preview')) {
                         bubble.classList.add('has-preview');
 
@@ -2640,11 +2650,15 @@ img {
                         previewDiv.setAttribute('data-status', 'generating');
 
                         bubble.appendChild(previewDiv);
+                        console.log('Preview created: status=generating, parent=', bubble.className);
                     } else if (bubble) {
                         console.log('Preview already exists for message:', data.message_id);
+                    } else {
+                        console.warn('No bubble found in target message:', targetMessage.innerHTML);
                     }
                 } else {
                     // No message found - fall back to old indicator
+                    console.warn('No target message found for generation-started, message_id:', data.message_id);
                     showGeneratingIndicator();
                 }
             } else {

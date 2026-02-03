@@ -132,6 +132,22 @@ func (m *Manager) AddAssistantMessage(content string, prompt string, metadata *o
 	return id
 }
 
+// UpdateAssistantMessage updates the content of an existing assistant message by ID.
+// Used by the two-stage LLM flow where the message is created with empty content
+// before Stage 2 streams the response text.
+func (m *Manager) UpdateAssistantMessage(id int, content string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i := range m.conv.messages {
+		if m.conv.messages[i].ID == id {
+			m.conv.messages[i].Content = content
+			m.triggerOnChangeLocked()
+			return
+		}
+	}
+}
+
 // GetHistory returns a copy of the message history as ollama.Message for LLM API.
 // The returned slice is safe to modify without affecting the conversation.
 // This converts ConversationMessage to Message by extracting Role, Content, and ToolCalls.

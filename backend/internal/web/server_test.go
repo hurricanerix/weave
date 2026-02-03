@@ -877,7 +877,7 @@ func TestCompactContext_CorrectFormat(t *testing.T) {
 	}
 
 	messages := []ollama.Message{
-		{Role: ollama.RoleSystem, Content: server.buildSystemPrompt()},
+		{Role: ollama.RoleSystem, Content: server.buildExtractionPrompt()},
 		{Role: ollama.RoleUser, Content: "I want a cat in a hat"},
 		{Role: ollama.RoleAssistant, Content: "What kind of cat?\n---\n{\"prompt\":\"\",\"generate_image\":false}"},
 		{Role: ollama.RoleUser, Content: "A tabby cat wearing a wizard hat"},
@@ -928,7 +928,7 @@ func TestCompactContext_SkipsSystemInjectedMessages(t *testing.T) {
 	}
 
 	messages := []ollama.Message{
-		{Role: ollama.RoleSystem, Content: server.buildSystemPrompt()},
+		{Role: ollama.RoleSystem, Content: server.buildExtractionPrompt()},
 		{Role: ollama.RoleUser, Content: "I want a cat"},
 		{Role: ollama.RoleUser, Content: "[user edited prompt to: cat in hat]"}, // Should be skipped
 		{Role: ollama.RoleUser, Content: "[Current prompt: cat in space]"},      // Should be skipped
@@ -1499,10 +1499,120 @@ func TestNewServerWithDeps_DefaultAgentPrompt(t *testing.T) {
 	}
 }
 
-func TestGenerateFallbackResponse(t *testing.T) {
-	want := "Generating image. Try adjusting the style or adding more details to refine the result."
-	got := generateFallbackResponse()
-	if got != want {
-		t.Errorf("generateFallbackResponse() = %q, want %q", got, want)
+func TestServer_BuildExtractionPrompt(t *testing.T) {
+	tests := []struct {
+		name             string
+		agentToolsPrompt string
+		wantContains     []string
+	}{
+		{
+			name:             "includes tools prompt and function schema",
+			agentToolsPrompt: "Extract image parameters from user messages.",
+			wantContains: []string{
+				"Extract image parameters from user messages.",
+				"## Function Calling",
+				"update_generation",
+				"prompt",
+				"steps",
+				"cfg",
+				"seed",
+				"generate_image",
+			},
+		},
+		{
+			name:             "uses fallback when tools prompt is empty",
+			agentToolsPrompt: "",
+			wantContains: []string{
+				"Extract image generation parameters",
+				"## Function Calling",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &Server{agentToolsPrompt: tt.agentToolsPrompt}
+			got := s.buildExtractionPrompt()
+
+			for _, want := range tt.wantContains {
+				if !strings.Contains(got, want) {
+					t.Errorf("buildExtractionPrompt() missing %q", want)
+				}
+			}
+		})
+	}
+}
+
+func TestServer_BuildConversationPrompt(t *testing.T) {
+	tests := []struct {
+		name         string
+		agentPrompt  string
+		prompt       string
+		generating   bool
+		wantContains []string
+		wantMissing  []string
+	}{
+		{
+			name:        "generating with prompt",
+			agentPrompt: "You are Ara, a creative partner.",
+			prompt:      "a cat dancing",
+			generating:  true,
+			wantContains: []string{
+				"You are Ara, a creative partner.",
+				"## Current Context",
+				`"a cat dancing"`,
+				"Generating: yes",
+			},
+		},
+		{
+			name:        "not generating",
+			agentPrompt: "You are Ara.",
+			prompt:      "sunset",
+			generating:  false,
+			wantContains: []string{
+				"Generating: no",
+				`"sunset"`,
+			},
+		},
+		{
+			name:        "no prompt",
+			agentPrompt: "You are Ara.",
+			prompt:      "",
+			generating:  false,
+			wantContains: []string{
+				"Current prompt: (none)",
+			},
+			wantMissing: []string{
+				`Current prompt: "`,
+			},
+		},
+		{
+			name:        "empty agent prompt uses fallback",
+			agentPrompt: "",
+			prompt:      "test",
+			generating:  true,
+			wantContains: []string{
+				"helpful creative partner",
+				"## Current Context",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &Server{agentPrompt: tt.agentPrompt}
+			got := s.buildConversationPrompt(tt.prompt, tt.generating)
+
+			for _, want := range tt.wantContains {
+				if !strings.Contains(got, want) {
+					t.Errorf("buildConversationPrompt() missing %q", want)
+				}
+			}
+			for _, notWant := range tt.wantMissing {
+				if strings.Contains(got, notWant) {
+					t.Errorf("buildConversationPrompt() unexpectedly contains %q", notWant)
+				}
+			}
+		})
 	}
 }

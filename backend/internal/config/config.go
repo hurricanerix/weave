@@ -29,8 +29,10 @@ const (
 	defaultOllamaURL   = "http://localhost:11434"
 	defaultOllamaModel = "llama3.1:8b"
 	defaultLogLevel    = "info"
-	// DefaultAgentPrompt is the default path to the agent prompt file
+	// DefaultAgentPrompt is the default path to the agent conversation prompt file
 	DefaultAgentPrompt = "config/agents/ara.md"
+	// DefaultAgentToolsPrompt is the default path to the agent tools/extraction prompt file
+	DefaultAgentToolsPrompt = "config/agents/ara_tools.md"
 
 	// Validation constraints
 	minPort    = 1024
@@ -96,7 +98,8 @@ type Config struct {
 	LogLevel string
 
 	// Agent configuration
-	AgentPromptPath string
+	AgentPromptPath      string
+	AgentToolsPromptPath string
 
 	// Internal flags
 	showHelp    bool
@@ -131,7 +134,8 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 	fs.StringVar(&c.LogLevel, "log-level", defaultLogLevel, "Log level (debug, info, warn, error)")
 
 	// Agent flags
-	fs.StringVar(&c.AgentPromptPath, "agent-prompt", DefaultAgentPrompt, "Path to agent prompt file")
+	fs.StringVar(&c.AgentPromptPath, "agent-prompt", DefaultAgentPrompt, "Path to agent conversation prompt file")
+	fs.StringVar(&c.AgentToolsPromptPath, "agent-tools-prompt", DefaultAgentToolsPrompt, "Path to agent tools/extraction prompt file")
 
 	// Special flags
 	fs.BoolVar(&c.showHelp, "help", false, "Show help message")
@@ -224,7 +228,8 @@ FLAGS:
     --ollama-url <URL>         Ollama API endpoint (default: %s)
     --ollama-model <MODEL>     Ollama model name (default: %s)
     --log-level <LEVEL>        Log level: debug, info, warn, error (default: %s)
-    --agent-prompt <PATH>      Path to agent prompt file (default: %s)
+    --agent-prompt <PATH>      Path to agent conversation prompt file (default: %s)
+    --agent-tools-prompt <PATH> Path to agent tools/extraction prompt file (default: %s)
     --help                     Show this help message
     --version                  Show version information
 
@@ -249,7 +254,7 @@ For more information, see docs/DEVELOPMENT.md
 `,
 		defaultPort, defaultSteps, defaultCFG, defaultWidth, defaultHeight,
 		defaultSeed, defaultLLMSeed, defaultOllamaURL, defaultOllamaModel,
-		defaultLogLevel, DefaultAgentPrompt)
+		defaultLogLevel, DefaultAgentPrompt, DefaultAgentToolsPrompt)
 }
 
 // printVersion prints version information

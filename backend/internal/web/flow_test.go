@@ -256,21 +256,19 @@ func TestUserFlow_ChatStreaming(t *testing.T) {
 		t.Errorf("chat status code = %d, want %d", chatRec.Code, http.StatusOK)
 	}
 
-	// Verify conversation state - messages should NOT be added when streaming fails
-	// This is the correct behavior after the message duplication fix:
-	// - User message is only added AFTER successful chatWithRetry
-	// - If streaming fails (client disconnects), no messages are added
-	// - This prevents orphaned user messages without responses
+	// Verify conversation state - in the two-stage flow, Stage 1 (extraction) succeeds
+	// even without SSE because it doesn't stream. Messages are committed after Stage 1.
+	// If Stage 2 fails, the assistant message gets the canned error response.
 	manager := s.sessionManager.Get(sessionID)
 	if manager == nil {
 		t.Fatal("session manager not found")
 	}
 
 	history := manager.GetHistory()
-	// Without SSE connection, streaming aborts and NO messages are added
-	// This is correct behavior - canceling a request should not leave partial state
-	if len(history) != 0 {
-		t.Errorf("history length = %d, want 0 (client disconnected, no messages should be saved)", len(history))
+	// Two-stage flow: Stage 1 succeeds, so user + assistant messages are saved.
+	// Assistant message contains the canned error from Stage 2 failure.
+	if len(history) != 2 {
+		t.Errorf("history length = %d, want 2 (user + assistant with error response)", len(history))
 	}
 }
 
@@ -338,16 +336,18 @@ func (m *mockOllamaClient) Chat(ctx context.Context, messages []ollama.Message, 
 		return ollama.ChatResult{}, m.err
 	}
 
-	// Stream tokens
-	for _, token := range m.tokens {
-		if err := callback(ollama.StreamToken{Content: token, Done: false}); err != nil {
+	// Stream tokens (skip if no callback, e.g. Stage 1 extraction)
+	if callback != nil {
+		for _, token := range m.tokens {
+			if err := callback(ollama.StreamToken{Content: token, Done: false}); err != nil {
+				return ollama.ChatResult{}, err
+			}
+		}
+
+		// Send final token
+		if err := callback(ollama.StreamToken{Content: "", Done: true}); err != nil {
 			return ollama.ChatResult{}, err
 		}
-	}
-
-	// Send final token
-	if err := callback(ollama.StreamToken{Content: "", Done: true}); err != nil {
-		return ollama.ChatResult{}, err
 	}
 
 	return ollama.ChatResult{

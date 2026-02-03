@@ -1,7 +1,7 @@
 # Story: Two-Stage LLM Flow for Contextual Responses
 
 ## Status
-Ready
+Done
 
 ## Problem
 When users chat with Ara, they receive the same generic response every time: "Generating image. Try adjusting the style or adding more details to refine the result." This happens because llama3.1:8b returns only a function call without conversational text, and the backend falls back to a hardcoded message.
@@ -47,7 +47,7 @@ Prompt files `ara.md` and `ara_tools.md` have been drafted in `config/agents/`.
 
 ### Task 001: Add second prompt path to config
 **Domain:** backend
-**Status:** pending
+**Status:** done
 
 Add `AgentToolsPromptPath` field to `config.Config` and corresponding CLI flag `--agent-tools-prompt`. Default to `config/agents/ara_tools.md`. Update `LoadAgentPrompt` or add similar function to load both prompts.
 
@@ -60,7 +60,7 @@ Add `AgentToolsPromptPath` field to `config.Config` and corresponding CLI flag `
 
 ### Task 002: Load both prompts in server initialization
 **Domain:** backend
-**Status:** pending
+**Status:** done
 
 Update `Server` struct to hold both `agentPrompt` (for conversation) and `agentToolsPrompt` (for extraction). Load both during `NewServer()` initialization.
 
@@ -73,7 +73,7 @@ Update `Server` struct to hold both `agentPrompt` (for conversation) and `agentT
 
 ### Task 003: Create buildExtractionPrompt function
 **Domain:** backend
-**Status:** pending
+**Status:** done
 
 Create `buildExtractionPrompt()` that combines `agentToolsPrompt` with function calling instructions. This replaces `buildSystemPrompt()` for Stage 1. The function calling schema stays the same.
 
@@ -86,7 +86,7 @@ Create `buildExtractionPrompt()` that combines `agentToolsPrompt` with function 
 
 ### Task 004: Create buildConversationPrompt function
 **Domain:** backend
-**Status:** pending
+**Status:** done
 
 Create `buildConversationPrompt(prompt string, generating bool)` that combines `agentPrompt` with context about what's being generated. No function calling instructions (Stage 2 doesn't use tools).
 
@@ -99,7 +99,7 @@ Create `buildConversationPrompt(prompt string, generating bool)` that combines `
 
 ### Task 005: Refactor handleChat for two-stage flow
 **Domain:** backend
-**Status:** pending
+**Status:** done
 
 Refactor `handleChat` to implement two-stage LLM flow:
 
@@ -119,7 +119,7 @@ Remove `generateFallbackResponse()` usage - Stage 2 always provides text.
 
 ### Task 006: Add retry logic for Stage 2
 **Domain:** backend
-**Status:** pending
+**Status:** done
 
 Add retry logic specifically for Stage 2 conversation call:
 - On failure, retry once
@@ -137,7 +137,7 @@ Stage 1 failures should use existing retry/error handling.
 
 ### Task 007: Remove fallback response function
 **Domain:** backend
-**Status:** pending
+**Status:** done
 
 Delete `generateFallbackResponse()` function and all references. The two-stage flow eliminates the need for fallback responses.
 
@@ -150,7 +150,7 @@ Delete `generateFallbackResponse()` function and all references. The two-stage f
 
 ### Task 008: Update SSE event for expanded state
 **Domain:** backend
-**Status:** pending
+**Status:** done
 
 Modify `EventAgentThinking` to accept `expanded` boolean:
 - `agent-thinking { expanded: false }` - Stage 1 starting (small bubble)

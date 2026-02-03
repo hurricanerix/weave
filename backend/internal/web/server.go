@@ -89,8 +89,9 @@ type Server struct {
 	defaultWidth  int
 	defaultHeight int
 
-	// Agent prompt loaded from file
-	agentPrompt string
+	// Agent prompts loaded from file
+	agentPrompt      string
+	agentToolsPrompt string
 
 	// Request ID counter for compute process requests
 	requestID uint64
@@ -151,6 +152,7 @@ func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *c
 	defaultWidth := 1024
 	defaultHeight := 1024
 	var agentPromptPath string
+	var agentToolsPromptPath string
 	if cfg != nil {
 		defaultSteps = cfg.Steps
 		defaultCFG = cfg.CFG
@@ -158,16 +160,25 @@ func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *c
 		defaultWidth = cfg.Width
 		defaultHeight = cfg.Height
 		agentPromptPath = cfg.AgentPromptPath
+		agentToolsPromptPath = cfg.AgentToolsPromptPath
 	}
 
-	// Load agent prompt from file (only if config provided)
-	// When cfg is nil (deprecated NewServer for testing), use empty prompt
+	// Load agent prompts from files (only if config provided)
+	// When cfg is nil (deprecated NewServer for testing), use empty prompts
 	var agentPrompt string
 	if agentPromptPath != "" {
 		var err error
 		agentPrompt, err = config.LoadAgentPrompt(agentPromptPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load agent prompt: %w", err)
+		}
+	}
+	var agentToolsPrompt string
+	if agentToolsPromptPath != "" {
+		var err error
+		agentToolsPrompt, err = config.LoadAgentPrompt(agentToolsPromptPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load agent tools prompt: %w", err)
 		}
 	}
 
@@ -178,21 +189,22 @@ func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *c
 	}
 
 	s := &Server{
-		addr:           addr,
-		broker:         NewBroker(),
-		templates:      tmpl,
-		ollamaClient:   ollamaClient,
-		sessionManager: sessionManager,
-		rateLimiter:    newRateLimiter(),
-		imageStorage:   imageStorage,
-		imageStore:     imageStore,
-		computeClient:  computeClient,
-		defaultSteps:   defaultSteps,
-		defaultCFG:     defaultCFG,
-		defaultSeed:    defaultSeed,
-		defaultWidth:   defaultWidth,
-		defaultHeight:  defaultHeight,
-		agentPrompt:    agentPrompt,
+		addr:             addr,
+		broker:           NewBroker(),
+		templates:        tmpl,
+		ollamaClient:     ollamaClient,
+		sessionManager:   sessionManager,
+		rateLimiter:      newRateLimiter(),
+		imageStorage:     imageStorage,
+		imageStore:       imageStore,
+		computeClient:    computeClient,
+		defaultSteps:     defaultSteps,
+		defaultCFG:       defaultCFG,
+		defaultSeed:      defaultSeed,
+		defaultWidth:     defaultWidth,
+		defaultHeight:    defaultHeight,
+		agentPrompt:      agentPrompt,
+		agentToolsPrompt: agentToolsPrompt,
 	}
 
 	mux := http.NewServeMux()
@@ -379,190 +391,221 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	// Get conversation manager for this session
 	manager := session.Manager()
 
-	// Build system prompt by combining agent prompt (behavioral) with function calling instructions.
+	// ========================================================================
+	// TWO-STAGE LLM FLOW
+	// Stage 1 (Extraction): Call LLM with tools prompt to extract parameters
+	// Stage 2 (Conversation): Call LLM with conversation prompt to generate text
+	// When generate_image is true, Stage 2 and image generation run in parallel
+	// ========================================================================
+
+	// Build extraction context with tools prompt for Stage 1.
 	// We do NOT call AddUserMessage yet - only add to history after successful response.
-	// This prevents orphaned user messages when chatWithRetry fails or is interrupted.
-	systemPrompt := s.buildSystemPrompt()
-	context := manager.BuildLLMContext(systemPrompt, int(steps), cfg, seed)
+	extractionPrompt := s.buildExtractionPrompt()
+	extractionContext := manager.BuildLLMContext(extractionPrompt, int(steps), cfg, seed)
 
 	// Append the new user message to the context (but not to history yet)
-	context = append(context, conversation.Message{
+	extractionContext = append(extractionContext, conversation.Message{
 		Role:    conversation.RoleUser,
 		Content: message,
 	})
 
-	// DEBUG: Log the context being sent to LLM
-	log.Printf("DEBUG: Sending %d messages to LLM for session %s:", len(context), sessionID)
-	for i, msg := range context {
-		contentPreview := msg.Content
-		if len(contentPreview) > 200 {
-			contentPreview = contentPreview[:200] + "..."
-		}
-		log.Printf("DEBUG:   [%d] %s: %s", i, msg.Role, contentPreview)
-	}
-
-	// Convert conversation messages to ollama messages
-	ollamaMessages := make([]ollama.Message, len(context))
-	for i, msg := range context {
+	// Convert to ollama messages
+	ollamaMessages := make([]ollama.Message, len(extractionContext))
+	for i, msg := range extractionContext {
 		ollamaMessages[i] = ollama.Message{
 			Role:    msg.Role,
 			Content: msg.Content,
 		}
 	}
 
-	// Send thinking event to UI before LLM processing begins
-	if err := s.broker.SendEvent(sessionID, EventAgentThinking, map[string]bool{
+	// Send thinking event (small bubble) before Stage 1
+	_ = s.broker.SendEvent(sessionID, EventAgentThinking, map[string]interface{}{
 		"started": true,
-	}); err != nil {
-		log.Printf("Failed to send thinking event for session %s: %v", sessionID, err)
-		// Continue anyway - this is a UI convenience, not critical
-	}
-
-	// Build tools array for function calling
-	tools := []ollama.Tool{ollama.UpdateGenerationTool()}
-
-	// Stream response from ollama with automatic retry on format errors
-	tokenCount := 0
-	result, err := s.chatWithRetry(r.Context(), sessionID, ollamaMessages, nil, tools, func(token ollama.StreamToken) error {
-		// Send each token via SSE
-		if token.Content != "" {
-			tokenCount++
-			// Log first few tokens to debug truncation issues
-			if tokenCount <= 10 {
-				log.Printf("DEBUG: Token %d for session %s: %q", tokenCount, sessionID, token.Content)
-			}
-			// Check for send errors to detect client disconnection
-			if err := s.broker.SendEvent(sessionID, EventAgentToken, map[string]string{
-				"token": token.Content,
-			}); err != nil {
-				// Client disconnected - abort streaming to avoid wasting resources
-				return fmt.Errorf("client disconnected: %w", err)
-			}
-		}
-		return nil
 	})
 
+	// Stage 1: Extraction - call LLM with tools, no streaming.
+	// Nil callback means no token streaming; the real ollama client and mock both handle this.
+	tools := []ollama.Tool{ollama.UpdateGenerationTool()}
+	extractionResult, err := s.chatWithRetry(r.Context(), sessionID, ollamaMessages, nil, tools, nil)
+
 	if err != nil {
-		// Check if this is a missing fields error after retry (needs context reset)
+		// Stage 1 failed - use existing error handling
 		if errors.Is(err, ollama.ErrMissingFields) {
-			// All retries exhausted - clear context and inform user
-			log.Printf("Missing fields error after retry for session %s, clearing context: %v", sessionID, err)
-
-			// Log conversation history for debugging before clearing
-			history := manager.GetHistory()
-			log.Printf("Conversation history before reset (session %s, %d messages):", sessionID, len(history))
-			for i, msg := range history {
-				log.Printf("  [%d] %s: %s", i, msg.Role, msg.Content)
-			}
-
-			// Clear conversation history
+			log.Printf("Stage 1 missing fields after retry for session %s, clearing context: %v", sessionID, err)
 			manager.Clear()
-
-			// Send error event to user with friendly message
 			s.sendErrorEvent(sessionID, "I'm having trouble responding. Let's start fresh.")
 		} else {
-			// Non-retryable error - send generic error message
-			// SECURITY: Log full error server-side but send generic message to client
-			log.Printf("Ollama chat error for session %s: %v", sessionID, err)
+			log.Printf("Stage 1 error for session %s: %v", sessionID, err)
 			s.sendErrorEvent(sessionID, "An error occurred while processing your message. Please try again.")
 		}
 
-		// Send agent-done to finalize any partial message
-		// No message ID available in error case (use 0 as sentinel)
 		_ = s.broker.SendEvent(sessionID, EventAgentDone, AgentDoneData{
 			Done:        true,
 			MessageID:   0,
 			HasSnapshot: false,
 		})
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK) // Return OK so HTMX doesn't show error
-		fmt.Fprintf(w, `{"status":"ok","session_id":"%s"}`, sessionID)
-		return
-	}
-
-	// Extract prompt from metadata (only if non-empty)
-	prompt := ""
-	// DEBUG: Log what we got from the LLM
-	log.Printf("DEBUG: LLM result for session %s: HasToolCall=%v, Response=%q",
-		sessionID, result.HasToolCall, result.Response)
-
-	// Add both user and assistant messages to conversation history.
-	// We add them together AFTER success to ensure atomic updates.
-	// This prevents orphaned user messages when chatWithRetry fails.
-	manager.AddUserMessage(message)
-
-	// Handle pure conversational response (no function call)
-	// This happens when the LLM responds without updating generation settings.
-	if !result.HasToolCall {
-		// Just save the conversational response and send done event
-		messageID := manager.AddAssistantMessage(result.Response, "", nil)
-		_ = s.broker.SendEvent(sessionID, EventAgentDone, AgentDoneData{
-			Done:        true,
-			MessageID:   messageID,
-			HasSnapshot: false, // No snapshot since metadata is nil
-		})
-
-		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, `{"status":"ok","session_id":"%s"}`, sessionID)
 		return
 	}
 
-	// Extract prompt from function call metadata
-	if result.Metadata.Prompt != "" {
-		prompt = result.Metadata.Prompt
+	log.Printf("Stage 1 result for session %s: HasToolCall=%v", sessionID, extractionResult.HasToolCall)
+
+	// Extract metadata from Stage 1
+	prompt := ""
+	if extractionResult.HasToolCall && extractionResult.Metadata.Prompt != "" {
+		prompt = extractionResult.Metadata.Prompt
+		// SECURITY: Clamp LLM-extracted prompt to prevent DoS via oversized prompts
+		// in SSE events, conversation history, and Stage 2 system prompt.
+		if len(prompt) > MaxPromptLength {
+			log.Printf("LLM-extracted prompt too long for session %s: %d bytes (clamped to %d)",
+				sessionID, len(prompt), MaxPromptLength)
+			prompt = prompt[:MaxPromptLength]
+		}
 	}
+	generateImage := extractionResult.HasToolCall && extractionResult.Metadata.GenerateImage
 
-	log.Printf("DEBUG: Tool call metadata: Prompt=%q, GenerateImage=%v, Steps=%d, CFG=%.2f, Seed=%d",
-		result.Metadata.Prompt, result.Metadata.GenerateImage, result.Metadata.Steps, result.Metadata.CFG, result.Metadata.Seed)
+	log.Printf("Stage 1 metadata: Prompt=%q, GenerateImage=%v, Steps=%d, CFG=%.2f, Seed=%d",
+		extractionResult.Metadata.Prompt, extractionResult.Metadata.GenerateImage,
+		extractionResult.Metadata.Steps, extractionResult.Metadata.CFG, extractionResult.Metadata.Seed)
 
-	// Generate fallback response if model returned function call without conversational text.
-	// Some models (like llama3.1:8b) may only return the tool call, leaving Content empty.
-	// We provide a helpful fallback to guide the user.
-	responseText := result.Response
-	if responseText == "" && result.Metadata.GenerateImage && prompt != "" {
-		responseText = generateFallbackResponse()
-		log.Printf("DEBUG: Using fallback response: %s", responseText)
-		// Send fallback text via SSE so user sees it
-		_ = s.broker.SendEvent(sessionID, EventAgentToken, map[string]string{
-			"token": responseText,
+	// Send expanded thinking event - Stage 1 complete, Stage 2 starting
+	_ = s.broker.SendEvent(sessionID, EventAgentThinking, map[string]interface{}{
+		"started":  true,
+		"expanded": true,
+	})
+
+	// Process extraction results: update settings and prompt
+	var clampedSteps int
+	var clampedCFG float64
+	var clampedSeed int64
+	var clampedList []clampedSetting
+
+	if extractionResult.HasToolCall {
+		clampedSteps, clampedCFG, clampedSeed, clampedList = clampGenerationSettings(
+			extractionResult.Metadata.Steps,
+			extractionResult.Metadata.CFG,
+			extractionResult.Metadata.Seed,
+		)
+		session.SetGenerationSettings(clampedSteps, clampedCFG, clampedSeed)
+
+		_ = s.broker.SendEvent(sessionID, EventSettingsUpdate, map[string]interface{}{
+			"steps": clampedSteps,
+			"cfg":   clampedCFG,
+			"seed":  clampedSeed,
 		})
 	}
 
-	// Use conversational text only (Response), not the full protocol format (RawResponse).
-	// Storing RawResponse would pollute history with tool call markers and JSON metadata,
-	// which confuses the LLM on subsequent turns.
-	messageID := manager.AddAssistantMessage(responseText, prompt, &result.Metadata)
-
-	// Determine if message has a snapshot (prompt changed)
-	hasSnapshot := prompt != ""
-
-	// Send prompt-update event if prompt was extracted
 	if prompt != "" {
 		_ = s.broker.SendEvent(sessionID, EventPromptUpdate, map[string]string{
 			"prompt": prompt,
 		})
 	}
 
-	// Process agent-provided generation settings
-	// Clamp to valid ranges and send update to UI
-	clampedSteps, clampedCFG, clampedSeed, clampedList := clampGenerationSettings(
-		result.Metadata.Steps,
-		result.Metadata.CFG,
-		result.Metadata.Seed,
-	)
+	// Add user message to history now that Stage 1 succeeded
+	manager.AddUserMessage(message)
 
-	// Update session with clamped values
-	session.SetGenerationSettings(clampedSteps, clampedCFG, clampedSeed)
+	// Pre-create the assistant message so generation-started can reference its ID.
+	// Content is empty now; it gets updated after Stage 2 streams the response.
+	hasSnapshot := prompt != ""
+	var metadata *ollama.LLMMetadata
+	if extractionResult.HasToolCall {
+		metadata = &extractionResult.Metadata
+	}
+	messageID := manager.AddAssistantMessage("", prompt, metadata)
 
-	// Send settings-update event to UI
-	_ = s.broker.SendEvent(sessionID, EventSettingsUpdate, map[string]interface{}{
-		"steps": clampedSteps,
-		"cfg":   clampedCFG,
-		"seed":  clampedSeed,
+	// If generating, start image generation in parallel with Stage 2
+	if generateImage {
+		currentPrompt := session.Manager().GetCurrentPrompt()
+		if currentPrompt != "" && s.rateLimiter.allowGenerate(sessionID) {
+			_ = s.broker.SendEvent(sessionID, EventGenerationStarted, map[string]interface{}{
+				"source":     "agent",
+				"message_id": messageID,
+			})
+			// Run image generation in a goroutine so Stage 2 can proceed in parallel.
+			// Use context.Background() because r.Context() is cancelled when handleChat returns.
+			// SECURITY: Orphaned goroutine risk is mitigated by generateImage's internal
+			// 120s timeout (see generateImage). Rate limiting also bounds goroutine count.
+			go func() {
+				_ = s.generateImage(context.Background(), sessionID, currentPrompt, clampedSteps, clampedCFG, clampedSeed, messageID)
+			}()
+		} else if currentPrompt == "" {
+			log.Printf("Skipping auto-generation for session %s: empty prompt", sessionID)
+			s.sendErrorEvent(sessionID, "Cannot generate: no prompt available")
+		} else {
+			log.Printf("Rate limit exceeded for session %s (agent-triggered generation)", sessionID)
+			s.sendErrorEvent(sessionID, "Too many generation requests. Please wait a moment.")
+		}
+	}
+
+	// Stage 2: Conversation - call LLM with conversation prompt, streaming tokens.
+	// BuildLLMContext includes the user message added on line 499.
+	conversationPrompt := s.buildConversationPrompt(prompt, generateImage)
+	convContext := manager.BuildLLMContext(conversationPrompt, int(steps), cfg, seed)
+
+	convOllamaMessages := make([]ollama.Message, len(convContext))
+	for i, msg := range convContext {
+		convOllamaMessages[i] = ollama.Message{
+			Role:    msg.Role,
+			Content: msg.Content,
+		}
+	}
+
+	// Stream Stage 2 tokens to SSE
+	var responseText strings.Builder
+	_, convErr := s.ollamaClient.Chat(r.Context(), convOllamaMessages, nil, nil, func(token ollama.StreamToken) error {
+		if token.Content != "" {
+			responseText.WriteString(token.Content)
+			if err := s.broker.SendEvent(sessionID, EventAgentToken, map[string]string{
+				"token":      token.Content,
+				"message_id": fmt.Sprintf("%d", messageID),
+			}); err != nil {
+				return fmt.Errorf("client disconnected: %w", err)
+			}
+		}
+		return nil
 	})
 
-	// If values were clamped, send feedback message via agent-token
+	if convErr != nil {
+		// Stage 2 failed - retry once
+		log.Printf("Stage 2 failed for session %s, retrying: %v", sessionID, convErr)
+		responseText.Reset()
+
+		// Send retry event so UI clears partial message
+		_ = s.broker.SendEvent(sessionID, EventAgentRetry, map[string]int{
+			"attempt": 2,
+		})
+
+		_, convErr = s.ollamaClient.Chat(r.Context(), convOllamaMessages, nil, nil, func(token ollama.StreamToken) error {
+			if token.Content != "" {
+				responseText.WriteString(token.Content)
+				if err := s.broker.SendEvent(sessionID, EventAgentToken, map[string]string{
+					"token":      token.Content,
+					"message_id": fmt.Sprintf("%d", messageID),
+				}); err != nil {
+					return fmt.Errorf("client disconnected: %w", err)
+				}
+			}
+			return nil
+		})
+
+		if convErr != nil {
+			// Both attempts failed - send canned error response
+			log.Printf("Stage 2 retry failed for session %s: %v", sessionID, convErr)
+			cannedResponse := "I'm sorry, I'm having trouble responding right now."
+			_ = s.broker.SendEvent(sessionID, EventAgentToken, map[string]string{
+				"token":      cannedResponse,
+				"message_id": fmt.Sprintf("%d", messageID),
+			})
+			responseText.WriteString(cannedResponse)
+		}
+	}
+
+	// Update the assistant message with the actual response text from Stage 2
+	manager.UpdateAssistantMessage(messageID, responseText.String())
+
+	// Send clamped feedback if applicable
 	if feedback := formatClampedFeedback(clampedList); feedback != "" {
 		log.Printf("Settings clamped for session %s: %s", sessionID, feedback)
 		_ = s.broker.SendEvent(sessionID, EventAgentToken, map[string]string{
@@ -570,81 +613,68 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Send agent-done event BEFORE generation starts
-	// This finalizes the agent's message bubble so generation indicator appears separately
+	// Finalize the message
 	_ = s.broker.SendEvent(sessionID, EventAgentDone, AgentDoneData{
 		Done:        true,
 		MessageID:   messageID,
 		HasSnapshot: hasSnapshot,
 	})
 
-	// Trigger generation if agent requested it
-	if result.Metadata.GenerateImage {
-		log.Printf("Agent requested auto-generation for session %s", sessionID)
-
-		// Check generation rate limit before triggering
-		if !s.rateLimiter.allowGenerate(sessionID) {
-			log.Printf("Rate limit exceeded for session %s (agent-triggered generation)", sessionID)
-			s.sendErrorEvent(sessionID, "Too many generation requests. Please wait a moment.")
-		} else {
-			// Use session's current prompt and settings
-			currentPrompt := session.Manager().GetCurrentPrompt()
-			if currentPrompt != "" {
-				// Notify UI that generation is starting with message ID
-				_ = s.broker.SendEvent(sessionID, EventGenerationStarted, map[string]interface{}{
-					"source":     "agent",
-					"message_id": messageID,
-				})
-				// Associate generated image with the assistant message that triggered it
-				_ = s.generateImage(r.Context(), sessionID, currentPrompt, clampedSteps, clampedCFG, clampedSeed, messageID)
-			} else {
-				log.Printf("Skipping auto-generation for session %s: empty prompt", sessionID)
-				s.sendErrorEvent(sessionID, "Cannot generate: no prompt available")
-			}
-		}
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, `{"status":"ok","session_id":"%s"}`, sessionID)
 }
 
-// buildSystemPrompt builds the complete system prompt by combining the agent
-// behavioral prompt (from ara.md) with function calling instructions.
-//
-// WHY SEPARATE PROMPTS:
-// - Behavioral prompt (ara.md): Defines personality, interaction style, when to generate
-// - Function schema (generated in code): Defines the technical function calling format
-//
-// This separation allows us to:
-// - Update behavioral instructions without changing code
-// - Keep function schema in sync with actual implementation
-func (s *Server) buildSystemPrompt() string {
-	// Start with behavioral prompt from file
+// buildExtractionPrompt builds the system prompt for Stage 1 (extraction).
+// Uses the tools prompt (ara_tools.md) combined with function calling schema.
+// Stage 1 extracts parameters via function calling without generating conversational text.
+func (s *Server) buildExtractionPrompt() string {
 	var prompt strings.Builder
-	if s.agentPrompt != "" {
-		prompt.WriteString(s.agentPrompt)
+	if s.agentToolsPrompt != "" {
+		prompt.WriteString(s.agentToolsPrompt)
 		prompt.WriteString("\n\n")
 	} else {
-		// If agent prompt is not loaded, return minimal fallback with just function instructions.
-		// This should not happen in normal operation as the agent prompt file is required.
-		prompt.WriteString("You help users create images through conversation.\n\n")
+		prompt.WriteString("Extract image generation parameters from user messages.\n\n")
 	}
 
-	// Add function calling instructions
+	// Add function calling schema
 	prompt.WriteString("## Function Calling\n\n")
 	prompt.WriteString("You have access to the `update_generation` function for updating image generation settings.\n\n")
-	prompt.WriteString("**CRITICAL:** You MUST provide a conversational text response to the user. The function call alone is not enough - users need your guidance and suggestions.\n\n")
-	prompt.WriteString("When generating an image, your response should:\n")
-	prompt.WriteString("1. Acknowledge what you're generating (e.g., \"Here's a dancing cat!\")\n")
-	prompt.WriteString("2. Ask ONE question for refinement (e.g., \"Want to adjust the style?\")\n")
-	prompt.WriteString("3. Call the function with the parameters\n\n")
+	prompt.WriteString("Call the function with the appropriate parameters based on the user's message.\n\n")
 	prompt.WriteString("Function parameters:\n")
 	prompt.WriteString("- `prompt` (string): Image generation prompt (under 200 chars)\n")
 	prompt.WriteString("- `steps` (integer, 1-100): Inference steps, default 4\n")
 	prompt.WriteString("- `cfg` (number, 0-20): Guidance scale, default 1.0\n")
 	prompt.WriteString("- `seed` (integer): Random seed, -1 for random\n")
 	prompt.WriteString("- `generate_image` (boolean): true to generate, false to just update settings\n")
+
+	return prompt.String()
+}
+
+// buildConversationPrompt builds the system prompt for Stage 2 (conversation).
+// Uses the conversation prompt (ara.md) with context about what's being generated.
+// Stage 2 generates contextual response text without function calling.
+func (s *Server) buildConversationPrompt(extractedPrompt string, generating bool) string {
+	var prompt strings.Builder
+	if s.agentPrompt != "" {
+		prompt.WriteString(s.agentPrompt)
+		prompt.WriteString("\n\n")
+	} else {
+		prompt.WriteString("You are a helpful creative partner for image generation.\n\n")
+	}
+
+	// Add context about current state
+	prompt.WriteString("## Current Context\n\n")
+	if extractedPrompt != "" {
+		fmt.Fprintf(&prompt, "Current prompt: \"%s\"\n", extractedPrompt)
+	} else {
+		prompt.WriteString("Current prompt: (none)\n")
+	}
+	if generating {
+		prompt.WriteString("Generating: yes (image is being generated right now)\n")
+	} else {
+		prompt.WriteString("Generating: no\n")
+	}
 
 	return prompt.String()
 }
@@ -738,14 +768,6 @@ func formatClampedFeedback(clamped []clampedSetting) string {
 	}
 
 	return "Settings adjusted: " + strings.Join(parts, ", ")
-}
-
-// generateFallbackResponse creates a helpful response when the LLM returns
-// a function call without conversational text. Some models (like llama3.1:8b)
-// may only return the tool call, leaving the response empty. This provides
-// a reasonable fallback to guide the user.
-func generateFallbackResponse() string {
-	return "Generating image. Try adjusting the style or adding more details to refine the result."
 }
 
 // compactContext compacts conversation history into a single system message
