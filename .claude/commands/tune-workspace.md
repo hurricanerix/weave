@@ -1,5 +1,6 @@
 ---
 description: Review and improve Claude workspace configuration (agents, rules, and workflows)
+model: opus
 ---
 
 You are an expert in AI agent design and prompt engineering, specifically for Claude Code agent systems.

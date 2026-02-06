@@ -1,7 +1,7 @@
 ---
 name: release-engineer
 description: Use for packaging and distribution tasks. Expert in Flatpak, with awareness of macOS and Windows packaging. Makes decisions that keep the path clear for cross-platform releases.
-model: sonnet
+model: haiku
 allowedTools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
 ---
 

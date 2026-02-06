@@ -1,7 +1,7 @@
 ---
 name: security-reviewer
 description: Use when all tasks in a story are complete to review for security vulnerabilities and risk. Assesses attack surface, input validation, and CIA triad. Runs per-story alongside qa-reviewer.
-model: sonnet
+model: opus
 allowedTools: ["Read", "Grep", "Glob", "Bash"]
 ---
 

@@ -1,7 +1,7 @@
 ---
 name: electron-developer
 description: Use for implementing Electron tasks. Expert in making the desktop shell feel native while staying thin. Knows Electron APIs, IPC patterns, and platform UX conventions.
-model: sonnet
+model: haiku
 allowedTools: ["Read", "Write", "Edit", "Bash", "Grep", "Glob"]
 ---
 
