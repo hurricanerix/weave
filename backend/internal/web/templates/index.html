@@ -625,6 +625,12 @@ img {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
+/* Selected message highlight */
+.message-selected .message-bubble {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
 /* Message loaded highlight animation */
 .message-loaded .message-bubble {
   animation: message-highlight 1s ease-out;
@@ -2208,10 +2214,8 @@ img {
                     seedInput.value = state.seed;
                 }
 
-                // Set active message for generation
-                activeMessageId = messageId;
-
-                // Visual feedback - highlight the message
+                // Set active message for generation and highlight
+                selectMessage(messageId);
                 highlightMessage(messageId);
 
                 // Reset flag
@@ -2242,6 +2246,20 @@ img {
             }
         }
 
+        // Select a message as active (persistent highlight)
+        function selectMessage(messageId) {
+            // Remove previous selection
+            const prev = document.querySelector('.message-selected');
+            if (prev) prev.classList.remove('message-selected');
+
+            activeMessageId = messageId;
+
+            if (messageId !== null) {
+                const msg = document.querySelector(`.message[data-message-id="${messageId}"]`);
+                if (msg) msg.classList.add('message-selected');
+            }
+        }
+
         // Handle message click to load state
         function handleMessageClick(event) {
             // Only handle clicks on assistant messages with snapshots
@@ -2256,8 +2274,10 @@ img {
             const selection = window.getSelection();
             if (selection && selection.toString().length > 0) return;
 
-            // Handle click on preview area - show full-size image
+            // Handle click on preview area - select message and show image
             if (event.target.closest('.message-preview')) {
+                const messageId = message.dataset.messageId;
+                if (messageId) selectMessage(messageId);
                 const previewImg = preview.querySelector('img');
                 if (previewImg && preview.dataset.status === 'complete') {
                     showImageWithOverlay(previewImg.src, previewImg.alt || 'Generated image');
@@ -2694,6 +2714,11 @@ img {
             isGenerating = true;
             setGenerateButtonEnabled(false);
 
+            // Select the generating message so preview updates go to the large panel
+            if (data.message_id !== undefined) {
+                selectMessage(data.message_id);
+            }
+
             if (data.message_id !== undefined) {
                 // Find the message bubble (streaming or thinking)
                 const chatMessages = document.getElementById('chat-messages');
@@ -2798,8 +2823,8 @@ img {
             }
             img.src = data.url;
 
-            // Update the image detail panel only if this is the active generation
-            if (activeMessageId === null || activeMessageId === data.message_id) {
+            // Update the image detail panel only if this message is selected
+            if (activeMessageId === data.message_id) {
                 showImageWithOverlay(data.url, 'Preview image');
             }
         }
@@ -2899,8 +2924,10 @@ img {
 
             console.log('URL validation passed, displaying image');
 
-            // Display image with overlay actions
-            showImageWithOverlay(data.url, 'Generated image');
+            // Display image in large panel only if this message is selected
+            if (data.message_id === undefined || activeMessageId === data.message_id) {
+                showImageWithOverlay(data.url, 'Generated image');
+            }
 
             // Update preview state to complete if message_id is provided
             if (data.message_id !== undefined) {
@@ -2917,8 +2944,7 @@ img {
             isGenerating = false;
             setGenerateButtonEnabled(true);
 
-            // Clear active message after successful generation
-            activeMessageId = null;
+            // Keep selection on the completed message (don't clear)
         }
 
         // Add generated image to chat messages
@@ -3105,7 +3131,7 @@ img {
                     // Clear active message when user types (new content, not from history)
                     // Skip if we're loading state programmatically
                     if (!isLoadingState) {
-                        activeMessageId = null;
+                        selectMessage(null);
                     }
                 });
             }
@@ -3197,7 +3223,7 @@ img {
                     hasPrompt = false;
                     updateGenerateButtonState();
                     // Clear active message
-                    activeMessageId = null;
+                    selectMessage(null);
                     // Focus chat input
                     const chatInput = document.getElementById('chat-input');
                     if (chatInput) {
