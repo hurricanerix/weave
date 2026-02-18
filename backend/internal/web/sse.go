@@ -62,6 +62,18 @@ const (
 	// Example: {"started": true}
 	EventAgentThinking = "agent-thinking"
 
+	// EventGenerationProgress indicates a denoising step has completed during generation.
+	// Sent for every step during image generation to update the progress bar.
+	// Data schema: {"step": int, "total_steps": int, "message_id": int}
+	// Example: {"step": 5, "total_steps": 28, "message_id": 42}
+	EventGenerationProgress = "generation-progress"
+
+	// EventGenerationPreview indicates a preview image is available during generation.
+	// Sent every N steps (configured by preview_interval) to show progressive results.
+	// Data schema: {"url": string, "width": int, "height": int, "message_id": int}
+	// Example: {"url": "/tmp/preview_abc123.png", "width": 768, "height": 768, "message_id": 42}
+	EventGenerationPreview = "generation-preview"
+
 	// MaxConnections is the maximum number of concurrent SSE connections.
 	MaxConnections = 1000
 )
@@ -317,6 +329,23 @@ type AgentDoneData struct {
 // ImageReadyData represents the data sent with EventImageReady.
 // It includes the URL, dimensions, and message ID the image is associated with.
 type ImageReadyData struct {
+	URL       string `json:"url"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+	MessageID int    `json:"message_id"`
+}
+
+// GenerationProgressData represents the data sent with EventGenerationProgress.
+// It includes the current step, total steps, and message ID for progress tracking.
+type GenerationProgressData struct {
+	Step       int `json:"step"`
+	TotalSteps int `json:"total_steps"`
+	MessageID  int `json:"message_id"`
+}
+
+// GenerationPreviewData represents the data sent with EventGenerationPreview.
+// It includes the preview image URL, dimensions, and message ID.
+type GenerationPreviewData struct {
 	URL       string `json:"url"`
 	Width     int    `json:"width"`
 	Height    int    `json:"height"`

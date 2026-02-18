@@ -598,6 +598,199 @@ func TestDecodeErrorResponse_StatusAndErrorCode(t *testing.T) {
 	}
 }
 
+// Helper function to build a progress event message
+func buildProgressEvent(requestID uint64, step, totalSteps, stepTimeMs uint32) []byte {
+	buf := new(bytes.Buffer)
+
+	// Common header
+	payloadLen := uint32(20) // request_id (8) + step (4) + total_steps (4) + step_time_ms (4)
+	buf.Write(buildHeader(MsgProgressEvent, payloadLen))
+
+	// Payload
+	binary.Write(buf, binary.BigEndian, requestID)
+	binary.Write(buf, binary.BigEndian, step)
+	binary.Write(buf, binary.BigEndian, totalSteps)
+	binary.Write(buf, binary.BigEndian, stepTimeMs)
+
+	return buf.Bytes()
+}
+
+// Helper function to build a preview event message
+func buildPreviewEvent(requestID uint64, step, totalSteps, width, height, channels, imageDataLen uint32, imageData []byte) []byte {
+	buf := new(bytes.Buffer)
+
+	// Common header
+	payloadLen := uint32(32 + len(imageData))
+	buf.Write(buildHeader(MsgPreviewEvent, payloadLen))
+
+	// Payload
+	binary.Write(buf, binary.BigEndian, requestID)
+	binary.Write(buf, binary.BigEndian, step)
+	binary.Write(buf, binary.BigEndian, totalSteps)
+	binary.Write(buf, binary.BigEndian, width)
+	binary.Write(buf, binary.BigEndian, height)
+	binary.Write(buf, binary.BigEndian, channels)
+	binary.Write(buf, binary.BigEndian, imageDataLen)
+	buf.Write(imageData)
+
+	return buf.Bytes()
+}
+
+func TestDecodeProgressEvent(t *testing.T) {
+	tests := []struct {
+		name       string
+		data       []byte
+		wantErr    bool
+		errMsg     string
+		wantStep   uint32
+		wantTotal  uint32
+		wantTimeMs uint32
+	}{
+		{
+			name:       "valid progress step 1/28",
+			data:       buildProgressEvent(1, 1, 28, 350),
+			wantErr:    false,
+			wantStep:   1,
+			wantTotal:  28,
+			wantTimeMs: 350,
+		},
+		{
+			name:       "valid progress step 28/28",
+			data:       buildProgressEvent(42, 28, 28, 100),
+			wantErr:    false,
+			wantStep:   28,
+			wantTotal:  28,
+			wantTimeMs: 100,
+		},
+		{
+			name:    "payload too small",
+			data:    append(buildHeader(MsgProgressEvent, 10), make([]byte, 10)...),
+			wantErr: true,
+			errMsg:  "payload too small",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := DecodeResponse(tt.data)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("DecodeResponse() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
+				t.Errorf("DecodeResponse() error = %v, want error containing %q", err, tt.errMsg)
+				return
+			}
+			if !tt.wantErr {
+				event, ok := result.(*SD35ProgressEvent)
+				if !ok {
+					t.Fatalf("DecodeResponse() returned wrong type: got %T, want *SD35ProgressEvent", result)
+				}
+				if event.Step != tt.wantStep {
+					t.Errorf("Step = %d, want %d", event.Step, tt.wantStep)
+				}
+				if event.TotalSteps != tt.wantTotal {
+					t.Errorf("TotalSteps = %d, want %d", event.TotalSteps, tt.wantTotal)
+				}
+				if event.StepTimeMs != tt.wantTimeMs {
+					t.Errorf("StepTimeMs = %d, want %d", event.StepTimeMs, tt.wantTimeMs)
+				}
+			}
+		})
+	}
+}
+
+func TestDecodePreviewEvent(t *testing.T) {
+	validImageData := make([]byte, 64*64*3)
+	for i := range validImageData {
+		validImageData[i] = byte(i % 256)
+	}
+
+	tests := []struct {
+		name    string
+		data    []byte
+		wantErr bool
+		errMsg  string
+	}{
+		{
+			name:    "valid 64x64 RGB preview",
+			data:    buildPreviewEvent(1, 5, 28, 64, 64, 3, 64*64*3, validImageData),
+			wantErr: false,
+		},
+		{
+			name:    "valid 512x512 RGB preview",
+			data:    buildPreviewEvent(42, 10, 28, 512, 512, 3, 512*512*3, make([]byte, 512*512*3)),
+			wantErr: false,
+		},
+		{
+			name:    "valid RGBA preview",
+			data:    buildPreviewEvent(99, 15, 28, 64, 64, 4, 64*64*4, make([]byte, 64*64*4)),
+			wantErr: false,
+		},
+		{
+			name:    "payload too small",
+			data:    append(buildHeader(MsgPreviewEvent, 10), make([]byte, 10)...),
+			wantErr: true,
+			errMsg:  "payload too small",
+		},
+		{
+			name:    "invalid channels",
+			data:    buildPreviewEvent(1, 5, 28, 64, 64, 5, 64*64*5, make([]byte, 64*64*5)),
+			wantErr: true,
+			errMsg:  "invalid channels",
+		},
+		{
+			name:    "image_data_len mismatch",
+			data:    buildPreviewEvent(1, 5, 28, 64, 64, 3, 1000, make([]byte, 1000)),
+			wantErr: true,
+			errMsg:  "image_data_len mismatch",
+		},
+		{
+			name: "truncated image data",
+			data: func() []byte {
+				buf := new(bytes.Buffer)
+				actualDataLen := uint32(100)
+				payloadLen := uint32(32 + actualDataLen)
+				buf.Write(buildHeader(MsgPreviewEvent, payloadLen))
+				binary.Write(buf, binary.BigEndian, uint64(1))
+				binary.Write(buf, binary.BigEndian, uint32(5))
+				binary.Write(buf, binary.BigEndian, uint32(28))
+				binary.Write(buf, binary.BigEndian, uint32(64))
+				binary.Write(buf, binary.BigEndian, uint32(64))
+				binary.Write(buf, binary.BigEndian, uint32(3))
+				binary.Write(buf, binary.BigEndian, uint32(64*64*3)) // Claim full size
+				buf.Write(make([]byte, actualDataLen))
+				return buf.Bytes()
+			}(),
+			wantErr: true,
+			errMsg:  "truncated",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := DecodeResponse(tt.data)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("DecodeResponse() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if tt.wantErr && tt.errMsg != "" && !strings.Contains(err.Error(), tt.errMsg) {
+				t.Errorf("DecodeResponse() error = %v, want error containing %q", err, tt.errMsg)
+				return
+			}
+			if !tt.wantErr {
+				event, ok := result.(*SD35PreviewEvent)
+				if !ok {
+					t.Fatalf("DecodeResponse() returned wrong type: got %T, want *SD35PreviewEvent", result)
+				}
+				if event.ImageData == nil {
+					t.Errorf("ImageData is nil")
+				}
+			}
+		})
+	}
+}
+
 func TestDecodeResponse_RoundTrip(t *testing.T) {
 	// Test that we can decode what looks like a real response
 	t.Run("generate response round trip", func(t *testing.T) {

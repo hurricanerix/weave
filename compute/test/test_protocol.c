@@ -30,6 +30,12 @@ extern error_code_t encode_generate_response(const sd35_generate_response_t *res
 extern error_code_t encode_error_response(const error_response_t *resp,
                                           uint8_t *buffer, size_t buf_size,
                                           size_t *out_len);
+extern error_code_t encode_progress_event(const sd35_progress_event_t *event,
+                                          uint8_t *buffer, size_t buf_size,
+                                          size_t *out_len);
+extern error_code_t encode_preview_event(const sd35_preview_event_t *event,
+                                         uint8_t *buffer, size_t buf_size,
+                                         size_t *out_len);
 
 /**
  * Test result tracking
@@ -1107,6 +1113,448 @@ void test_encode_error_response_buffer_too_small(void) {
 }
 
 /**
+ * ============================================================================
+ * Progress and Preview Event Encoder Tests
+ * ============================================================================
+ */
+
+/**
+ * Test: Encode valid progress event
+ */
+void test_encode_progress_event_valid(void) {
+    TEST("test_encode_progress_event_valid");
+
+    sd35_progress_event_t event = {
+        .request_id = 12345,
+        .step = 10,
+        .total_steps = 28,
+        .step_time_ms = 350,
+    };
+
+    uint8_t buffer[256];
+    size_t encoded_len;
+
+    error_code_t err = encode_progress_event(&event, buffer, sizeof(buffer), &encoded_len);
+
+    ASSERT_EQ(ERR_NONE, err);
+
+    /* Total: 16 (header) + 20 (payload) = 36 bytes */
+    ASSERT_EQ(36, encoded_len);
+
+    /* Verify header */
+    ASSERT_EQ(PROTOCOL_MAGIC, read_u32_be(buffer));
+    ASSERT_EQ(PROTOCOL_VERSION_1, read_u16_be(buffer + 4));
+    ASSERT_EQ(MSG_PROGRESS_EVENT, read_u16_be(buffer + 6));
+    ASSERT_EQ(20, read_u32_be(buffer + 8));
+    ASSERT_EQ(0, read_u32_be(buffer + 12));
+
+    /* Verify payload */
+    ASSERT_EQ(12345, read_u64_be(buffer + 16));
+    ASSERT_EQ(10, read_u32_be(buffer + 24));
+    ASSERT_EQ(28, read_u32_be(buffer + 28));
+    ASSERT_EQ(350, read_u32_be(buffer + 32));
+
+    TEST_PASS();
+}
+
+/**
+ * Test: Encode progress event with boundary values
+ */
+void test_encode_progress_event_boundaries(void) {
+    TEST("test_encode_progress_event_boundaries");
+
+    sd35_progress_event_t event = {
+        .request_id = UINT64_MAX,
+        .step = 1,
+        .total_steps = 100,
+        .step_time_ms = 0,
+    };
+
+    uint8_t buffer[256];
+    size_t encoded_len;
+
+    error_code_t err = encode_progress_event(&event, buffer, sizeof(buffer), &encoded_len);
+
+    ASSERT_EQ(ERR_NONE, err);
+    ASSERT_EQ(UINT64_MAX, read_u64_be(buffer + 16));
+    ASSERT_EQ(1, read_u32_be(buffer + 24));
+    ASSERT_EQ(100, read_u32_be(buffer + 28));
+    ASSERT_EQ(0, read_u32_be(buffer + 32));
+
+    TEST_PASS();
+}
+
+/**
+ * Test: Encode progress event fails with NULL pointers
+ */
+void test_encode_progress_event_null_pointers(void) {
+    TEST("test_encode_progress_event_null_pointers");
+
+    sd35_progress_event_t event = {
+        .request_id = 1,
+        .step = 1,
+        .total_steps = 28,
+        .step_time_ms = 100,
+    };
+
+    uint8_t buffer[256];
+    size_t encoded_len;
+
+    ASSERT_EQ(ERR_INTERNAL, encode_progress_event(NULL, buffer, sizeof(buffer), &encoded_len));
+    ASSERT_EQ(ERR_INTERNAL, encode_progress_event(&event, NULL, sizeof(buffer), &encoded_len));
+    ASSERT_EQ(ERR_INTERNAL, encode_progress_event(&event, buffer, sizeof(buffer), NULL));
+
+    TEST_PASS();
+}
+
+/**
+ * Test: Encode progress event fails with buffer too small
+ */
+void test_encode_progress_event_buffer_too_small(void) {
+    TEST("test_encode_progress_event_buffer_too_small");
+
+    sd35_progress_event_t event = {
+        .request_id = 1,
+        .step = 1,
+        .total_steps = 28,
+        .step_time_ms = 100,
+    };
+
+    uint8_t buffer[20]; /* Too small for 36-byte message */
+    size_t encoded_len;
+
+    ASSERT_EQ(ERR_INTERNAL, encode_progress_event(&event, buffer, sizeof(buffer), &encoded_len));
+
+    TEST_PASS();
+}
+
+/**
+ * Test: Encode valid preview event
+ */
+void test_encode_preview_event_valid(void) {
+    TEST("test_encode_preview_event_valid");
+
+    uint8_t test_image[64 * 64 * 3];
+    for (size_t i = 0; i < sizeof(test_image); i++) {
+        test_image[i] = (uint8_t)(i % 256);
+    }
+
+    sd35_preview_event_t event = {
+        .request_id = 42,
+        .step = 5,
+        .total_steps = 28,
+        .width = 64,
+        .height = 64,
+        .channels = 3,
+        .image_data_len = 64 * 64 * 3,
+        .image_data = test_image,
+    };
+
+    uint8_t buffer[64 * 1024];
+    size_t encoded_len;
+
+    error_code_t err = encode_preview_event(&event, buffer, sizeof(buffer), &encoded_len);
+
+    ASSERT_EQ(ERR_NONE, err);
+
+    /* Total: 16 (header) + 32 (payload header) + 12288 (image) = 12336 bytes */
+    size_t expected_len = 16 + 32 + (64 * 64 * 3);
+    ASSERT_EQ(expected_len, encoded_len);
+
+    /* Verify header */
+    ASSERT_EQ(PROTOCOL_MAGIC, read_u32_be(buffer));
+    ASSERT_EQ(PROTOCOL_VERSION_1, read_u16_be(buffer + 4));
+    ASSERT_EQ(MSG_PREVIEW_EVENT, read_u16_be(buffer + 6));
+    ASSERT_EQ(32 + (64 * 64 * 3), read_u32_be(buffer + 8));
+
+    /* Verify payload header */
+    ASSERT_EQ(42, read_u64_be(buffer + 16));
+    ASSERT_EQ(5, read_u32_be(buffer + 24));
+    ASSERT_EQ(28, read_u32_be(buffer + 28));
+    ASSERT_EQ(64, read_u32_be(buffer + 32));
+    ASSERT_EQ(64, read_u32_be(buffer + 36));
+    ASSERT_EQ(3, read_u32_be(buffer + 40));
+    ASSERT_EQ(64 * 64 * 3, read_u32_be(buffer + 44));
+
+    /* Verify image data */
+    ASSERT_TRUE(memcmp(buffer + 48, test_image, sizeof(test_image)) == 0);
+
+    TEST_PASS();
+}
+
+/**
+ * Test: Encode preview event with RGBA
+ */
+void test_encode_preview_event_rgba(void) {
+    TEST("test_encode_preview_event_rgba");
+
+    uint8_t test_image[64 * 64 * 4];
+    memset(test_image, 0xAA, sizeof(test_image));
+
+    sd35_preview_event_t event = {
+        .request_id = 99,
+        .step = 10,
+        .total_steps = 28,
+        .width = 64,
+        .height = 64,
+        .channels = 4,
+        .image_data_len = 64 * 64 * 4,
+        .image_data = test_image,
+    };
+
+    uint8_t buffer[64 * 1024];
+    size_t encoded_len;
+
+    error_code_t err = encode_preview_event(&event, buffer, sizeof(buffer), &encoded_len);
+
+    ASSERT_EQ(ERR_NONE, err);
+    ASSERT_EQ(4, read_u32_be(buffer + 40));
+    ASSERT_EQ(64 * 64 * 4, read_u32_be(buffer + 44));
+
+    TEST_PASS();
+}
+
+/**
+ * Test: Encode preview event fails with NULL pointers
+ */
+void test_encode_preview_event_null_pointers(void) {
+    TEST("test_encode_preview_event_null_pointers");
+
+    uint8_t test_image[64 * 64 * 3];
+    sd35_preview_event_t event = {
+        .request_id = 1,
+        .step = 1,
+        .total_steps = 28,
+        .width = 64,
+        .height = 64,
+        .channels = 3,
+        .image_data_len = 64 * 64 * 3,
+        .image_data = test_image,
+    };
+
+    uint8_t buffer[64 * 1024];
+    size_t encoded_len;
+
+    ASSERT_EQ(ERR_INTERNAL, encode_preview_event(NULL, buffer, sizeof(buffer), &encoded_len));
+    ASSERT_EQ(ERR_INTERNAL, encode_preview_event(&event, NULL, sizeof(buffer), &encoded_len));
+    ASSERT_EQ(ERR_INTERNAL, encode_preview_event(&event, buffer, sizeof(buffer), NULL));
+
+    TEST_PASS();
+}
+
+/**
+ * Test: Encode preview event fails with invalid channels
+ */
+void test_encode_preview_event_invalid_channels(void) {
+    TEST("test_encode_preview_event_invalid_channels");
+
+    uint8_t test_image[64 * 64 * 3];
+    sd35_preview_event_t event = {
+        .request_id = 1,
+        .step = 1,
+        .total_steps = 28,
+        .width = 64,
+        .height = 64,
+        .channels = 2,
+        .image_data_len = 64 * 64 * 2,
+        .image_data = test_image,
+    };
+
+    uint8_t buffer[64 * 1024];
+    size_t encoded_len;
+
+    ASSERT_EQ(ERR_INVALID_DIMENSIONS, encode_preview_event(&event, buffer, sizeof(buffer), &encoded_len));
+
+    TEST_PASS();
+}
+
+/**
+ * Test: Encode preview event fails with mismatched data len
+ */
+void test_encode_preview_event_mismatched_data_len(void) {
+    TEST("test_encode_preview_event_mismatched_data_len");
+
+    uint8_t test_image[64 * 64 * 3];
+    sd35_preview_event_t event = {
+        .request_id = 1,
+        .step = 1,
+        .total_steps = 28,
+        .width = 64,
+        .height = 64,
+        .channels = 3,
+        .image_data_len = 1000, /* Does not match 64*64*3 */
+        .image_data = test_image,
+    };
+
+    uint8_t buffer[64 * 1024];
+    size_t encoded_len;
+
+    ASSERT_EQ(ERR_INVALID_DIMENSIONS, encode_preview_event(&event, buffer, sizeof(buffer), &encoded_len));
+
+    TEST_PASS();
+}
+
+/**
+ * ============================================================================
+ * Preview Interval Decoding Tests
+ * ============================================================================
+ */
+
+/**
+ * Helper: Build a valid request with preview_interval appended
+ */
+static size_t build_request_with_preview_interval(uint8_t *buffer, size_t buffer_size,
+                                                   const char *prompt,
+                                                   uint32_t preview_interval) {
+    size_t prompt_len = strlen(prompt);
+    size_t prompt_data_size = prompt_len * 3;
+    size_t payload_len = 12 + 48 + prompt_data_size + 4; /* +4 for preview_interval */
+    size_t total_len = 16 + payload_len;
+
+    if (total_len > buffer_size) {
+        return 0;
+    }
+
+    uint8_t *ptr = buffer;
+
+    write_u32_be(ptr, PROTOCOL_MAGIC);
+    ptr += 4;
+    write_u16_be(ptr, PROTOCOL_VERSION_1);
+    ptr += 2;
+    write_u16_be(ptr, MSG_GENERATE_REQUEST);
+    ptr += 2;
+    write_u32_be(ptr, (uint32_t)payload_len);
+    ptr += 4;
+    write_u32_be(ptr, 0);
+    ptr += 4;
+
+    write_u64_be(ptr, 1); /* request_id */
+    ptr += 8;
+    write_u32_be(ptr, MODEL_ID_SD35);
+    ptr += 4;
+
+    write_u32_be(ptr, 512); /* width */
+    ptr += 4;
+    write_u32_be(ptr, 512); /* height */
+    ptr += 4;
+    write_u32_be(ptr, 28); /* steps */
+    ptr += 4;
+    write_f32_be(ptr, 7.0f); /* cfg_scale */
+    ptr += 4;
+    write_u64_be(ptr, 0); /* seed */
+    ptr += 8;
+
+    /* Offset table */
+    write_u32_be(ptr, 0);
+    ptr += 4;
+    write_u32_be(ptr, (uint32_t)prompt_len);
+    ptr += 4;
+    write_u32_be(ptr, (uint32_t)prompt_len);
+    ptr += 4;
+    write_u32_be(ptr, (uint32_t)prompt_len);
+    ptr += 4;
+    write_u32_be(ptr, (uint32_t)(prompt_len * 2));
+    ptr += 4;
+    write_u32_be(ptr, (uint32_t)prompt_len);
+    ptr += 4;
+
+    /* Prompt data */
+    memcpy(ptr, prompt, prompt_len);
+    ptr += prompt_len;
+    memcpy(ptr, prompt, prompt_len);
+    ptr += prompt_len;
+    memcpy(ptr, prompt, prompt_len);
+    ptr += prompt_len;
+
+    /* Preview interval */
+    write_u32_be(ptr, preview_interval);
+
+    return total_len;
+}
+
+/**
+ * Test: Decode request with preview_interval = 5
+ */
+void test_decode_preview_interval(void) {
+    TEST("test_decode_preview_interval");
+
+    uint8_t buffer[4096];
+    size_t len = build_request_with_preview_interval(buffer, sizeof(buffer), "test", 5);
+
+    ASSERT_TRUE(len > 0);
+
+    sd35_generate_request_t req;
+    error_code_t err = decode_generate_request(buffer, len, &req);
+
+    ASSERT_EQ(ERR_NONE, err);
+    ASSERT_EQ(5, req.preview_interval);
+
+    TEST_PASS();
+}
+
+/**
+ * Test: Decode request with preview_interval = 0
+ */
+void test_decode_preview_interval_zero(void) {
+    TEST("test_decode_preview_interval_zero");
+
+    uint8_t buffer[4096];
+    size_t len = build_request_with_preview_interval(buffer, sizeof(buffer), "test", 0);
+
+    ASSERT_TRUE(len > 0);
+
+    sd35_generate_request_t req;
+    error_code_t err = decode_generate_request(buffer, len, &req);
+
+    ASSERT_EQ(ERR_NONE, err);
+    ASSERT_EQ(0, req.preview_interval);
+
+    TEST_PASS();
+}
+
+/**
+ * Test: Decode request without preview_interval (backward compatibility)
+ */
+void test_decode_preview_interval_absent(void) {
+    TEST("test_decode_preview_interval_absent");
+
+    /* Use the standard build_valid_request which does not append preview_interval */
+    uint8_t buffer[4096];
+    size_t len = build_valid_request(buffer, sizeof(buffer),
+                                     1, 512, 512, 28, 7.0f, 0, "test");
+
+    ASSERT_TRUE(len > 0);
+
+    sd35_generate_request_t req;
+    error_code_t err = decode_generate_request(buffer, len, &req);
+
+    ASSERT_EQ(ERR_NONE, err);
+    ASSERT_EQ(0, req.preview_interval); /* Should default to 0 */
+
+    TEST_PASS();
+}
+
+/**
+ * Test: Decode request with large preview_interval
+ */
+void test_decode_preview_interval_large(void) {
+    TEST("test_decode_preview_interval_large");
+
+    uint8_t buffer[4096];
+    size_t len = build_request_with_preview_interval(buffer, sizeof(buffer), "a cat", 100);
+
+    ASSERT_TRUE(len > 0);
+
+    sd35_generate_request_t req;
+    error_code_t err = decode_generate_request(buffer, len, &req);
+
+    ASSERT_EQ(ERR_NONE, err);
+    ASSERT_EQ(100, req.preview_interval);
+
+    TEST_PASS();
+}
+
+/**
  * Main test runner
  */
 int main(void) {
@@ -1164,6 +1612,25 @@ int main(void) {
     test_encode_error_response_long_message();
     test_encode_error_response_null_pointers();
     test_encode_error_response_buffer_too_small();
+
+    printf("\n=== Progress Event Encoder Tests ===\n");
+    test_encode_progress_event_valid();
+    test_encode_progress_event_boundaries();
+    test_encode_progress_event_null_pointers();
+    test_encode_progress_event_buffer_too_small();
+
+    printf("\n=== Preview Event Encoder Tests ===\n");
+    test_encode_preview_event_valid();
+    test_encode_preview_event_rgba();
+    test_encode_preview_event_null_pointers();
+    test_encode_preview_event_invalid_channels();
+    test_encode_preview_event_mismatched_data_len();
+
+    printf("\n=== Preview Interval Decoder Tests ===\n");
+    test_decode_preview_interval();
+    test_decode_preview_interval_zero();
+    test_decode_preview_interval_absent();
+    test_decode_preview_interval_large();
 
     printf("\n========================================\n");
     printf("Tests run: %d\n", tests_run);

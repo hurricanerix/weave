@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -249,6 +250,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Image serving endpoints
 	mux.HandleFunc("GET /images/{id}", s.handleImage)
 	mux.HandleFunc("GET /sessions/{sessionID}/images/{filename}", s.handleSessionImage)
+	mux.HandleFunc("GET /tmp/{filename}", s.handleTmpFile)
 
 	// Message state endpoint for loading historical snapshots
 	mux.HandleFunc("GET /message/{id}/state", s.handleMessageState)
@@ -1068,6 +1070,9 @@ func (s *Server) generateImage(ctx context.Context, sessionID string, prompt str
 		return fmt.Errorf("failed to create protocol request: %w", err)
 	}
 
+	// Set preview interval to 5 (preview every 5 steps)
+	protoReq.PreviewInterval = 5
+
 	// Encode request
 	requestData, err := protocol.EncodeSD35GenerateRequest(protoReq)
 	if err != nil {
@@ -1083,11 +1088,11 @@ func (s *Server) generateImage(ctx context.Context, sessionID string, prompt str
 		return client.ErrComputeNotRunning
 	}
 
-	// Send request and receive response over persistent connection
+	// Send request and receive streaming response over persistent connection
 	genCtx, cancel := context.WithTimeout(ctx, 120*time.Second) // 2 min timeout for generation
 	defer cancel()
 
-	responseData, err := s.computeClient.Send(genCtx, requestData)
+	responseCh, err := s.computeClient.SendStream(genCtx, requestData)
 	if err != nil {
 		log.Printf("Failed to send request to compute process for session %s: %v", sessionID, err)
 		if errors.Is(err, client.ErrConnectionClosed) || errors.Is(err, client.ErrReaderDead) {
@@ -1100,85 +1105,163 @@ func (s *Server) generateImage(ctx context.Context, sessionID string, prompt str
 		return fmt.Errorf("failed to send request: %w", err)
 	}
 
-	// Decode response
-	response, err := protocol.DecodeResponse(responseData)
-	if err != nil {
-		log.Printf("Failed to decode response for session %s: %v", sessionID, err)
-		s.sendErrorEvent(sessionID, "Failed to decode image generation response")
-		return fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	// Handle response type
-	switch resp := response.(type) {
-	case *protocol.SD35GenerateResponse:
-		// Success - convert raw pixels to PNG
-		var format image.PixelFormat
-		if resp.Channels == 3 {
-			format = image.FormatRGB
-		} else {
-			format = image.FormatRGBA
-		}
-
-		pngData, err := image.EncodePNG(int(resp.ImageWidth), int(resp.ImageHeight), resp.ImageData, format)
-		if err != nil {
-			log.Printf("Failed to encode PNG for session %s: %v", sessionID, err)
-			s.sendErrorEvent(sessionID, "Failed to encode generated image")
-			return fmt.Errorf("failed to encode PNG: %w", err)
-		}
-
-		// Determine storage strategy based on message ID
-		var imageURL string
+	// Ensure preview files are cleaned up even on error paths
+	defer func() {
 		if messageID > 0 {
-			// Save to persistent session-specific storage
-			if err := s.imageStore.Save(sessionID, messageID, pngData); err != nil {
-				log.Printf("Failed to save session image for session %s, message %d: %v", sessionID, messageID, err)
-				s.sendErrorEvent(sessionID, "Failed to save image. Please try again.")
-				return fmt.Errorf("failed to save session image: %w", err)
-			}
+			previewFilename := fmt.Sprintf("preview_%s_%d.png", sessionID, messageID)
+			previewPath := filepath.Join("./tmp", previewFilename)
+			_ = os.Remove(previewPath)
+		}
+	}()
 
-			// Update message preview status to complete
-			session := s.sessionManager.GetSession(sessionID)
-			manager := session.Manager()
-			manager.UpdateMessagePreview(messageID, conversation.PreviewStatusComplete, s.imageStore.GetURL(sessionID, messageID))
-
-			imageURL = s.imageStore.GetURL(sessionID, messageID)
-			log.Printf("Saved image to session storage: %s", imageURL)
-		} else {
-			// Use in-memory storage (fallback for legacy/non-message generation)
-			imageID, err := s.imageStorage.Store(pngData, int(resp.ImageWidth), int(resp.ImageHeight))
-			if err != nil {
-				log.Printf("Failed to store image for session %s: %v", sessionID, err)
-				if errors.Is(err, image.ErrImageTooLarge) {
-					s.sendErrorEvent(sessionID, "Image is too large to store")
-				} else {
-					s.sendErrorEvent(sessionID, "Failed to store image. Please try again.")
-				}
-				return fmt.Errorf("failed to store image: %w", err)
-			}
-			imageURL = fmt.Sprintf("/images/%s.png", imageID)
+	// Process streaming responses (progress, preview, final)
+	for responseData := range responseCh {
+		if responseData == nil {
+			// Channel closed without data - check for error
+			log.Printf("Response channel closed without data for session %s", sessionID)
+			s.sendErrorEvent(sessionID, "Connection to image generation service was closed")
+			return client.ErrConnectionClosed
 		}
 
-		log.Printf("Generated image for session %s: %dx%d in %dms",
-			sessionID, resp.ImageWidth, resp.ImageHeight, resp.GenerationTime)
+		// Decode response
+		response, err := protocol.DecodeResponse(responseData)
+		if err != nil {
+			log.Printf("Failed to decode response for session %s: %v", sessionID, err)
+			s.sendErrorEvent(sessionID, "Failed to decode image generation response")
+			return fmt.Errorf("failed to decode response: %w", err)
+		}
 
-		// Send image-ready event with message ID
-		_ = s.broker.SendEvent(sessionID, EventImageReady, ImageReadyData{
-			URL:       imageURL,
-			Width:     int(resp.ImageWidth),
-			Height:    int(resp.ImageHeight),
-			MessageID: messageID,
-		})
+		// Handle response type
+		switch resp := response.(type) {
+		case *protocol.SD35ProgressEvent:
+			log.Printf("Progress for session %s: step %d/%d (%dms)",
+				sessionID, resp.Step, resp.TotalSteps, resp.StepTimeMs)
+			// Send progress event via SSE
+			_ = s.broker.SendEvent(sessionID, EventGenerationProgress, GenerationProgressData{
+				Step:       int(resp.Step),
+				TotalSteps: int(resp.TotalSteps),
+				MessageID:  messageID,
+			})
 
-	case *protocol.ErrorResponse:
-		log.Printf("Compute process error for session %s: code=%d, msg=%s",
-			sessionID, resp.ErrorCode, resp.ErrorMessage)
-		s.sendErrorEvent(sessionID, fmt.Sprintf("Image generation failed: %s", resp.ErrorMessage))
-		return fmt.Errorf("compute error: %s", resp.ErrorMessage)
+		case *protocol.SD35PreviewEvent:
+			// Skip preview storage if no message association (messageID=0)
+			if messageID <= 0 {
+				continue
+			}
 
-	default:
-		log.Printf("Unexpected response type for session %s: %T", sessionID, response)
-		s.sendErrorEvent(sessionID, "Unexpected response from image generation service")
-		return fmt.Errorf("unexpected response type: %T", response)
+			// Encode preview image as PNG
+			var format image.PixelFormat
+			if resp.Channels == 3 {
+				format = image.FormatRGB
+			} else {
+				format = image.FormatRGBA
+			}
+
+			pngData, err := image.EncodePNG(int(resp.ImageWidth), int(resp.ImageHeight), resp.ImageData, format)
+			if err != nil {
+				log.Printf("Failed to encode preview PNG for session %s: %v", sessionID, err)
+				// Don't fail the whole generation for a preview encoding error
+				continue
+			}
+
+			// Store preview image in ./tmp/ directory
+			// Create tmp directory if it doesn't exist
+			tmpDir := "./tmp"
+			if err := os.MkdirAll(tmpDir, 0755); err != nil {
+				log.Printf("Failed to create tmp directory for session %s: %v", sessionID, err)
+				continue
+			}
+
+			// Generate preview filename pattern: preview_{session}_{message}.png
+			// This allows multiple concurrent generations and cleanup
+			previewFilename := fmt.Sprintf("preview_%s_%d.png", sessionID, messageID)
+			previewPath := filepath.Join(tmpDir, previewFilename)
+
+			// Write preview image to tmp directory
+			if err := os.WriteFile(previewPath, pngData, 0644); err != nil {
+				log.Printf("Failed to write preview image for session %s: %v", sessionID, err)
+				continue
+			}
+
+			// Send preview event via SSE with URL pointing to tmp file
+			previewURL := fmt.Sprintf("/tmp/%s", previewFilename)
+			_ = s.broker.SendEvent(sessionID, EventGenerationPreview, GenerationPreviewData{
+				URL:       previewURL,
+				Width:     int(resp.ImageWidth),
+				Height:    int(resp.ImageHeight),
+				MessageID: messageID,
+			})
+
+		case *protocol.SD35GenerateResponse:
+			// Success - convert raw pixels to PNG
+			var format image.PixelFormat
+			if resp.Channels == 3 {
+				format = image.FormatRGB
+			} else {
+				format = image.FormatRGBA
+			}
+
+			pngData, err := image.EncodePNG(int(resp.ImageWidth), int(resp.ImageHeight), resp.ImageData, format)
+			if err != nil {
+				log.Printf("Failed to encode PNG for session %s: %v", sessionID, err)
+				s.sendErrorEvent(sessionID, "Failed to encode generated image")
+				return fmt.Errorf("failed to encode PNG: %w", err)
+			}
+
+			// Determine storage strategy based on message ID
+			var imageURL string
+			if messageID > 0 {
+				// Save to persistent session-specific storage
+				if err := s.imageStore.Save(sessionID, messageID, pngData); err != nil {
+					log.Printf("Failed to save session image for session %s, message %d: %v", sessionID, messageID, err)
+					s.sendErrorEvent(sessionID, "Failed to save image. Please try again.")
+					return fmt.Errorf("failed to save session image: %w", err)
+				}
+
+				// Update message preview status to complete
+				session := s.sessionManager.GetSession(sessionID)
+				manager := session.Manager()
+				manager.UpdateMessagePreview(messageID, conversation.PreviewStatusComplete, s.imageStore.GetURL(sessionID, messageID))
+
+				imageURL = s.imageStore.GetURL(sessionID, messageID)
+				log.Printf("Saved image to session storage: %s", imageURL)
+			} else {
+				// Use in-memory storage (fallback for legacy/non-message generation)
+				imageID, err := s.imageStorage.Store(pngData, int(resp.ImageWidth), int(resp.ImageHeight))
+				if err != nil {
+					log.Printf("Failed to store image for session %s: %v", sessionID, err)
+					if errors.Is(err, image.ErrImageTooLarge) {
+						s.sendErrorEvent(sessionID, "Image is too large to store")
+					} else {
+						s.sendErrorEvent(sessionID, "Failed to store image. Please try again.")
+					}
+					return fmt.Errorf("failed to store image: %w", err)
+				}
+				imageURL = fmt.Sprintf("/images/%s.png", imageID)
+			}
+
+			log.Printf("Generated image for session %s: %dx%d in %dms",
+				sessionID, resp.ImageWidth, resp.ImageHeight, resp.GenerationTime)
+
+			// Send image-ready event with message ID
+			_ = s.broker.SendEvent(sessionID, EventImageReady, ImageReadyData{
+				URL:       imageURL,
+				Width:     int(resp.ImageWidth),
+				Height:    int(resp.ImageHeight),
+				MessageID: messageID,
+			})
+
+		case *protocol.ErrorResponse:
+			log.Printf("Compute process error for session %s: code=%d, msg=%s",
+				sessionID, resp.ErrorCode, resp.ErrorMessage)
+			s.sendErrorEvent(sessionID, fmt.Sprintf("Image generation failed: %s", resp.ErrorMessage))
+			return fmt.Errorf("compute error: %s", resp.ErrorMessage)
+
+		default:
+			log.Printf("Unexpected response type for session %s: %T", sessionID, response)
+			s.sendErrorEvent(sessionID, "Unexpected response from image generation service")
+			return fmt.Errorf("unexpected response type: %T", response)
+		}
 	}
 
 	return nil
@@ -1404,6 +1487,83 @@ func (s *Server) handleSessionImage(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(pngData); err != nil {
 		log.Printf("Failed to write image data for session %s, message %d: %v", requestedSessionID, messageID, err)
+	}
+}
+
+// handleTmpFile serves preview images from the ./tmp/ directory.
+// GET /tmp/{filename}
+// SECURITY: Only serves files matching the pattern preview_{sessionID}_{messageID}.png
+// to prevent directory traversal attacks and unauthorized file access.
+func (s *Server) handleTmpFile(w http.ResponseWriter, r *http.Request) {
+	// SECURITY: Get authenticated session ID from context
+	sessionID := GetSessionID(r.Context())
+	if sessionID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Extract filename from path parameter
+	filename := r.PathValue("filename")
+	if filename == "" {
+		http.Error(w, "Missing filename", http.StatusBadRequest)
+		return
+	}
+
+	// SECURITY: Validate filename format to prevent directory traversal
+	// Expected format: preview_{sessionID}_{messageID}.png
+	// This prevents access to arbitrary files in ./tmp/
+	if !strings.HasPrefix(filename, "preview_") || !strings.HasSuffix(filename, ".png") {
+		http.Error(w, "Invalid filename", http.StatusBadRequest)
+		return
+	}
+
+	// SECURITY: Reject filenames with path separators to prevent directory traversal
+	if strings.ContainsAny(filename, "/\\") {
+		http.Error(w, "Invalid filename", http.StatusBadRequest)
+		return
+	}
+
+	// Extract session ID from filename and verify it matches authenticated session
+	// Format: preview_{sessionID}_{messageID}.png
+	parts := strings.TrimPrefix(filename, "preview_")
+	parts = strings.TrimSuffix(parts, ".png")
+	splitParts := strings.Split(parts, "_")
+	if len(splitParts) < 2 {
+		http.Error(w, "Invalid filename format", http.StatusBadRequest)
+		return
+	}
+	filenameSessionID := splitParts[0]
+
+	if filenameSessionID != sessionID {
+		log.Printf("SECURITY: Session %s attempted to access preview from session %s", sessionID, filenameSessionID)
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	// Construct file path (filename already validated above)
+	filePath := filepath.Join("./tmp", filename)
+
+	// Read file
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "Preview not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("Failed to read tmp file %s: %v", filename, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	// Set headers for image serving
+	// Use shorter cache time for preview images since they're temporary
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "private, max-age=60")
+
+	// Write PNG data
+	w.WriteHeader(http.StatusOK)
+	if _, err := w.Write(data); err != nil {
+		log.Printf("Failed to write tmp file data for %s: %v", filename, err)
 	}
 }
 

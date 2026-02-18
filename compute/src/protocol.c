@@ -228,8 +228,18 @@ error_code_t decode_generate_request(const uint8_t *data, size_t data_len,
 
     remaining -= 48;
 
+    /**
+     * Calculate prompt_data length. The prompt data is followed by an optional
+     * preview_interval field (4 bytes). If the remaining bytes after the fixed
+     * SD35 params are > 0 and at least 4 bytes more than the prompt offsets
+     * suggest, the last 4 bytes are preview_interval.
+     *
+     * For backward compatibility: if no trailing bytes exist after prompt data,
+     * preview_interval defaults to 0.
+     */
     req->prompt_data = ptr;
     req->prompt_data_len = remaining;
+    req->preview_interval = 0;
 
     if (req->width < SD35_MIN_DIMENSION || req->width > SD35_MAX_DIMENSION ||
         req->width % SD35_DIMENSION_ALIGNMENT != 0) {
@@ -287,6 +297,26 @@ error_code_t decode_generate_request(const uint8_t *data, size_t data_len,
 
     if (req->t5_length > req->prompt_data_len - req->t5_offset) {
         return ERR_INVALID_PROMPT;
+    }
+
+    /* Check for trailing preview_interval after prompt data.
+     * Calculate the actual prompt data extent from the offset table.
+     * If there are 4 extra bytes beyond the prompt data, read preview_interval. */
+    uint32_t prompt_end = 0;
+    uint32_t end;
+
+    end = req->clip_l_offset + req->clip_l_length;
+    if (end > prompt_end) prompt_end = end;
+
+    end = req->clip_g_offset + req->clip_g_length;
+    if (end > prompt_end) prompt_end = end;
+
+    end = req->t5_offset + req->t5_length;
+    if (end > prompt_end) prompt_end = end;
+
+    if (remaining >= prompt_end + 4) {
+        req->preview_interval = read_u32_be(ptr + prompt_end);
+        req->prompt_data_len = prompt_end;
     }
 
     return ERR_NONE;
@@ -486,6 +516,164 @@ error_code_t encode_error_response(const error_response_t *resp,
         memcpy(ptr, resp->error_msg, resp->error_msg_len);
         ptr += resp->error_msg_len;
     }
+
+    *out_len = total_len;
+    return ERR_NONE;
+}
+
+/**
+ * encode_progress_event - Encode a progress event message
+ *
+ * Message structure:
+ * - Common header (16 bytes, msg_type = MSG_PROGRESS_EVENT)
+ * - request_id (8 bytes)
+ * - step (4 bytes)
+ * - total_steps (4 bytes)
+ * - step_time_ms (4 bytes)
+ *
+ * @param event    Progress event structure to encode
+ * @param buffer   Output buffer for encoded message
+ * @param buf_size Size of output buffer in bytes
+ * @param out_len  Pointer to store actual encoded length
+ * @return         ERR_NONE on success, ERR_INTERNAL on failure
+ */
+error_code_t encode_progress_event(const sd35_progress_event_t *event,
+                                   uint8_t *buffer, size_t buf_size,
+                                   size_t *out_len) {
+    if (event == NULL || buffer == NULL || out_len == NULL) {
+        return ERR_INTERNAL;
+    }
+
+    /* Payload: request_id (8) + step (4) + total_steps (4) + step_time_ms (4) = 20 bytes */
+    uint32_t payload_len = 20;
+    size_t total_len = 16 + payload_len;
+
+    if (total_len > buf_size) {
+        return ERR_INTERNAL;
+    }
+
+    uint8_t *ptr = buffer;
+
+    /* Common header */
+    write_u32_be(ptr, PROTOCOL_MAGIC);
+    ptr += 4;
+    write_u16_be(ptr, PROTOCOL_VERSION_1);
+    ptr += 2;
+    write_u16_be(ptr, MSG_PROGRESS_EVENT);
+    ptr += 2;
+    write_u32_be(ptr, payload_len);
+    ptr += 4;
+    write_u32_be(ptr, 0); /* reserved */
+    ptr += 4;
+
+    /* Payload */
+    write_u64_be(ptr, event->request_id);
+    ptr += 8;
+    write_u32_be(ptr, event->step);
+    ptr += 4;
+    write_u32_be(ptr, event->total_steps);
+    ptr += 4;
+    write_u32_be(ptr, event->step_time_ms);
+
+    *out_len = total_len;
+    return ERR_NONE;
+}
+
+/**
+ * encode_preview_event - Encode a preview event message
+ *
+ * Message structure:
+ * - Common header (16 bytes, msg_type = MSG_PREVIEW_EVENT)
+ * - request_id (8 bytes)
+ * - step (4 bytes)
+ * - total_steps (4 bytes)
+ * - width (4 bytes)
+ * - height (4 bytes)
+ * - channels (4 bytes)
+ * - image_data_len (4 bytes)
+ * - image_data (variable)
+ *
+ * @param event    Preview event structure to encode
+ * @param buffer   Output buffer for encoded message
+ * @param buf_size Size of output buffer in bytes
+ * @param out_len  Pointer to store actual encoded length
+ * @return         ERR_NONE on success, ERR_INTERNAL on failure
+ */
+error_code_t encode_preview_event(const sd35_preview_event_t *event,
+                                  uint8_t *buffer, size_t buf_size,
+                                  size_t *out_len) {
+    if (event == NULL || buffer == NULL || out_len == NULL) {
+        return ERR_INTERNAL;
+    }
+
+    if (event->image_data == NULL && event->image_data_len > 0) {
+        return ERR_INTERNAL;
+    }
+
+    /* Validate channels */
+    if (event->channels != 3 && event->channels != 4) {
+        return ERR_INVALID_DIMENSIONS;
+    }
+
+    /* Overflow check for image dimensions */
+    if (event->width > UINT32_MAX / event->height) {
+        return ERR_INVALID_DIMENSIONS;
+    }
+    uint32_t pixels = event->width * event->height;
+
+    if (pixels > UINT32_MAX / event->channels) {
+        return ERR_INVALID_DIMENSIONS;
+    }
+    uint32_t expected_data_len = pixels * event->channels;
+
+    if (event->image_data_len != expected_data_len) {
+        return ERR_INVALID_DIMENSIONS;
+    }
+
+    /* Payload: request_id (8) + step (4) + total_steps (4) + width (4) +
+     *          height (4) + channels (4) + image_data_len (4) + image_data */
+    if (event->image_data_len > MAX_MESSAGE_SIZE - 16 - 32) {
+        return ERR_INTERNAL;
+    }
+
+    uint32_t payload_len = 32 + event->image_data_len;
+    size_t total_len = 16 + payload_len;
+
+    if (total_len > buf_size) {
+        return ERR_INTERNAL;
+    }
+
+    uint8_t *ptr = buffer;
+
+    /* Common header */
+    write_u32_be(ptr, PROTOCOL_MAGIC);
+    ptr += 4;
+    write_u16_be(ptr, PROTOCOL_VERSION_1);
+    ptr += 2;
+    write_u16_be(ptr, MSG_PREVIEW_EVENT);
+    ptr += 2;
+    write_u32_be(ptr, payload_len);
+    ptr += 4;
+    write_u32_be(ptr, 0); /* reserved */
+    ptr += 4;
+
+    /* Payload */
+    write_u64_be(ptr, event->request_id);
+    ptr += 8;
+    write_u32_be(ptr, event->step);
+    ptr += 4;
+    write_u32_be(ptr, event->total_steps);
+    ptr += 4;
+    write_u32_be(ptr, event->width);
+    ptr += 4;
+    write_u32_be(ptr, event->height);
+    ptr += 4;
+    write_u32_be(ptr, event->channels);
+    ptr += 4;
+    write_u32_be(ptr, event->image_data_len);
+    ptr += 4;
+
+    memcpy(ptr, event->image_data, event->image_data_len);
 
     *out_len = total_len;
     return ERR_NONE;

@@ -5,9 +5,7 @@
 CC = gcc
 CXX = g++
 CFLAGS = -std=c99 -Wall -Wextra -Werror -pedantic -O2
-CXXFLAGS = -std=c++11 -Wall -Wextra -O2
 CFLAGS_DEBUG = -std=c99 -Wall -Wextra -Werror -pedantic -O0 -g
-CXXFLAGS_DEBUG = -std=c++11 -Wall -Wextra -O0 -g
 CFLAGS_ASAN = -std=c99 -Wall -Wextra -Werror -pedantic -fsanitize=address -fsanitize=undefined -g
 INCLUDES = -I./include
 LDFLAGS = -lm
@@ -49,9 +47,8 @@ $(SD_LIB): $(SD_DIR)/CMakeLists.txt
 .PHONY: stable-diffusion
 stable-diffusion: $(SD_LIB)
 
-# Object files for daemon (separate C and C++ compilation)
-DAEMON_C_OBJS = $(BUILD_DIR)/main.o $(BUILD_DIR)/socket.o $(BUILD_DIR)/protocol.o $(BUILD_DIR)/generate.o
-DAEMON_CXX_OBJS = $(BUILD_DIR)/sd_wrapper.o
+# Object files for daemon
+DAEMON_C_OBJS = $(BUILD_DIR)/main.o $(BUILD_DIR)/socket.o $(BUILD_DIR)/protocol.o $(BUILD_DIR)/generate.o $(BUILD_DIR)/sd_wrapper.o
 
 # Create build directory
 $(BUILD_DIR):
@@ -61,27 +58,24 @@ $(BUILD_DIR):
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) $(SD_INCLUDES) -c $< -o $@
 
-# Compile C++ sources with g++
-$(BUILD_DIR)/sd_wrapper.o: $(SRC_DIR)/sd_wrapper.cpp | $(BUILD_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $(SD_INCLUDES) -c $< -o $@
-
 # Create bin directory
 $(BIN_DIR):
 	mkdir -p $(BIN_DIR)
 
-# Main daemon binary (link with g++ for C++ standard library)
-$(BIN_DIR)/weave-compute: $(DAEMON_C_OBJS) $(DAEMON_CXX_OBJS) $(SD_LIB) | $(BIN_DIR)
-	$(CXX) -o $@ $(DAEMON_C_OBJS) $(DAEMON_CXX_OBJS) \
+# Main daemon binary (link with g++ for stable-diffusion.cpp C++ runtime)
+$(BIN_DIR)/weave-compute: $(DAEMON_C_OBJS) $(SD_LIB) | $(BIN_DIR)
+	$(CXX) -o $@ $(DAEMON_C_OBJS) \
 		$(SD_LIB) $(SD_GGML_LIBS) $(LDFLAGS) $(VULKAN_LDFLAGS)
 
 .PHONY: test
-test: $(TEST_DIR)/test_protocol $(TEST_DIR)/test_socket $(TEST_DIR)/test_sd_wrapper $(TEST_DIR)/test_generate
+test: $(TEST_DIR)/test_protocol $(TEST_DIR)/test_socket $(TEST_DIR)/test_sd_wrapper $(TEST_DIR)/test_generate $(TEST_DIR)/test_callbacks
 	@echo "Running unit tests..."
 	@mkdir -p ./tmp
 	@./$(TEST_DIR)/test_protocol
 	@./$(TEST_DIR)/test_socket
 	@./$(TEST_DIR)/test_sd_wrapper
 	@./$(TEST_DIR)/test_generate
+	@./$(TEST_DIR)/test_callbacks
 
 .PHONY: test-asan
 test-asan: $(TEST_DIR)/test_protocol_asan $(TEST_DIR)/test_socket_asan
@@ -108,12 +102,15 @@ $(TEST_DIR)/test_socket_asan: $(TEST_DIR)/test_socket.c $(SRC_DIR)/socket.c
 $(TEST_DIR)/test_stub_generator: $(TEST_DIR)/test_stub_generator.c $(SRC_DIR)/protocol.c
 	$(CC) $(CFLAGS_DEBUG) $(INCLUDES) -o $@ $^ $(LDFLAGS)
 
-$(TEST_DIR)/test_sd_wrapper: $(TEST_DIR)/test_sd_wrapper.c $(SRC_DIR)/sd_wrapper.cpp $(SD_LIB)
-	$(CXX) $(CXXFLAGS_DEBUG) $(INCLUDES) $(SD_INCLUDES) -o $@ \
-		$(TEST_DIR)/test_sd_wrapper.c $(SRC_DIR)/sd_wrapper.cpp \
+$(TEST_DIR)/test_sd_wrapper: $(TEST_DIR)/test_sd_wrapper.c $(SRC_DIR)/sd_wrapper.c $(SRC_DIR)/protocol.c $(SD_LIB)
+	$(CC) $(CFLAGS_DEBUG) $(INCLUDES) $(SD_INCLUDES) -o $@ \
+		$(TEST_DIR)/test_sd_wrapper.c $(SRC_DIR)/sd_wrapper.c $(SRC_DIR)/protocol.c \
 		$(SD_LIB) $(SD_GGML_LIBS) $(LDFLAGS) $(VULKAN_LDFLAGS)
 
 $(TEST_DIR)/test_generate: $(TEST_DIR)/test_generate.c $(SRC_DIR)/generate.c
+	$(CC) $(CFLAGS_DEBUG) $(INCLUDES) -o $@ $^ $(LDFLAGS)
+
+$(TEST_DIR)/test_callbacks: $(TEST_DIR)/test_callbacks.c $(SRC_DIR)/generate.c $(SRC_DIR)/protocol.c
 	$(CC) $(CFLAGS_DEBUG) $(INCLUDES) -o $@ $^ $(LDFLAGS)
 
 $(TEST_DIR)/test_stdin_monitor_unit: $(TEST_DIR)/test_stdin_monitor_unit.c $(SRC_DIR)/socket.c
@@ -134,13 +131,14 @@ bench: $(BENCH_DIR)/bench_generate
 	@echo "Example:"
 	@echo "  ./$(BENCH_DIR)/bench_generate models/sd3.5_medium.safetensors 10"
 
-# Benchmark object files (separate C and C++ compilation)
+# Benchmark object files
 $(BUILD_DIR)/bench_generate.o: $(BENCH_DIR)/bench_generate.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) $(INCLUDES) $(SD_INCLUDES) -c $< -o $@
 
 $(BENCH_DIR)/bench_generate: $(BUILD_DIR)/bench_generate.o $(BUILD_DIR)/sd_wrapper.o $(SD_LIB)
 	$(CXX) -o $@ $(BUILD_DIR)/bench_generate.o $(BUILD_DIR)/sd_wrapper.o \
 		$(SD_LIB) $(SD_GGML_LIBS) $(LDFLAGS) $(VULKAN_LDFLAGS)
+
 
 .PHONY: clean
 clean:
@@ -150,6 +148,7 @@ clean:
 	rm -f $(TEST_DIR)/test_socket $(TEST_DIR)/test_socket_asan
 	rm -f $(TEST_DIR)/test_sd_wrapper
 	rm -f $(TEST_DIR)/test_generate
+	rm -f $(TEST_DIR)/test_callbacks
 	rm -f $(TEST_DIR)/test_stdin_monitor_unit
 	rm -f $(BENCH_DIR)/bench_generate
 	rm -f fuzz/fuzz_protocol fuzz/generate_corpus fuzz/test_corpus fuzz/stress_test

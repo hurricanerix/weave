@@ -1,33 +1,48 @@
 /**
  * Wrapper implementation for stable-diffusion.cpp integration.
  *
- * This file bridges our C99 interface to stable-diffusion.cpp's C++ API.
+ * This file bridges our C99 interface to stable-diffusion.cpp's C API.
+ * stable-diffusion.h provides an extern "C" interface, so no C++ needed here.
  */
 
 #include "weave/sd_wrapper.h"
 
-#include <cstdlib>
-#include <cstring>
-#include <new>      /* For std::nothrow */
-#include <string>
+#include <stdlib.h>
+#include <string.h>
+#include <limits.h>
+#include <stdbool.h>
+#include <stdio.h>
+#include <errno.h>
+#include <unistd.h>
 
 /* Include stable-diffusion.cpp C API */
 #include "stable-diffusion.h"
+
+/* Include protocol for event encoding */
+#include "weave/protocol.h"
+
+/** Maximum error message length */
+#define SD_WRAPPER_ERROR_MSG_SIZE 256
 
 /**
  * Internal context structure.
  * Holds stable-diffusion.cpp context and error state.
  */
 struct sd_wrapper_ctx {
-    sd_ctx_t* sd_ctx;           /* stable-diffusion.cpp context */
-    std::string error_msg;      /* Last error message */
-    sd_wrapper_config_t config; /* Configuration used to create context */
+    sd_ctx_t* sd_ctx;                      /* stable-diffusion.cpp context */
+    char error_msg[SD_WRAPPER_ERROR_MSG_SIZE]; /* Last error message */
+    sd_wrapper_config_t config;            /* Configuration used to create context */
+    sd_wrapper_callback_ctx_t callback_ctx; /* Callback context (socket fd, request_id) */
+    bool callbacks_enabled;                /* Whether callbacks are enabled */
 };
 
 /* Forward declarations */
 static void sd_wrapper_log_callback(enum sd_log_level_t level,
                                      const char* text,
                                      void* data);
+static void sd_wrapper_progress_callback(int step, int steps, float time, void* data);
+static void sd_wrapper_preview_callback(int step, int frame_count,
+                                          sd_image_t* frames, bool is_noisy, void* data);
 
 /**
  * Initialize wrapper configuration with defaults.
@@ -80,16 +95,17 @@ sd_wrapper_ctx_t* sd_wrapper_create(const sd_wrapper_config_t* config) {
         return NULL;
     }
 
-    /* Allocate context using nothrow to return NULL instead of throwing */
-    sd_wrapper_ctx_t* ctx = new(std::nothrow) sd_wrapper_ctx;
+    /* Allocate context */
+    sd_wrapper_ctx_t* ctx = calloc(1, sizeof(struct sd_wrapper_ctx));
     if (ctx == NULL) {
         return NULL;
     }
 
     /* Initialize context with default error message before model load */
     ctx->sd_ctx = NULL;
-    ctx->error_msg = "Model load failed";  /* Default error before attempting load */
+    snprintf(ctx->error_msg, sizeof(ctx->error_msg), "Model load failed");
     ctx->config = *config;
+    ctx->callbacks_enabled = false;
 
     /* Set up logging callback */
     sd_set_log_callback(sd_wrapper_log_callback, ctx);
@@ -133,12 +149,12 @@ sd_wrapper_ctx_t* sd_wrapper_create(const sd_wrapper_config_t* config) {
     ctx->sd_ctx = new_sd_ctx(&sd_params);
     if (ctx->sd_ctx == NULL) {
         /* Model load failed - error_msg already set */
-        delete ctx;
+        free(ctx);
         return NULL;
     }
 
     /* Clear error message on success */
-    ctx->error_msg = "";
+    ctx->error_msg[0] = '\0';
 
     return ctx;
 }
@@ -156,7 +172,7 @@ void sd_wrapper_free(sd_wrapper_ctx_t* ctx) {
         ctx->sd_ctx = NULL;
     }
 
-    delete ctx;
+    free(ctx);
 }
 
 /**
@@ -170,7 +186,8 @@ sd_wrapper_error_t sd_wrapper_generate(sd_wrapper_ctx_t* ctx,
     }
 
     if (params == NULL || params->prompt == NULL || image == NULL) {
-        ctx->error_msg = "Invalid parameters: params, prompt, or image is NULL";
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                 "Invalid parameters: params, prompt, or image is NULL");
         return SD_WRAPPER_ERR_INVALID_PARAM;
     }
 
@@ -178,19 +195,22 @@ sd_wrapper_error_t sd_wrapper_generate(sd_wrapper_ctx_t* ctx,
     if (params->width < 64 || params->width > 2048 ||
         params->height < 64 || params->height > 2048 ||
         params->width % 64 != 0 || params->height % 64 != 0) {
-        ctx->error_msg = "Invalid dimensions: must be 64-2048 and multiple of 64";
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                 "Invalid dimensions: must be 64-2048 and multiple of 64");
         return SD_WRAPPER_ERR_INVALID_PARAM;
     }
 
     /* Validate steps */
     if (params->steps < 1 || params->steps > 100) {
-        ctx->error_msg = "Invalid steps: must be 1-100";
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                 "Invalid steps: must be 1-100");
         return SD_WRAPPER_ERR_INVALID_PARAM;
     }
 
     /* Validate CFG scale */
     if (params->cfg_scale < 0.0f || params->cfg_scale > 20.0f) {
-        ctx->error_msg = "Invalid CFG scale: must be 0.0-20.0";
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                 "Invalid CFG scale: must be 0.0-20.0");
         return SD_WRAPPER_ERR_INVALID_PARAM;
     }
 
@@ -222,10 +242,52 @@ sd_wrapper_error_t sd_wrapper_generate(sd_wrapper_ctx_t* ctx,
     /* Set CLIP skip */
     gen_params.clip_skip = params->clip_skip;
 
+    /*
+     * Set up progress and preview callbacks if enabled.
+     *
+     * These callbacks are global (not per-context) in stable-diffusion.cpp,
+     * but this is safe because compute is single-threaded (one generation at a time).
+     * Callbacks fire synchronously during generate_image() and send events to socket.
+     */
+    if (ctx->callbacks_enabled) {
+        /* Set progress callback (fires every step) */
+        sd_set_progress_callback(sd_wrapper_progress_callback, ctx);
+
+        /* Set preview callback if preview_interval > 0 */
+        if (ctx->callback_ctx.preview_interval > 0) {
+            /*
+             * PREVIEW_PROJ: Projection-based decoding (lowest quality, fastest).
+             * No additional model files required.
+             * denoised=true: Show denoised preview (cleaner).
+             * noisy=false: Don't show noisy preview.
+             */
+            int interval = (ctx->callback_ctx.preview_interval <= (uint32_t)INT_MAX)
+                ? (int)ctx->callback_ctx.preview_interval
+                : INT_MAX;
+            sd_set_preview_callback(sd_wrapper_preview_callback,
+                                     PREVIEW_PROJ,
+                                     interval,
+                                     true,  /* denoised */
+                                     false, /* noisy */
+                                     ctx);
+        }
+    }
+
     /* Generate image */
     sd_image_t* sd_img = generate_image(ctx->sd_ctx, &gen_params);
+
+    /*
+     * Always clear callbacks after generation completes, even on failure.
+     * Must happen before any early returns to prevent stale callback state.
+     */
+    if (ctx->callbacks_enabled) {
+        sd_set_progress_callback(NULL, NULL);
+        sd_set_preview_callback(NULL, PREVIEW_NONE, 0, false, false, NULL);
+    }
+
     if (sd_img == NULL) {
-        ctx->error_msg = "Image generation failed. Check GPU memory and model.";
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                 "Image generation failed. Check GPU memory and model.");
         return SD_WRAPPER_ERR_GENERATION_FAILED;
     }
 
@@ -239,18 +301,20 @@ sd_wrapper_error_t sd_wrapper_generate(sd_wrapper_ctx_t* ctx,
         sd_img->width * sd_img->height > SIZE_MAX / sd_img->channel) {
         free(sd_img->data);
         free(sd_img);
-        ctx->error_msg = "Image size calculation overflow";
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                 "Image size calculation overflow");
         return SD_WRAPPER_ERR_OUT_OF_MEMORY;
     }
 
     image->data_size = sd_img->width * sd_img->height * sd_img->channel;
 
     /* Allocate buffer for caller */
-    image->data = (uint8_t*)malloc(image->data_size);
+    image->data = malloc(image->data_size);
     if (image->data == NULL) {
         free(sd_img->data);
         free(sd_img);
-        ctx->error_msg = "Out of memory allocating image buffer";
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                 "Out of memory allocating image buffer");
         return SD_WRAPPER_ERR_OUT_OF_MEMORY;
     }
 
@@ -291,7 +355,7 @@ const char* sd_wrapper_get_error(sd_wrapper_ctx_t* ctx) {
         return "Invalid context";
     }
 
-    return ctx->error_msg.c_str();
+    return ctx->error_msg;
 }
 
 /**
@@ -383,12 +447,201 @@ sd_wrapper_error_t sd_wrapper_reset(sd_wrapper_ctx_t* ctx) {
     /* Recreate context */
     ctx->sd_ctx = new_sd_ctx(&sd_params);
     if (ctx->sd_ctx == NULL) {
-        ctx->error_msg = "Failed to recreate SD context";
+        snprintf(ctx->error_msg, sizeof(ctx->error_msg),
+                 "Failed to recreate SD context");
         return SD_WRAPPER_ERR_INIT_FAILED;
     }
 
-    ctx->error_msg = "";
+    ctx->error_msg[0] = '\0';
     return SD_WRAPPER_OK;
+}
+
+/**
+ * Helper function to write full buffer to socket.
+ *
+ * Handles partial writes and EINTR. Does not handle timeouts.
+ *
+ * @param fd     Socket file descriptor
+ * @param buf    Buffer to write
+ * @param count  Number of bytes to write
+ * @return       0 on success, -1 on error
+ */
+static int write_full(int fd, const uint8_t* buf, size_t count) {
+    size_t total = 0;
+
+    while (total < count) {
+        ssize_t n = write(fd, buf + total, count - total);
+        if (n < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -1;
+        }
+        total += (size_t)n;
+    }
+
+    return 0;
+}
+
+/**
+ * Set callback context for progress and preview events.
+ */
+sd_wrapper_error_t sd_wrapper_set_callback_ctx(sd_wrapper_ctx_t* ctx,
+                                                 const sd_wrapper_callback_ctx_t* callback_ctx) {
+    if (ctx == NULL) {
+        return SD_WRAPPER_ERR_INVALID_PARAM;
+    }
+
+    if (callback_ctx == NULL) {
+        /* Disable callbacks */
+        ctx->callbacks_enabled = false;
+        memset(&ctx->callback_ctx, 0, sizeof(ctx->callback_ctx));
+        return SD_WRAPPER_OK;
+    }
+
+    /* Enable callbacks with provided context */
+    ctx->callback_ctx = *callback_ctx;
+    ctx->callbacks_enabled = true;
+
+    return SD_WRAPPER_OK;
+}
+
+/**
+ * Progress callback for stable-diffusion.cpp.
+ *
+ * Called after each denoising step. Encodes and sends MSG_PROGRESS_EVENT
+ * to the socket.
+ *
+ * @param step   Current step (1-based)
+ * @param steps  Total steps
+ * @param time   Step time in seconds
+ * @param data   Callback context (sd_wrapper_ctx_t*)
+ */
+static void sd_wrapper_progress_callback(int step, int steps, float time, void* data) {
+    sd_wrapper_ctx_t* ctx = (sd_wrapper_ctx_t*)data;
+
+    if (ctx == NULL || !ctx->callbacks_enabled) {
+        return;
+    }
+
+    if (ctx->callback_ctx.socket_fd < 0) {
+        return;
+    }
+
+    /* Convert step time from seconds to milliseconds */
+    uint32_t step_time_ms = (uint32_t)(time * 1000.0f);
+
+    /* Build progress event */
+    sd35_progress_event_t event;
+    event.request_id = ctx->callback_ctx.request_id;
+    event.step = (uint32_t)step;
+    event.total_steps = (uint32_t)steps;
+    event.step_time_ms = step_time_ms;
+
+    /* Encode event to buffer */
+    uint8_t buffer[256]; /* Progress events are small (~40 bytes) */
+    size_t encoded_len;
+
+    error_code_t err = encode_progress_event(&event, buffer, sizeof(buffer), &encoded_len);
+    if (err != ERR_NONE) {
+        fprintf(stderr, "[sd_wrapper] failed to encode progress event: %d\n", err);
+        return;
+    }
+
+    /* Write to socket */
+    if (write_full(ctx->callback_ctx.socket_fd, buffer, encoded_len) != 0) {
+        fprintf(stderr, "[sd_wrapper] failed to write progress event: %s\n", strerror(errno));
+        return;
+    }
+}
+
+/**
+ * Preview callback for stable-diffusion.cpp.
+ *
+ * Called every preview_interval steps with a decoded preview image.
+ * Encodes and sends MSG_PREVIEW_EVENT to the socket.
+ *
+ * @param step        Current step (1-based)
+ * @param frame_count Number of preview frames (should be 1)
+ * @param frames      Preview image array
+ * @param is_noisy    Whether preview is noisy (unused)
+ * @param data        Callback context (sd_wrapper_ctx_t*)
+ */
+static void sd_wrapper_preview_callback(int step, int frame_count,
+                                         sd_image_t* frames, bool is_noisy, void* data) {
+    (void)is_noisy; /* Unused */
+
+    sd_wrapper_ctx_t* ctx = (sd_wrapper_ctx_t*)data;
+
+    if (ctx == NULL || !ctx->callbacks_enabled) {
+        return;
+    }
+
+    if (ctx->callback_ctx.socket_fd < 0) {
+        return;
+    }
+
+    if (frames == NULL || frame_count < 1) {
+        fprintf(stderr, "[sd_wrapper] preview callback called with no frames\n");
+        return;
+    }
+
+    /* Use first frame (stable-diffusion.cpp typically sends 1 frame) */
+    sd_image_t* frame = &frames[0];
+
+    if (frame->data == NULL) {
+        fprintf(stderr, "[sd_wrapper] preview frame has no data\n");
+        return;
+    }
+
+    /* Calculate image data size */
+    size_t image_data_len = (size_t)frame->width * frame->height * frame->channel;
+
+    /* Validate size fits in uint32_t (protocol constraint) */
+    if (image_data_len > UINT32_MAX) {
+        fprintf(stderr, "[sd_wrapper] preview image too large: %zu bytes\n", image_data_len);
+        return;
+    }
+
+    /* Build preview event */
+    sd35_preview_event_t event;
+    event.request_id = ctx->callback_ctx.request_id;
+    event.step = (uint32_t)step;
+    event.total_steps = ctx->callback_ctx.total_steps;
+    event.width = frame->width;
+    event.height = frame->height;
+    event.channels = frame->channel;
+    event.image_data_len = (uint32_t)image_data_len;
+    event.image_data = frame->data;
+
+    /*
+     * Allocate buffer for encoded event.
+     * Size = header (16) + metadata (32) + image data.
+     * Preview images can be large (e.g., 1024x1024 RGB = 3MB).
+     */
+    size_t buffer_size = 16 + 32 + image_data_len;
+    uint8_t* buffer = malloc(buffer_size);
+    if (buffer == NULL) {
+        fprintf(stderr, "[sd_wrapper] failed to allocate preview buffer (%zu bytes)\n", buffer_size);
+        return;
+    }
+
+    size_t encoded_len;
+    error_code_t err = encode_preview_event(&event, buffer, buffer_size, &encoded_len);
+    if (err != ERR_NONE) {
+        fprintf(stderr, "[sd_wrapper] failed to encode preview event: %d\n", err);
+        free(buffer);
+        return;
+    }
+
+    /* Write to socket */
+    if (write_full(ctx->callback_ctx.socket_fd, buffer, encoded_len) != 0) {
+        fprintf(stderr, "[sd_wrapper] failed to write preview event: %s\n", strerror(errno));
+        free(buffer);
+        return;
+    }
+
+    free(buffer);
 }
 
 /**

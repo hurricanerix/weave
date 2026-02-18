@@ -20,6 +20,10 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  * Protocol Constants
  */
@@ -96,6 +100,8 @@
 typedef enum {
     MSG_GENERATE_REQUEST  = 0x0001,  /**< Generation request */
     MSG_GENERATE_RESPONSE = 0x0002,  /**< Generation response (success) */
+    MSG_PROGRESS_EVENT    = 0x0003,  /**< Progress update (per step) */
+    MSG_PREVIEW_EVENT     = 0x0004,  /**< Preview image (every N steps) */
     MSG_ERROR             = 0x00FF,  /**< Error response */
 } message_type_t;
 
@@ -197,6 +203,9 @@ typedef struct {
     /* Prompt data (not owned by this struct, points into received buffer) */
     const uint8_t *prompt_data;  /**< Pointer to prompt data buffer */
     size_t prompt_data_len;      /**< Total size of prompt_data buffer */
+
+    /* Preview configuration */
+    uint32_t preview_interval;   /**< Preview every N steps (0 = no previews) */
 } sd35_generate_request_t;
 
 /**
@@ -255,6 +264,52 @@ typedef struct {
 } error_response_t;
 
 /**
+ * SD 3.5 Progress Event
+ *
+ * In-memory representation of a progress update sent during generation.
+ * One event is sent per denoising step.
+ *
+ * Wire format payload structure (after common header with msg_type = MSG_PROGRESS_EVENT):
+ * - request_id: 8 bytes (uint64)
+ * - step: 4 bytes (uint32, 1-based)
+ * - total_steps: 4 bytes (uint32)
+ * - step_time_ms: 4 bytes (uint32)
+ */
+typedef struct {
+    uint64_t request_id;    /**< Request ID (echoed from request) */
+    uint32_t step;          /**< Current denoising step (1-based) */
+    uint32_t total_steps;   /**< Total number of denoising steps */
+    uint32_t step_time_ms;  /**< Time taken for this step in milliseconds */
+} sd35_progress_event_t;
+
+/**
+ * SD 3.5 Preview Event
+ *
+ * In-memory representation of a preview image sent during generation.
+ * Sent every preview_interval steps using projection-based decoding.
+ *
+ * Wire format payload structure (after common header with msg_type = MSG_PREVIEW_EVENT):
+ * - request_id: 8 bytes (uint64)
+ * - step: 4 bytes (uint32, 1-based)
+ * - total_steps: 4 bytes (uint32)
+ * - width: 4 bytes (uint32)
+ * - height: 4 bytes (uint32)
+ * - channels: 4 bytes (uint32, 3=RGB or 4=RGBA)
+ * - image_data_len: 4 bytes (uint32)
+ * - image_data: variable bytes (raw pixel data)
+ */
+typedef struct {
+    uint64_t request_id;     /**< Request ID (echoed from request) */
+    uint32_t step;           /**< Current denoising step (1-based) */
+    uint32_t total_steps;    /**< Total number of denoising steps */
+    uint32_t width;          /**< Preview image width */
+    uint32_t height;         /**< Preview image height */
+    uint32_t channels;       /**< Number of channels (3=RGB, 4=RGBA) */
+    uint32_t image_data_len; /**< Size of image data in bytes */
+    const uint8_t *image_data; /**< Pointer to raw pixel data */
+} sd35_preview_event_t;
+
+/**
  * Encoding and Decoding Functions
  */
 
@@ -294,3 +349,33 @@ error_code_t encode_generate_response(const sd35_generate_response_t *resp,
 error_code_t encode_error_response(const error_response_t *resp,
                                    uint8_t *buffer, size_t buf_size,
                                    size_t *out_len);
+
+/**
+ * encode_progress_event - Encode a progress event message
+ *
+ * @param event    Progress event structure to encode
+ * @param buffer   Output buffer for encoded message
+ * @param buf_size Size of output buffer in bytes
+ * @param out_len  Pointer to store actual encoded length
+ * @return         ERR_NONE on success, ERR_INTERNAL on failure
+ */
+error_code_t encode_progress_event(const sd35_progress_event_t *event,
+                                   uint8_t *buffer, size_t buf_size,
+                                   size_t *out_len);
+
+/**
+ * encode_preview_event - Encode a preview event message
+ *
+ * @param event    Preview event structure to encode
+ * @param buffer   Output buffer for encoded message
+ * @param buf_size Size of output buffer in bytes
+ * @param out_len  Pointer to store actual encoded length
+ * @return         ERR_NONE on success, ERR_INTERNAL on failure
+ */
+error_code_t encode_preview_event(const sd35_preview_event_t *event,
+                                  uint8_t *buffer, size_t buf_size,
+                                  size_t *out_len);
+
+#ifdef __cplusplus
+}
+#endif

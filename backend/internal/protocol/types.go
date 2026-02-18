@@ -17,6 +17,8 @@ const (
 const (
 	MsgGenerateRequest  uint16 = 0x0001
 	MsgGenerateResponse uint16 = 0x0002
+	MsgProgressEvent    uint16 = 0x0003
+	MsgPreviewEvent     uint16 = 0x0004
 	MsgError            uint16 = 0x00FF
 )
 
@@ -100,6 +102,28 @@ type ErrorResponse struct {
 	ErrorMessage string // Human-readable error description (UTF-8)
 }
 
+// SD35ProgressEvent represents a progress update during generation.
+type SD35ProgressEvent struct {
+	Header     Header
+	RequestID  uint64 // Echoed from request
+	Step       uint32 // Current denoising step (1-based)
+	TotalSteps uint32 // Total number of denoising steps
+	StepTimeMs uint32 // Time taken for this step in milliseconds
+}
+
+// SD35PreviewEvent represents a preview image during generation.
+type SD35PreviewEvent struct {
+	Header       Header
+	RequestID    uint64 // Echoed from request
+	Step         uint32 // Current denoising step (1-based)
+	TotalSteps   uint32 // Total number of denoising steps
+	ImageWidth   uint32 // Preview image width
+	ImageHeight  uint32 // Preview image height
+	Channels     uint32 // Number of channels (3=RGB, 4=RGBA)
+	ImageDataLen uint32 // Size of image data in bytes
+	ImageData    []byte // Raw RGB/RGBA pixel data
+}
+
 // SD35GenerateRequest represents a Stable Diffusion 3.5 generation request.
 // This includes the common request fields plus SD35-specific parameters.
 type SD35GenerateRequest struct {
@@ -122,6 +146,9 @@ type SD35GenerateRequest struct {
 
 	// Prompt data (contains all three prompts)
 	PromptData []byte
+
+	// Preview configuration
+	PreviewInterval uint32 // Preview interval (0 = no previews, N = preview every N steps)
 }
 
 // SD35GenerateResponse represents a successful SD 3.5 generation response.

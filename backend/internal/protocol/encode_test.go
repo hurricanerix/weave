@@ -500,7 +500,7 @@ func TestEncodeSD35GenerateRequest_ByteFormat(t *testing.T) {
 
 	var payloadLen uint32
 	binary.Read(buf, binary.BigEndian, &payloadLen)
-	expectedPayloadLen := uint32(12 + 48 + 42) // common fields + SD35 params + prompt data
+	expectedPayloadLen := uint32(12 + 48 + 42 + 4) // common fields + SD35 params + prompt data + preview_interval
 	if payloadLen != expectedPayloadLen {
 		t.Errorf("payload_len = %d, want %d", payloadLen, expectedPayloadLen)
 	}
@@ -746,6 +746,68 @@ func TestNewSD35GenerateRequest(t *testing.T) {
 	}
 }
 
+func TestEncodeSD35GenerateRequest_PreviewInterval(t *testing.T) {
+	tests := []struct {
+		name            string
+		previewInterval uint32
+	}{
+		{name: "interval 0 (disabled)", previewInterval: 0},
+		{name: "interval 5 (default)", previewInterval: 5},
+		{name: "interval 10", previewInterval: 10},
+		{name: "interval 1 (every step)", previewInterval: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &SD35GenerateRequest{
+				GenerateRequest: GenerateRequest{
+					RequestID: 1,
+					ModelID:   ModelIDSD35,
+				},
+				Width:           512,
+				Height:          512,
+				Steps:           28,
+				CFGScale:        7.0,
+				Seed:            0,
+				CLIPLOffset:     0,
+				CLIPLLength:     4,
+				CLIPGOffset:     4,
+				CLIPGLength:     4,
+				T5Offset:        8,
+				T5Length:        4,
+				PromptData:      []byte("testtesttest"),
+				PreviewInterval: tt.previewInterval,
+			}
+
+			data, err := EncodeSD35GenerateRequest(req)
+			if err != nil {
+				t.Fatalf("encoding failed: %v", err)
+			}
+
+			// preview_interval is the last 4 bytes of the message
+			piOffset := len(data) - 4
+			buf := bytes.NewReader(data[piOffset:])
+			var gotInterval uint32
+			binary.Read(buf, binary.BigEndian, &gotInterval)
+
+			if gotInterval != tt.previewInterval {
+				t.Errorf("preview_interval = %d, want %d", gotInterval, tt.previewInterval)
+			}
+
+			// Verify payload_len includes the extra 4 bytes
+			payloadLenBuf := bytes.NewReader(data[8:12])
+			var payloadLen uint32
+			binary.Read(payloadLenBuf, binary.BigEndian, &payloadLen)
+
+			// Expected: 12 (common) + 48 (SD35 params) + 12 (prompt data) + 4 (preview_interval)
+			expectedPayloadLen := uint32(12 + 48 + 12 + 4)
+			if payloadLen != expectedPayloadLen {
+				t.Errorf("payload_len = %d, want %d", payloadLen, expectedPayloadLen)
+			}
+		})
+	}
+}
+
 func TestEncodeSD35GenerateRequest_HexDump(t *testing.T) {
 	// Test against hex dump example from SPEC_SD35.md
 	// Generate 512x512 image with prompt "a cat in space", 28 steps, CFG 7.0, random seed
@@ -775,9 +837,9 @@ func TestEncodeSD35GenerateRequest_HexDump(t *testing.T) {
 		t.Errorf("msg_type bytes incorrect: got %02X, want 00 01", data[6:8])
 	}
 
-	// Offset 0008: payload_len = 00 00 00 66 (102 bytes)
-	if !bytes.Equal(data[8:12], []byte{0x00, 0x00, 0x00, 0x66}) {
-		t.Errorf("payload_len bytes incorrect: got %02X, want 00 00 00 66", data[8:12])
+	// Offset 0008: payload_len = 00 00 00 6A (106 bytes = 102 + 4 for preview_interval)
+	if !bytes.Equal(data[8:12], []byte{0x00, 0x00, 0x00, 0x6A}) {
+		t.Errorf("payload_len bytes incorrect: got %02X, want 00 00 00 6A", data[8:12])
 	}
 
 	// Offset 001C: width = 00 00 02 00 (512)
@@ -814,8 +876,13 @@ func TestEncodeSD35GenerateRequest_HexDump(t *testing.T) {
 		t.Errorf("T5 prompt incorrect: got %q, want %q", data[promptStart+28:promptStart+42], expectedPrompt)
 	}
 
-	// Total message size = 118 bytes
-	if len(data) != 118 {
-		t.Errorf("total message size = %d bytes, want 118", len(data))
+	// Total message size = 122 bytes (118 + 4 for preview_interval)
+	if len(data) != 122 {
+		t.Errorf("total message size = %d bytes, want 122", len(data))
+	}
+
+	// Verify preview_interval is 0 (last 4 bytes, default value)
+	if !bytes.Equal(data[118:122], []byte{0x00, 0x00, 0x00, 0x00}) {
+		t.Errorf("preview_interval bytes incorrect: got %02X, want 00 00 00 00", data[118:122])
 	}
 }

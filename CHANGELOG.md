@@ -7,6 +7,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased]
 
 ### Added
+- Progressive generation previews: real-time progress bar and preview images during generation, streaming protocol events, projection-based preview decoding (Story 029)
 - Enhanced visual feedback for two-stage generation: mist animation in preview area, expanded thinking bubble state, smooth transitions between generation phases (Story 028)
 - Conversation state timeline: per-message snapshots, session persistence, preview bubbles with placeholder/mist/image states, click to load historical state (Story 026)
 - Flatpak packaging for Linux desktop distribution (Story 022)

@@ -71,6 +71,13 @@ sd_wrapper_error_t sd_wrapper_reset(sd_wrapper_ctx_t* ctx) {
     return SD_WRAPPER_OK;
 }
 
+sd_wrapper_error_t sd_wrapper_set_callback_ctx(sd_wrapper_ctx_t* ctx,
+                                                 const sd_wrapper_callback_ctx_t* callback_ctx) {
+    (void)ctx;  /* Unused in mock */
+    (void)callback_ctx;  /* Unused in mock */
+    return SD_WRAPPER_OK;
+}
+
 /**
  * Test helpers
  */
@@ -119,7 +126,8 @@ void test_process_valid_request(void) {
     sd35_generate_response_t resp;
     memset(&resp, 0, sizeof(resp));
 
-    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, &req, &resp);
+    /* Use -1 as dummy socket fd (callbacks not used in this test) */
+    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, -1, &req, &resp);
 
     assert(err == ERR_NONE);
     assert(resp.request_id == req.request_id);
@@ -141,7 +149,8 @@ void test_null_context(void) {
     sd35_generate_request_t req = create_valid_request();
     sd35_generate_response_t resp;
 
-    error_code_t err = process_generate_request(NULL, &req, &resp);
+    /* Use -1 as dummy socket fd (callbacks not used in this test) */
+    error_code_t err = process_generate_request(NULL, -1, &req, &resp);
 
     assert(err == ERR_INTERNAL);
 
@@ -152,7 +161,7 @@ void test_null_request(void) {
     reset_mock();
     sd35_generate_response_t resp;
 
-    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, NULL, &resp);
+    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, -1, NULL, &resp);
 
     assert(err == ERR_INTERNAL);
 
@@ -163,7 +172,7 @@ void test_null_response(void) {
     reset_mock();
     sd35_generate_request_t req = create_valid_request();
 
-    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, &req, NULL);
+    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, -1, &req, NULL);
 
     assert(err == ERR_INTERNAL);
 
@@ -177,7 +186,7 @@ void test_invalid_prompt_null_data(void) {
     req.prompt_data = NULL;
     sd35_generate_response_t resp;
 
-    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, &req, &resp);
+    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, -1, &req, &resp);
 
     assert(err == ERR_INVALID_PROMPT);
 
@@ -191,7 +200,7 @@ void test_invalid_prompt_zero_length(void) {
     req.clip_l_length = 0;
     sd35_generate_response_t resp;
 
-    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, &req, &resp);
+    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, -1, &req, &resp);
 
     assert(err == ERR_INVALID_PROMPT);
 
@@ -205,7 +214,7 @@ void test_invalid_prompt_too_long(void) {
     req.clip_l_length = SD35_MAX_PROMPT_LENGTH + 1;
     sd35_generate_response_t resp;
 
-    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, &req, &resp);
+    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, -1, &req, &resp);
 
     assert(err == ERR_INVALID_PROMPT);
 
@@ -219,7 +228,7 @@ void test_invalid_prompt_out_of_bounds(void) {
     req.clip_l_offset = req.prompt_data_len;
     sd35_generate_response_t resp;
 
-    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, &req, &resp);
+    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, -1, &req, &resp);
 
     assert(err == ERR_INVALID_PROMPT);
 
@@ -233,7 +242,7 @@ void test_sd_wrapper_invalid_param_error(void) {
     sd35_generate_request_t req = create_valid_request();
     sd35_generate_response_t resp;
 
-    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, &req, &resp);
+    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, -1, &req, &resp);
 
     assert(err == ERR_INVALID_PROMPT);
 
@@ -247,7 +256,7 @@ void test_sd_wrapper_out_of_memory_error(void) {
     sd35_generate_request_t req = create_valid_request();
     sd35_generate_response_t resp;
 
-    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, &req, &resp);
+    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, -1, &req, &resp);
 
     assert(err == ERR_OUT_OF_MEMORY);
 
@@ -261,7 +270,7 @@ void test_sd_wrapper_gpu_error(void) {
     sd35_generate_request_t req = create_valid_request();
     sd35_generate_response_t resp;
 
-    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, &req, &resp);
+    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, -1, &req, &resp);
 
     assert(err == ERR_GPU_ERROR);
 
@@ -275,7 +284,7 @@ void test_sd_wrapper_model_not_found_error(void) {
     sd35_generate_request_t req = create_valid_request();
     sd35_generate_response_t resp;
 
-    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, &req, &resp);
+    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, -1, &req, &resp);
 
     assert(err == ERR_INTERNAL);
 
@@ -289,7 +298,7 @@ void test_sd_wrapper_generation_failed_error(void) {
     sd35_generate_request_t req = create_valid_request();
     sd35_generate_response_t resp;
 
-    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, &req, &resp);
+    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, -1, &req, &resp);
 
     assert(err == ERR_INTERNAL);
 
@@ -308,7 +317,7 @@ void test_parameter_conversion(void) {
 
     sd35_generate_response_t resp;
 
-    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, &req, &resp);
+    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, -1, &req, &resp);
 
     assert(err == ERR_NONE);
     assert(mock_ctx.last_params.width == 1024);
@@ -330,7 +339,7 @@ void test_generation_time_tracking(void) {
     sd35_generate_request_t req = create_valid_request();
     sd35_generate_response_t resp;
 
-    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, &req, &resp);
+    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, -1, &req, &resp);
 
     assert(err == ERR_NONE);
 
@@ -360,7 +369,7 @@ void test_double_free_response(void) {
     sd35_generate_request_t req = create_valid_request();
     sd35_generate_response_t resp;
 
-    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, &req, &resp);
+    error_code_t err = process_generate_request((sd_wrapper_ctx_t*)&mock_ctx, -1, &req, &resp);
     assert(err == ERR_NONE);
 
     free_generate_response(&resp);

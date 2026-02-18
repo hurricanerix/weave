@@ -45,8 +45,9 @@ After the common request fields (header + request_id + model_id), the SD 3.5 pay
 │ 40     │ 4    │ uint32  │ t5_offset                  │
 │ 44     │ 4    │ uint32  │ t5_length                  │
 │ 48     │ var  │ bytes   │ prompt_data                │
+│ 48+N   │ 4    │ uint32  │ preview_interval (optional)│
 └────────┴──────┴─────────┴────────────────────────────┘
-Total: 48 bytes + prompt_data length
+Total: 48 bytes + prompt_data length + 4 bytes (preview_interval)
 ```
 
 ### Generation Parameters
@@ -120,6 +121,22 @@ Random seed for reproducible generation.
 - If seed > 0: Daemon uses the provided seed exactly. The same seed with identical parameters will produce identical output.
 
 **Future enhancement:** A future protocol version may add an `actual_seed` field to the response to enable reproducibility even when seed=0 is requested.
+
+#### preview_interval
+
+Controls how often preview images are sent during generation.
+
+**Constraints:**
+- Type: uint32
+- Range: 0 to total_steps
+- Special value: 0 = no previews (default)
+- Typical value: 5
+
+**Behavior:**
+- If preview_interval = 0: No preview events are sent during generation
+- If preview_interval > 0: A preview is sent at step 1 and then every N steps
+
+**Backward compatibility:** This field is optional. If absent (old encoder), the decoder defaults to 0 (no previews). The field is appended after prompt_data as trailing bytes.
 
 ### Prompt Offset Table
 
@@ -339,6 +356,73 @@ uint8_t blue  = image_data[offset + 2];
 ```
 
 **No stride/padding:** Each scanline is tightly packed. No alignment padding between rows.
+
+## Progress Event (MSG_PROGRESS_EVENT = 0x0003)
+
+Sent by compute during generation, once per denoising step. Provides real-time step progress.
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Offset │ Size │ Type    │ Field                      │
+├────────┼──────┼─────────┼────────────────────────────┤
+│ 0      │ 8    │ uint64  │ request_id                 │
+│ 8      │ 4    │ uint32  │ step (1-based)             │
+│ 12     │ 4    │ uint32  │ total_steps                │
+│ 16     │ 4    │ uint32  │ step_time_ms               │
+└────────┴──────┴─────────┴────────────────────────────┘
+Total payload: 20 bytes
+```
+
+### Fields
+
+- **request_id**: Echoed from the generation request
+- **step**: Current denoising step (1-based, 1 to total_steps)
+- **total_steps**: Total number of denoising steps in this generation
+- **step_time_ms**: Wall-clock time for this step in milliseconds
+
+## Preview Event (MSG_PREVIEW_EVENT = 0x0004)
+
+Sent by compute during generation every `preview_interval` steps. Contains a low-quality preview image decoded using projection-based decoding (PREVIEW_PROJ).
+
+```
+┌─────────────────────────────────────────────────────┐
+│ Offset │ Size │ Type    │ Field                      │
+├────────┼──────┼─────────┼────────────────────────────┤
+│ 0      │ 8    │ uint64  │ request_id                 │
+│ 8      │ 4    │ uint32  │ step (1-based)             │
+│ 12     │ 4    │ uint32  │ total_steps                │
+│ 16     │ 4    │ uint32  │ width                      │
+│ 20     │ 4    │ uint32  │ height                     │
+│ 24     │ 4    │ uint32  │ channels                   │
+│ 28     │ 4    │ uint32  │ image_data_len             │
+│ 32     │ var  │ bytes   │ image_data                 │
+└────────┴──────┴─────────┴────────────────────────────┘
+Total payload: 32 bytes + image_data_len
+```
+
+### Fields
+
+- **request_id**: Echoed from the generation request
+- **step**: Current denoising step when preview was captured
+- **total_steps**: Total number of denoising steps
+- **width, height**: Preview image dimensions (matches request dimensions)
+- **channels**: 3 (RGB) or 4 (RGBA)
+- **image_data_len**: Must equal width * height * channels
+- **image_data**: Raw pixel data in scanline order (same format as generation response)
+
+### Preview interval
+
+The `preview_interval` field in the generation request controls how often preview events are sent:
+- 0 = no previews
+- N = send a preview every N steps (e.g., 5 = steps 1, 5, 10, 15, 20, 25)
+
+Preview at step 1 is always sent when preview_interval > 0. Subsequent previews follow the interval.
+
+### Backward compatibility
+
+Both new message types are forward-compatible. Old decoders that do not recognize MSG_PROGRESS_EVENT or MSG_PREVIEW_EVENT can skip them by reading the payload_len from the header and discarding the payload.
+
+The `preview_interval` field is appended after prompt_data in the generation request. Old decoders that do not read this field will ignore the trailing 4 bytes.
 
 ## Example Request
 

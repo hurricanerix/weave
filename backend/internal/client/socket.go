@@ -39,6 +39,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/hurricanerix/weave/internal/protocol"
 )
 
 const (
@@ -221,6 +223,9 @@ func (c *Conn) RawConn() net.Conn {
 //
 // The reader extracts the request ID from each response header (bytes 16-23)
 // and delivers the response to the corresponding channel in pendingRequests.
+// For streaming responses (progress and preview events), multiple messages are
+// delivered to the same channel. The channel is only closed when a final message
+// (MsgGenerateResponse or MsgError) arrives.
 func (c *Conn) responseReader() {
 	defer close(c.readerDone)
 
@@ -283,19 +288,35 @@ func (c *Conn) responseReader() {
 		}
 		requestID := binary.LittleEndian.Uint64(response[16:24])
 
+		// Extract message type from header (bytes 6-7, big-endian)
+		msgType := binary.BigEndian.Uint16(header[6:8])
+
+		// Determine if this is a final message (closes the stream)
+		isFinalMessage := (msgType == protocol.MsgGenerateResponse) || (msgType == protocol.MsgError)
+
 		// Route response to the correct pending request
 		c.mu.Lock()
 		ch, ok := c.pendingRequests[requestID]
 		if ok {
-			delete(c.pendingRequests, requestID)
+			// Only delete from pending requests if this is a final message
+			if isFinalMessage {
+				delete(c.pendingRequests, requestID)
+			}
 			c.mu.Unlock()
 
 			// Send response to waiting goroutine
 			// Use non-blocking send in case the receiver has timed out
 			select {
 			case ch <- response:
+				// If this was the final message, close the channel
+				if isFinalMessage {
+					close(ch)
+				}
 			default:
-				// Receiver already timed out - discard response
+				// Receiver already timed out or channel buffer full - discard response
+				if isFinalMessage {
+					close(ch)
+				}
 			}
 		} else {
 			c.mu.Unlock()
@@ -305,14 +326,59 @@ func (c *Conn) responseReader() {
 	}
 }
 
+// SendStream sends a protocol message to the compute process and returns a channel
+// that receives all response messages for this request ID.
+//
+// This method is used for streaming responses (progress events, preview events, etc.).
+// The returned channel will receive messages in order:
+// - MsgProgressEvent (0x0003) - progress updates during generation
+// - MsgPreviewEvent (0x0004) - preview images during generation
+// - MsgGenerateResponse (0x0002) - final response (closes channel)
+// - MsgError (0x00FF) - error response (closes channel)
+//
+// The channel is closed when a final message (MsgGenerateResponse or MsgError) arrives,
+// or when the context is cancelled, or when a timeout occurs.
+//
+// Multiple goroutines can call SendStream() concurrently on multiplexed connections.
+//
+// For non-multiplexed connections (created via Connect), this method falls back
+// to the legacy single-response behavior.
+//
+// Returns a channel receiving response messages, or an error if the send fails.
+func (c *Conn) SendStream(ctx context.Context, request []byte) (<-chan []byte, error) {
+	if c.conn == nil {
+		return nil, errors.New("connection is nil")
+	}
+
+	// Check if context is already cancelled
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	// Check if this is a multiplexed connection
+	if c.pendingRequests != nil {
+		return c.sendStreamMultiplexed(ctx, request)
+	}
+
+	// Non-multiplexed connection (legacy behavior)
+	// Create a channel, send the single response, and close it
+	responseCh := make(chan []byte, 1)
+	response, err := c.sendDirect(ctx, request)
+	if err != nil {
+		close(responseCh)
+		return nil, err
+	}
+	responseCh <- response
+	close(responseCh)
+	return responseCh, nil
+}
+
 // Send sends a protocol message to the compute process and reads the response.
 //
 // For multiplexed connections (created via AcceptConnection), this method:
-// - Extracts the request ID from the request
-// - Registers a response channel for this request ID
-// - Writes the request to the socket
-// - Waits for the response reader to deliver the response
-// - Returns the response or error
+// - Calls SendStream() internally to get the message stream
+// - Returns only the final response (MsgGenerateResponse or MsgError)
+// - Discards intermediate messages (MsgProgressEvent, MsgPreviewEvent)
 //
 // For non-multiplexed connections (created via Connect), this method:
 // - Writes the request to the socket
@@ -322,7 +388,7 @@ func (c *Conn) responseReader() {
 // Multiple goroutines can call Send() concurrently on multiplexed connections.
 // Responses are routed back to the correct caller based on request ID.
 //
-// Returns the response bytes or an error if the send/receive fails.
+// Returns the final response bytes or an error if the send/receive fails.
 func (c *Conn) Send(ctx context.Context, request []byte) ([]byte, error) {
 	if c.conn == nil {
 		return nil, errors.New("connection is nil")
@@ -335,17 +401,41 @@ func (c *Conn) Send(ctx context.Context, request []byte) ([]byte, error) {
 
 	// Check if this is a multiplexed connection
 	if c.pendingRequests != nil {
-		return c.sendMultiplexed(ctx, request)
+		// Use streaming API and return only the final message
+		stream, err := c.sendStreamMultiplexed(ctx, request)
+		if err != nil {
+			return nil, err
+		}
+
+		// Consume all messages, return the last one
+		var lastMsg []byte
+		for msg := range stream {
+			lastMsg = msg
+		}
+
+		if lastMsg == nil {
+			// Channel closed without any messages - likely an error
+			c.mu.Lock()
+			err := c.readerErr
+			c.mu.Unlock()
+			if err != nil {
+				return nil, err
+			}
+			return nil, ErrConnectionClosed
+		}
+
+		return lastMsg, nil
 	}
 
 	// Non-multiplexed connection (legacy behavior)
 	return c.sendDirect(ctx, request)
 }
 
-// sendMultiplexed sends a request over a multiplexed connection.
-// It extracts the request ID, registers a response channel, and waits for
-// the response reader to deliver the response.
-func (c *Conn) sendMultiplexed(ctx context.Context, request []byte) ([]byte, error) {
+// sendStreamMultiplexed sends a request over a multiplexed connection and returns
+// a channel that receives all response messages for this request.
+// It extracts the request ID, registers a response channel, writes the request,
+// and returns the channel. The caller should read from the channel until it closes.
+func (c *Conn) sendStreamMultiplexed(ctx context.Context, request []byte) (<-chan []byte, error) {
 	// Extract request ID from request (bytes 16-23, little-endian)
 	// Protocol: Header (16 bytes) + RequestID (8 bytes) + ...
 	if len(request) < 24 {
@@ -353,8 +443,11 @@ func (c *Conn) sendMultiplexed(ctx context.Context, request []byte) ([]byte, err
 	}
 	requestID := binary.LittleEndian.Uint64(request[16:24])
 
-	// Create response channel for this request
-	responseCh := make(chan []byte, 1)
+	// Create response channel for this request.
+	// Buffer size of 50 handles a 28-step generation with preview_interval=5:
+	// 28 progress + 6 previews + 1 final = 35 messages, with headroom.
+	// Caller should read from the channel promptly to avoid blocking the response reader.
+	responseCh := make(chan []byte, 50)
 
 	// Register pending request
 	c.mu.Lock()
@@ -362,6 +455,7 @@ func (c *Conn) sendMultiplexed(ctx context.Context, request []byte) ([]byte, err
 	select {
 	case <-c.readerDone:
 		c.mu.Unlock()
+		close(responseCh)
 		if c.readerErr != nil {
 			return nil, c.readerErr
 		}
@@ -378,65 +472,62 @@ func (c *Conn) sendMultiplexed(ctx context.Context, request []byte) ([]byte, err
 		c.mu.Lock()
 		delete(c.pendingRequests, requestID)
 		c.mu.Unlock()
+		close(responseCh)
 		return nil, fmt.Errorf("failed to write request: %w", err)
 	}
 
-	// Wait for response or timeout
-	// Calculate timeout duration, checking for already-cancelled context
-	timeout := readTimeout
-	if ctxDeadline, ok := ctx.Deadline(); ok {
-		remaining := time.Until(ctxDeadline)
-		if remaining <= 0 {
-			// Context already expired
-			c.mu.Lock()
-			delete(c.pendingRequests, requestID)
-			c.mu.Unlock()
-			return nil, ctx.Err()
-		}
-		timeout = remaining
-	}
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		// Context cancelled - remove pending request
-		c.mu.Lock()
-		delete(c.pendingRequests, requestID)
-		c.mu.Unlock()
-		return nil, ctx.Err()
-
-	case <-timer.C:
-		// Timeout - remove pending request
-		c.mu.Lock()
-		delete(c.pendingRequests, requestID)
-		c.mu.Unlock()
-		return nil, ErrReadTimeout
-
-	case <-c.readerDone:
-		// Response reader died - return error
-		c.mu.Lock()
-		delete(c.pendingRequests, requestID)
-		err := c.readerErr
-		c.mu.Unlock()
-		if err != nil {
-			return nil, err
-		}
-		return nil, ErrReaderDead
-
-	case response, ok := <-responseCh:
-		if !ok {
-			// Channel closed by response reader due to error
-			c.mu.Lock()
-			err := c.readerErr
-			c.mu.Unlock()
-			if err != nil {
-				return nil, err
+	// Start a goroutine to monitor context cancellation and timeout
+	// This goroutine is responsible for cleaning up if the caller never reads from the channel
+	// or if a timeout/cancellation occurs before all messages are received
+	go func() {
+		// Calculate timeout duration, checking for already-cancelled context
+		timeout := readTimeout
+		if ctxDeadline, ok := ctx.Deadline(); ok {
+			remaining := time.Until(ctxDeadline)
+			if remaining <= 0 {
+				// Context already expired
+				c.mu.Lock()
+				ch, ok := c.pendingRequests[requestID]
+				if ok {
+					delete(c.pendingRequests, requestID)
+					close(ch)
+				}
+				c.mu.Unlock()
+				return
 			}
-			return nil, ErrConnectionClosed
+			timeout = remaining
 		}
-		return response, nil
-	}
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+
+		select {
+		case <-ctx.Done():
+			// Context cancelled - remove pending request and close channel
+			c.mu.Lock()
+			ch, ok := c.pendingRequests[requestID]
+			if ok {
+				delete(c.pendingRequests, requestID)
+				close(ch)
+			}
+			c.mu.Unlock()
+
+		case <-timer.C:
+			// Timeout - remove pending request and close channel
+			c.mu.Lock()
+			ch, ok := c.pendingRequests[requestID]
+			if ok {
+				delete(c.pendingRequests, requestID)
+				close(ch)
+			}
+			c.mu.Unlock()
+
+		case <-c.readerDone:
+			// Response reader died - channel already closed by reader
+			// Nothing to do here
+		}
+	}()
+
+	return responseCh, nil
 }
 
 // sendDirect sends a request over a non-multiplexed connection (legacy behavior).

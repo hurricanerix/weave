@@ -19,8 +19,9 @@ func EncodeSD35GenerateRequest(req *SD35GenerateRequest) ([]byte, error) {
 	// Common request fields: 12 bytes (request_id=8 + model_id=4)
 	// SD35 params: 48 bytes (width=4 + height=4 + steps=4 + cfg=4 + seed=8 + offset_table=24)
 	// Prompt data: 3 * len(prompt) bytes
+	// Preview interval: 4 bytes
 	promptLen := uint32(len(req.PromptData))
-	sd35PayloadSize := uint32(48 + promptLen)
+	sd35PayloadSize := uint32(48 + promptLen + 4) // +4 for preview_interval
 	payloadLen := 12 + sd35PayloadSize
 
 	// Check total message size
@@ -59,6 +60,9 @@ func EncodeSD35GenerateRequest(req *SD35GenerateRequest) ([]byte, error) {
 
 	// Prompt data (variable)
 	buf.Write(req.PromptData)
+
+	// Preview interval (4 bytes)
+	binary.Write(buf, binary.BigEndian, req.PreviewInterval)
 
 	return buf.Bytes(), nil
 }

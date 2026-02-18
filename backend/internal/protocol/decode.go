@@ -38,10 +38,14 @@ func DecodeResponse(data []byte) (interface{}, error) {
 	switch header.MsgType {
 	case MsgGenerateResponse:
 		return decodeGenerateResponse(header, data[16:16+header.PayloadLen])
+	case MsgProgressEvent:
+		return decodeProgressEvent(header, data[16:16+header.PayloadLen])
+	case MsgPreviewEvent:
+		return decodePreviewEvent(header, data[16:16+header.PayloadLen])
 	case MsgError:
 		return decodeErrorResponse(header, data[16:16+header.PayloadLen])
 	default:
-		return nil, fmt.Errorf("unexpected message type: 0x%04X (expected RESPONSE or ERROR)", header.MsgType)
+		return nil, fmt.Errorf("unexpected message type: 0x%04X (expected RESPONSE, PROGRESS, PREVIEW, or ERROR)", header.MsgType)
 	}
 }
 
@@ -233,4 +237,112 @@ func decodeErrorResponse(header Header, payload []byte) (*ErrorResponse, error) 
 	}
 
 	return &resp, nil
+}
+
+// decodeProgressEvent decodes a MSG_PROGRESS_EVENT payload.
+// Payload structure:
+//   - request_id (8 bytes)
+//   - step (4 bytes)
+//   - total_steps (4 bytes)
+//   - step_time_ms (4 bytes)
+func decodeProgressEvent(header Header, payload []byte) (*SD35ProgressEvent, error) {
+	// Payload: request_id (8) + step (4) + total_steps (4) + step_time_ms (4) = 20 bytes
+	if len(payload) < 20 {
+		return nil, fmt.Errorf("progress event payload too small: got %d bytes, need at least 20", len(payload))
+	}
+
+	buf := bytes.NewReader(payload)
+	var event SD35ProgressEvent
+	event.Header = header
+
+	if err := binary.Read(buf, binary.BigEndian, &event.RequestID); err != nil {
+		return nil, fmt.Errorf("failed to read request_id: %w", err)
+	}
+	if err := binary.Read(buf, binary.BigEndian, &event.Step); err != nil {
+		return nil, fmt.Errorf("failed to read step: %w", err)
+	}
+	if err := binary.Read(buf, binary.BigEndian, &event.TotalSteps); err != nil {
+		return nil, fmt.Errorf("failed to read total_steps: %w", err)
+	}
+	if err := binary.Read(buf, binary.BigEndian, &event.StepTimeMs); err != nil {
+		return nil, fmt.Errorf("failed to read step_time_ms: %w", err)
+	}
+
+	return &event, nil
+}
+
+// decodePreviewEvent decodes a MSG_PREVIEW_EVENT payload.
+// Payload structure:
+//   - request_id (8 bytes)
+//   - step (4 bytes)
+//   - total_steps (4 bytes)
+//   - width (4 bytes)
+//   - height (4 bytes)
+//   - channels (4 bytes)
+//   - image_data_len (4 bytes)
+//   - image_data (variable)
+func decodePreviewEvent(header Header, payload []byte) (*SD35PreviewEvent, error) {
+	// Minimum payload: request_id (8) + step (4) + total_steps (4) + image header (16) = 32 bytes
+	if len(payload) < 32 {
+		return nil, fmt.Errorf("preview event payload too small: got %d bytes, need at least 32", len(payload))
+	}
+
+	buf := bytes.NewReader(payload)
+	var event SD35PreviewEvent
+	event.Header = header
+
+	if err := binary.Read(buf, binary.BigEndian, &event.RequestID); err != nil {
+		return nil, fmt.Errorf("failed to read request_id: %w", err)
+	}
+	if err := binary.Read(buf, binary.BigEndian, &event.Step); err != nil {
+		return nil, fmt.Errorf("failed to read step: %w", err)
+	}
+	if err := binary.Read(buf, binary.BigEndian, &event.TotalSteps); err != nil {
+		return nil, fmt.Errorf("failed to read total_steps: %w", err)
+	}
+	if err := binary.Read(buf, binary.BigEndian, &event.ImageWidth); err != nil {
+		return nil, fmt.Errorf("failed to read width: %w", err)
+	}
+	if err := binary.Read(buf, binary.BigEndian, &event.ImageHeight); err != nil {
+		return nil, fmt.Errorf("failed to read height: %w", err)
+	}
+	if err := binary.Read(buf, binary.BigEndian, &event.Channels); err != nil {
+		return nil, fmt.Errorf("failed to read channels: %w", err)
+	}
+	if err := binary.Read(buf, binary.BigEndian, &event.ImageDataLen); err != nil {
+		return nil, fmt.Errorf("failed to read image_data_len: %w", err)
+	}
+
+	// Validate channels
+	if event.Channels != SD35ChannelsRGB && event.Channels != SD35ChannelsRGBA {
+		return nil, fmt.Errorf("invalid channels: got %d, expected %d (RGB) or %d (RGBA)",
+			event.Channels, SD35ChannelsRGB, SD35ChannelsRGBA)
+	}
+
+	// Validate image_data_len matches dimensions (with overflow check)
+	if event.ImageWidth > math.MaxUint32/event.ImageHeight {
+		return nil, fmt.Errorf("image dimensions too large: width * height would overflow")
+	}
+	if event.ImageWidth*event.ImageHeight > math.MaxUint32/event.Channels {
+		return nil, fmt.Errorf("image dimensions too large: width * height * channels would overflow")
+	}
+	expectedLen := event.ImageWidth * event.ImageHeight * event.Channels
+	if event.ImageDataLen != expectedLen {
+		return nil, fmt.Errorf("image_data_len mismatch: got %d, expected %d (width %d * height %d * channels %d)",
+			event.ImageDataLen, expectedLen, event.ImageWidth, event.ImageHeight, event.Channels)
+	}
+
+	// Validate we have enough bytes for image data
+	remaining := len(payload) - 32
+	if uint32(remaining) < event.ImageDataLen {
+		return nil, fmt.Errorf("truncated image data: got %d bytes, expected %d", remaining, event.ImageDataLen)
+	}
+
+	// Read image data
+	event.ImageData = make([]byte, event.ImageDataLen)
+	if _, err := io.ReadFull(buf, event.ImageData); err != nil {
+		return nil, fmt.Errorf("failed to read image data: %w", err)
+	}
+
+	return &event, nil
 }

@@ -179,6 +179,41 @@ sd_wrapper_error_t sd_wrapper_get_model_info(sd_wrapper_ctx_t* ctx,
  */
 sd_wrapper_error_t sd_wrapper_reset(sd_wrapper_ctx_t* ctx);
 
+/**
+ * Callback context for progress and preview events.
+ *
+ * This structure is passed to progress and preview callbacks during generation.
+ * It contains the socket fd and request metadata needed to send events.
+ */
+typedef struct {
+    int socket_fd;              /* Socket file descriptor for sending events */
+    uint64_t request_id;        /* Request ID to echo in events */
+    uint32_t preview_interval;  /* Preview every N steps (0 = no previews) */
+    uint32_t total_steps;       /* Total denoising steps for this generation */
+} sd_wrapper_callback_ctx_t;
+
+/**
+ * Set callback context for progress and preview events.
+ *
+ * This function configures the callbacks that will fire during generation.
+ * Must be called before sd_wrapper_generate() if progress/preview events
+ * are desired. If not called, generation proceeds without callbacks.
+ *
+ * The callbacks fire synchronously during generate_image() and send
+ * MSG_PROGRESS_EVENT and MSG_PREVIEW_EVENT messages to the socket.
+ *
+ * @param ctx          SD wrapper context (must not be NULL)
+ * @param callback_ctx Callback context with socket fd and request metadata,
+ *                     or NULL to disable callbacks
+ * @return             SD_WRAPPER_OK on success, error code on failure
+ *
+ * @note Callbacks are global in stable-diffusion.cpp, not per-context
+ * @note Safe because compute is single-threaded (one generation at a time)
+ * @note Callback writes are safe - they fire synchronously, no threading issues
+ */
+sd_wrapper_error_t sd_wrapper_set_callback_ctx(sd_wrapper_ctx_t* ctx,
+                                                 const sd_wrapper_callback_ctx_t* callback_ctx);
+
 #ifdef __cplusplus
 }
 #endif

@@ -24,9 +24,10 @@
  * This function orchestrates the complete generation pipeline:
  * 1. Validates protocol request parameters
  * 2. Converts protocol parameters to SD wrapper format
- * 3. Calls SD wrapper to generate image
- * 4. Builds protocol response with image data
- * 5. Maps errors to appropriate status codes
+ * 3. Sets up progress/preview callbacks if preview_interval > 0
+ * 4. Calls SD wrapper to generate image
+ * 5. Builds protocol response with image data
+ * 6. Maps errors to appropriate status codes
  *
  * Error mapping:
  * - Invalid dimensions/steps/cfg → STATUS_BAD_REQUEST (400)
@@ -34,17 +35,20 @@
  * - Model not loaded → STATUS_INTERNAL_SERVER_ERROR (500)
  * - GPU/OOM errors → STATUS_INTERNAL_SERVER_ERROR (500)
  *
- * @param ctx   SD wrapper context (must not be NULL, must be initialized)
- * @param req   Decoded protocol request (borrowed, not modified)
- * @param resp  Output response structure (populated on success)
- * @return      ERR_NONE on success, error code on failure
+ * @param ctx       SD wrapper context (must not be NULL, must be initialized)
+ * @param socket_fd Socket file descriptor for sending progress/preview events
+ * @param req       Decoded protocol request (borrowed, not modified)
+ * @param resp      Output response structure (populated on success)
+ * @return          ERR_NONE on success, error code on failure
  *
  * @note On success, resp->image_data is allocated and must be freed by caller
  * @note On failure, resp is unchanged (no cleanup needed)
  * @note req->prompt_data must remain valid during this call
  * @note This function is NOT thread-safe (ctx is single-threaded)
+ * @note Progress/preview events are sent during generation if preview_interval > 0
  */
 error_code_t process_generate_request(sd_wrapper_ctx_t *ctx,
+                                       int socket_fd,
                                        const sd35_generate_request_t *req,
                                        sd35_generate_response_t *resp);
 

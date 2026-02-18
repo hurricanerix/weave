@@ -14,6 +14,7 @@
 #define _POSIX_C_SOURCE 199309L
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -151,6 +152,7 @@ static uint64_t get_time_ms(void) {
 static bool generation_performed = false;
 
 error_code_t process_generate_request(sd_wrapper_ctx_t *ctx,
+                                       int socket_fd,
                                        const sd35_generate_request_t *req,
                                        sd35_generate_response_t *resp) {
     if (ctx == NULL || req == NULL || resp == NULL) {
@@ -165,6 +167,29 @@ error_code_t process_generate_request(sd_wrapper_ctx_t *ctx,
     err = convert_request_params(req, &params, prompt, sizeof(prompt));
     if (err != ERR_NONE) {
         return err;
+    }
+
+    /*
+     * Set up progress and preview callbacks if requested.
+     *
+     * preview_interval > 0 enables previews every N steps.
+     * Progress events are always sent when callbacks are enabled.
+     */
+    if (req->preview_interval > 0) {
+        sd_wrapper_callback_ctx_t callback_ctx;
+        callback_ctx.socket_fd = socket_fd;
+        callback_ctx.request_id = req->request_id;
+        callback_ctx.preview_interval = req->preview_interval;
+        callback_ctx.total_steps = req->steps;
+
+        sd_err = sd_wrapper_set_callback_ctx(ctx, &callback_ctx);
+        if (sd_err != SD_WRAPPER_OK) {
+            /* Non-fatal: continue without callbacks */
+            fprintf(stderr, "warning: failed to set callback context\n");
+        }
+    } else {
+        /* Disable callbacks */
+        sd_wrapper_set_callback_ctx(ctx, NULL);
     }
 
     /*

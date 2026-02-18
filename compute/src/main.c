@@ -459,7 +459,7 @@ static int handle_connection(int client_fd) {
 
     memset(&resp, 0, sizeof(resp));
 
-    err = process_generate_request(g_sd_ctx, &req, &resp);
+    err = process_generate_request(g_sd_ctx, client_fd, &req, &resp);
     if (err != ERR_NONE) {
         fprintf(stderr, "generation failed: %d\n", err);
         send_error_response(client_fd, req.request_id, err, "generation failed");

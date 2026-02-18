@@ -573,6 +573,43 @@ img {
   }
 }
 
+/* Preview state - show preview image without mist animation */
+.message-preview[data-status="preview"] img {
+  opacity: 1;
+}
+
+/* Progress bar - thin line at bottom edge of preview */
+.message-preview .progress-bar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  width: 0%;
+  background: var(--color-accent);
+  z-index: 20;
+  transition: width 0.15s ease-out;
+}
+
+/* Flash animation when generation completes */
+@keyframes progress-complete {
+  0% {
+    opacity: 1;
+    background: var(--color-text);
+  }
+  50% {
+    opacity: 1;
+    background: var(--color-accent);
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.message-preview .progress-bar.complete {
+  width: 100%;
+  animation: progress-complete 0.5s ease-out forwards;
+}
+
 /* Complete state - show image with fade in */
 .message-preview[data-status="complete"] img {
   opacity: 1;
@@ -2083,6 +2120,14 @@ img {
             // Update status attribute
             preview.setAttribute('data-status', status);
 
+            // Flash and fade progress bar on completion
+            if (status === 'complete') {
+                const progressBar = preview.querySelector('.progress-bar');
+                if (progressBar) {
+                    progressBar.classList.add('complete');
+                }
+            }
+
             // If complete and imageUrl provided, add/update image
             if (status === 'complete' && imageUrl) {
                 // Validate URL to prevent XSS
@@ -2342,6 +2387,12 @@ img {
                     break;
                 case 'generation-started':
                     handleGenerationStarted(data);
+                    break;
+                case 'generation-progress':
+                    handleGenerationProgress(data);
+                    break;
+                case 'generation-preview':
+                    handleGenerationPreview(data);
                     break;
                 case 'connected':
                     console.log('SSE connected:', data);
@@ -2649,6 +2700,11 @@ img {
                         previewDiv.className = 'message-preview';
                         previewDiv.setAttribute('data-status', 'generating');
 
+                        // Add progress bar element
+                        const progressBar = document.createElement('div');
+                        progressBar.className = 'progress-bar';
+                        previewDiv.appendChild(progressBar);
+
                         bubble.appendChild(previewDiv);
                         console.log('Preview created: status=generating, parent=', bubble.className);
                     } else if (bubble) {
@@ -2663,6 +2719,64 @@ img {
                 }
             } else {
                 showGeneratingIndicator();
+            }
+        }
+
+        // Handle generation progress: update progress bar
+        function handleGenerationProgress(data) {
+            if (data.message_id === undefined) return;
+            if (!data.total_steps || data.total_steps === 0) return;
+
+            const message = document.querySelector(`.message[data-message-id="${data.message_id}"]`);
+            if (!message) return;
+
+            const preview = message.querySelector('.message-preview');
+            if (!preview) return;
+
+            // Ensure progress bar exists (defensive: normally created in handleGenerationStarted)
+            let progressBar = preview.querySelector('.progress-bar');
+            if (!progressBar) {
+                progressBar = document.createElement('div');
+                progressBar.className = 'progress-bar';
+                preview.appendChild(progressBar);
+            }
+
+            // Update progress bar width
+            const percent = Math.min(100, (data.step / data.total_steps) * 100);
+            progressBar.style.width = percent + '%';
+        }
+
+        // Handle generation preview: display preview image
+        function handleGenerationPreview(data) {
+            if (data.message_id === undefined) return;
+
+            // Validate URL
+            if (!data.url || !isValidImageURL(data.url)) {
+                console.error('Invalid preview URL:', data.url);
+                return;
+            }
+
+            const message = document.querySelector(`.message[data-message-id="${data.message_id}"]`);
+            if (!message) return;
+
+            const preview = message.querySelector('.message-preview');
+            if (!preview) return;
+
+            // Switch from generating to preview state (replaces mist animation)
+            preview.setAttribute('data-status', 'preview');
+
+            // Set or update preview image
+            let img = preview.querySelector('img');
+            if (!img) {
+                img = document.createElement('img');
+                img.alt = 'Preview image';
+                preview.appendChild(img);
+            }
+            img.src = data.url;
+
+            // Update the image detail panel only if this is the active generation
+            if (activeMessageId === null || activeMessageId === data.message_id) {
+                showImageWithOverlay(data.url, 'Preview image');
             }
         }
 
