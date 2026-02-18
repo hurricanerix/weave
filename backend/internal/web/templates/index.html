@@ -942,14 +942,13 @@ img {
 }
 
 .chat-input-wrapper {
-  display: flex;
-  gap: var(--space-sm);
-  align-items: flex-end;
+  position: relative;
 }
 
 .chat-input {
-  flex: 1;
+  width: 100%;
   padding: var(--space-sm) var(--space-md);
+  padding-right: calc(32px + var(--space-sm) + var(--space-sm));
   background-color: var(--color-bg-tertiary);
   border: var(--border-width) solid var(--color-border);
   border-radius: var(--border-radius-lg);
@@ -971,15 +970,17 @@ img {
 }
 
 .chat-send {
-  width: 40px;
-  height: 40px;
+  position: absolute;
+  right: var(--space-sm);
+  bottom: var(--space-sm);
+  width: 28px;
+  height: 28px;
   background-color: var(--color-accent);
   border-radius: var(--border-radius);
   display: flex;
   align-items: center;
   justify-content: center;
   transition: background-color var(--transition-fast);
-  flex-shrink: 0;
 
   &:hover {
     background-color: var(--color-accent-hover);
@@ -991,8 +992,8 @@ img {
   }
 
   & svg {
-    width: 20px;
-    height: 20px;
+    width: 16px;
+    height: 16px;
     color: white;
   }
 }
@@ -3110,6 +3111,17 @@ img {
             const chatForm = document.getElementById('chat-form');
             if (chatForm) {
                 chatForm.addEventListener('htmx:beforeRequest', handleChatSubmit);
+            }
+
+            // Enter sends message, Shift+Enter inserts newline
+            const chatInput = document.getElementById('chat-input');
+            if (chatInput) {
+                chatInput.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        if (chatForm) chatForm.requestSubmit();
+                    }
+                });
             }
 
             // Handle generate button click
