@@ -1184,7 +1184,8 @@ func (s *Server) generateImage(ctx context.Context, sessionID string, prompt str
 			}
 
 			// Send preview event via SSE with URL pointing to tmp file
-			previewURL := fmt.Sprintf("/tmp/%s", previewFilename)
+			// Include step number as cache-buster so the browser re-fetches each update
+			previewURL := fmt.Sprintf("/tmp/%s?step=%d", previewFilename, resp.Step)
 			_ = s.broker.SendEvent(sessionID, EventGenerationPreview, GenerationPreviewData{
 				URL:       previewURL,
 				Width:     int(resp.ImageWidth),

@@ -778,7 +778,22 @@ img {
 /* Thinking indicator */
 .message-thinking {
   align-self: flex-start;
-  transition: all 0.3s ease;
+}
+
+.message-thinking:has(.has-preview) {
+  width: 100%;
+  overflow: hidden;
+  animation: preview-expand 0.3s ease;
+}
+
+.message-assistant:has(.has-preview) {
+  width: 100%;
+}
+
+@keyframes preview-expand {
+  from {
+    max-width: 100px;
+  }
 }
 
 .thinking-bubble {
@@ -791,7 +806,7 @@ img {
   align-items: center;
   gap: var(--space-sm);
   min-width: 60px;
-  transition: all 0.3s ease;
+  transition: background-color 0.3s ease, border-radius 0.3s ease;
 }
 
 .thinking-bubble.expanded {
@@ -804,11 +819,8 @@ img {
 
 .thinking-bubble.has-preview {
   position: relative;
+  min-height: var(--preview-size);
   border-bottom-left-radius: var(--space-xs);
-}
-
-.message-thinking:has(.has-preview) {
-  align-self: stretch;
 }
 
 .message-bubble.expanding {
@@ -1783,6 +1795,12 @@ img {
 
         <!-- generation-started: Show generating indicator -->
         <div id="generation-started-target" sse-swap="generation-started" hx-swap="none"></div>
+
+        <!-- generation-progress: Update progress bar during generation -->
+        <div id="generation-progress-target" sse-swap="generation-progress" hx-swap="none"></div>
+
+        <!-- generation-preview: Show preview image during generation -->
+        <div id="generation-preview-target" sse-swap="generation-preview" hx-swap="none"></div>
     </div>
 
     <div class="app">
