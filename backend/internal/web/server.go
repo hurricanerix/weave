@@ -2,11 +2,11 @@ package web
 
 import (
 	"context"
-	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -24,10 +24,8 @@ import (
 	"github.com/hurricanerix/weave/internal/ollama"
 	"github.com/hurricanerix/weave/internal/persistence"
 	"github.com/hurricanerix/weave/internal/protocol"
+	"github.com/hurricanerix/weave/internal/resources"
 )
-
-//go:embed templates/* static/*
-var embeddedFS embed.FS
 
 const (
 	// DefaultAddr is the default address the server listens on.
@@ -68,6 +66,7 @@ type Server struct {
 	server    *http.Server
 	broker    *Broker
 	templates *template.Template
+	webFS     fs.FS
 
 	// Dependencies for chat functionality
 	ollamaClient   ollamaClient
@@ -192,8 +191,18 @@ func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *c
 		}
 	}
 
+	// Get embedded resources and extract the web sub-filesystem
+	embedded, err := resources.Embedded()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load embedded resources: %w", err)
+	}
+	webFS, err := fs.Sub(embedded, "web")
+	if err != nil {
+		return nil, fmt.Errorf("failed to access web resources: %w", err)
+	}
+
 	// Parse templates from embedded filesystem
-	tmpl, err := template.ParseFS(embeddedFS, "templates/*.html")
+	tmpl, err := template.ParseFS(webFS, "templates/*.html")
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse templates: %w", err)
 	}
@@ -202,6 +211,7 @@ func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *c
 		addr:             addr,
 		broker:           NewBroker(),
 		templates:        tmpl,
+		webFS:            webFS,
 		ollamaClient:     ollamaClient,
 		sessionManager:   sessionManager,
 		rateLimiter:      newRateLimiter(),
@@ -258,7 +268,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /", s.handleIndex)
 
 	// Static files (if we add CSS/JS later)
-	mux.Handle("GET /static/", http.FileServer(http.FS(embeddedFS)))
+	mux.Handle("GET /static/", http.FileServer(http.FS(s.webFS)))
 
 	// SSE endpoint for real-time updates
 	mux.HandleFunc("GET /events", s.handleEvents)

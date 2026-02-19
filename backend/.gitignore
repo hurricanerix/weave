@@ -15,11 +15,7 @@
 !go.sum
 !go.mod
 
-!internal/web/templates/**/*.html
-
-!internal/web/static/**/*.css
-!internal/web/static/**/*.ttf
-!internal/web/static/**/*.webp
+!internal/resources/embed/**/*
 
 !README.md
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -18,6 +19,7 @@ import (
 	"github.com/hurricanerix/weave/internal/logging"
 	"github.com/hurricanerix/weave/internal/ollama"
 	"github.com/hurricanerix/weave/internal/persistence"
+	"github.com/hurricanerix/weave/internal/resources"
 	"github.com/hurricanerix/weave/internal/web"
 )
 
@@ -197,23 +199,23 @@ func CreateOllamaClient(cfg *config.Config) *ollama.Client {
 }
 
 // CreateSessionManager creates a session manager with persistence support.
-// Sessions are stored in config/sessions/ and automatically loaded on-demand.
-func CreateSessionManager(logger *logging.Logger) *conversation.SessionManager {
-	// Create session store with base path
-	store := persistence.NewSessionStore("config/sessions")
+// Sessions are stored in {configDir}/sessions/ and automatically loaded on-demand.
+func CreateSessionManager(configDir string, logger *logging.Logger) *conversation.SessionManager {
+	sessionsDir := filepath.Join(configDir, "sessions")
+	store := persistence.NewSessionStore(sessionsDir)
 
-	// Create session manager with persistence
 	sm := conversation.NewSessionManagerWithPersistence(store)
 
-	logger.Debug("Created session manager with persistence at config/sessions")
+	logger.Debug("Created session manager with persistence at %s", sessionsDir)
 	return sm
 }
 
 // CreateImageStore creates an image store for session-specific images.
-// Images are stored in config/sessions/{session_id}/images/
-func CreateImageStore(logger *logging.Logger) *persistence.ImageStore {
-	store := persistence.NewImageStore("config/sessions")
-	logger.Debug("Created image store at config/sessions")
+// Images are stored in {configDir}/sessions/{session_id}/images/
+func CreateImageStore(configDir string, logger *logging.Logger) *persistence.ImageStore {
+	sessionsDir := filepath.Join(configDir, "sessions")
+	store := persistence.NewImageStore(sessionsDir)
+	logger.Debug("Created image store at %s", sessionsDir)
 	return store
 }
 
@@ -222,6 +224,52 @@ func CreateImageStorage(ctx context.Context, logger *logging.Logger) *image.Stor
 	storage := image.NewStorage()
 	storage.StartCleanup(ctx, logger)
 	return storage
+}
+
+// SeedAgentPrompts writes embedded agent prompt defaults to disk for each named prompt.
+// It only writes a file if it does not already exist, preserving any user customizations.
+// The files are written to {configDir}/agents/{name}.
+//
+// Parameters:
+//   - configDir: base configuration directory (e.g., ~/.config/weave)
+//   - embeddedFn: function that returns embedded prompt content by filename
+//   - logger: logger for debug output
+func SeedAgentPrompts(configDir string, embeddedFn func(string) (string, error), logger *logging.Logger) error {
+	agentsDir := filepath.Join(configDir, "agents")
+
+	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+		return fmt.Errorf("failed to create agents directory %s: %w", agentsDir, err)
+	}
+
+	names := []string{
+		config.DefaultAgentPrompt,
+		config.DefaultAgentToolsPrompt,
+	}
+
+	for _, name := range names {
+		destPath := filepath.Join(agentsDir, name)
+
+		// If the file already exists, the user may have customized it - skip it.
+		if _, err := os.Stat(destPath); err == nil {
+			logger.Debug("Agent prompt already exists, skipping seed: %s", destPath)
+			continue
+		}
+
+		// Read embedded content.
+		content, err := embeddedFn(name)
+		if err != nil {
+			return fmt.Errorf("failed to read embedded agent prompt %q: %w", name, err)
+		}
+
+		// Write to disk.
+		if err := os.WriteFile(destPath, []byte(content), 0644); err != nil {
+			return fmt.Errorf("failed to write agent prompt %s: %w", destPath, err)
+		}
+
+		logger.Debug("Seeded agent prompt: %s", destPath)
+	}
+
+	return nil
 }
 
 // CreateWebServer creates the HTTP server with all dependencies wired
@@ -248,26 +296,55 @@ func CreateWebServer(cfg *config.Config, ollamaClient *ollama.Client, sessionMan
 func InitializeAll(ctx context.Context, cfg *config.Config, logger *logging.Logger, computeClient *client.Conn) (*Components, error) {
 	logger.Debug("Initializing components")
 
+	// Get embedded resources for agent prompt seeding.
+	embedded, err := resources.Embedded()
+	if err != nil {
+		return nil, fmt.Errorf("failed to load embedded resources: %w", err)
+	}
+
+	// Seed agent prompts from embedded defaults before resolving paths.
+	// This ensures files exist on disk when the web server tries to load them.
+	readPrompt := func(name string) (string, error) {
+		data, err := fs.ReadFile(embedded, "config/agents/"+name)
+		if err != nil {
+			return "", fmt.Errorf("embedded agent prompt %q not found: %w", name, err)
+		}
+		return string(data), nil
+	}
+	if err := SeedAgentPrompts(cfg.ConfigDir, readPrompt, logger); err != nil {
+		return nil, fmt.Errorf("failed to seed agent prompts: %w", err)
+	}
+
+	// Resolve default agent prompt paths to absolute paths under ConfigDir/agents/.
+	// If the user passed an explicit non-default value via --agent-prompt, use it as-is.
+	resolvedCfg := *cfg
+	if resolvedCfg.AgentPromptPath == config.DefaultAgentPrompt {
+		resolvedCfg.AgentPromptPath = filepath.Join(cfg.ConfigDir, "agents", cfg.AgentPromptPath)
+	}
+	if resolvedCfg.AgentToolsPromptPath == config.DefaultAgentToolsPrompt {
+		resolvedCfg.AgentToolsPromptPath = filepath.Join(cfg.ConfigDir, "agents", cfg.AgentToolsPromptPath)
+	}
+
 	// Create ollama client
-	ollamaClient := CreateOllamaClient(cfg)
-	logger.Debug("Created ollama client: endpoint=%s, model=%s", cfg.OllamaURL, cfg.OllamaModel)
+	ollamaClient := CreateOllamaClient(&resolvedCfg)
+	logger.Debug("Created ollama client: endpoint=%s, model=%s", resolvedCfg.OllamaURL, resolvedCfg.OllamaModel)
 
 	// Create session manager with persistence
-	sessionManager := CreateSessionManager(logger)
+	sessionManager := CreateSessionManager(resolvedCfg.ConfigDir, logger)
 
 	// Create image store for session-specific images
-	imageStore := CreateImageStore(logger)
+	imageStore := CreateImageStore(resolvedCfg.ConfigDir, logger)
 
 	// Create image storage with cleanup goroutine
 	imageStorage := CreateImageStorage(ctx, logger)
 	logger.Debug("Created image storage with cleanup enabled")
 
 	// Create web server with compute client
-	webServer, err := CreateWebServer(cfg, ollamaClient, sessionManager, imageStorage, imageStore, computeClient, logger)
+	webServer, err := CreateWebServer(&resolvedCfg, ollamaClient, sessionManager, imageStorage, imageStore, computeClient, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create web server: %w", err)
 	}
-	logger.Debug("Created web server on port %d", cfg.Port)
+	logger.Debug("Created web server on port %d", resolvedCfg.Port)
 
 	return &Components{
 		OllamaClient:      ollamaClient,

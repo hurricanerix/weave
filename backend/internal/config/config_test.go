@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -438,21 +439,14 @@ func TestParse_VersionFlag(t *testing.T) {
 }
 
 func TestLoadAgentPrompt_ValidFile(t *testing.T) {
-	// Create tmp directory within current test directory (not using .. traversal)
-	tmpDir := "testdata_tmp"
-	if err := os.MkdirAll(tmpDir, 0755); err != nil {
-		t.Fatalf("failed to create tmp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
-	// Create test file
 	testPath := filepath.Join(tmpDir, "test-prompt.md")
 	testContent := "This is a test agent prompt.\nIt has multiple lines."
 	if err := os.WriteFile(testPath, []byte(testContent), 0644); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	// Load the file
 	content, err := LoadAgentPrompt(testPath)
 	if err != nil {
 		t.Fatalf("LoadAgentPrompt() error = %v, want nil", err)
@@ -483,19 +477,12 @@ func TestLoadAgentPrompt_NonExistentFile(t *testing.T) {
 }
 
 func TestLoadAgentPrompt_UnreadableFile(t *testing.T) {
-	// Create tmp directory within current test directory
-	tmpDir := "testdata_unreadable"
-	if err := os.MkdirAll(tmpDir, 0755); err != nil {
-		t.Fatalf("failed to create tmp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
-	// Create test file with no read permissions
 	testPath := filepath.Join(tmpDir, "unreadable.md")
 	if err := os.WriteFile(testPath, []byte("test"), 0000); err != nil {
 		t.Fatalf("failed to write test file: %v", err)
 	}
-	defer os.Chmod(testPath, 0644) // Restore permissions for cleanup
 
 	content, err := LoadAgentPrompt(testPath)
 	if err == nil {
@@ -574,14 +561,22 @@ func TestParse_AgentToolsPromptFlag(t *testing.T) {
 }
 
 func TestLoadAgentPrompt_AbsolutePath(t *testing.T) {
-	// Try to read an absolute path (should be rejected)
-	content, err := LoadAgentPrompt("/etc/passwd")
-	if err != ErrInvalidPath {
-		t.Errorf("LoadAgentPrompt() error = %v, want ErrInvalidPath", err)
+	// Absolute paths are now accepted (they're constructed internally from ConfigDir).
+	// Create a temp file with an absolute path and verify it loads successfully.
+	tmpDir := t.TempDir()
+	testPath := filepath.Join(tmpDir, "prompt.md")
+	testContent := "Absolute path prompt content."
+	if err := os.WriteFile(testPath, []byte(testContent), 0644); err != nil {
+		t.Fatalf("failed to write test file: %v", err)
 	}
 
-	if content != "" {
-		t.Errorf("LoadAgentPrompt() content = %q, want empty string on error", content)
+	content, err := LoadAgentPrompt(testPath)
+	if err != nil {
+		t.Errorf("LoadAgentPrompt() error = %v, want nil for absolute path", err)
+	}
+
+	if content != testContent {
+		t.Errorf("LoadAgentPrompt() content = %q, want %q", content, testContent)
 	}
 }
 
@@ -609,5 +604,64 @@ func TestLoadAgentPrompt_PathTraversal(t *testing.T) {
 				t.Errorf("LoadAgentPrompt(%q) content = %q, want empty string on error", tt.path, content)
 			}
 		})
+	}
+}
+
+func TestResolveConfigDir_EnvOverride(t *testing.T) {
+	want := "/custom/weave/data"
+	t.Setenv("WEAVE_CONFIG_DIR", want)
+	// Clear XDG so it cannot interfere.
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	got := resolveConfigDir()
+	if got != want {
+		t.Errorf("resolveConfigDir() = %q, want %q", got, want)
+	}
+}
+
+func TestResolveConfigDir_XDGFallback(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("XDG_CONFIG_HOME is not used on macOS")
+	}
+
+	xdgHome := "/custom/xdg"
+	t.Setenv("WEAVE_CONFIG_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", xdgHome)
+
+	got := resolveConfigDir()
+	want := filepath.Join(xdgHome, "weave")
+	if got != want {
+		t.Errorf("resolveConfigDir() = %q, want %q", got, want)
+	}
+}
+
+func TestResolveConfigDir_DefaultConfigWeave(t *testing.T) {
+	t.Setenv("WEAVE_CONFIG_DIR", "")
+	t.Setenv("XDG_CONFIG_HOME", "")
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("cannot determine home directory, skipping test")
+	}
+
+	got := resolveConfigDir()
+	want := filepath.Join(home, ".config", "weave")
+	if got != want {
+		t.Errorf("resolveConfigDir() = %q, want %q", got, want)
+	}
+}
+
+func TestParse_ConfigDirFromEnv(t *testing.T) {
+	want := "/env/override/dir"
+	t.Setenv("WEAVE_CONFIG_DIR", want)
+
+	output := &bytes.Buffer{}
+	cfg, err := Parse([]string{}, output)
+	if err != nil {
+		t.Fatalf("Parse() error = %v, want nil", err)
+	}
+
+	if cfg.ConfigDir != want {
+		t.Errorf("ConfigDir = %q, want %q", cfg.ConfigDir, want)
 	}
 }

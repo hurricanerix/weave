@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -29,10 +30,12 @@ const (
 	defaultOllamaURL   = "http://localhost:11434"
 	defaultOllamaModel = "llama3.1:8b"
 	defaultLogLevel    = "info"
-	// DefaultAgentPrompt is the default path to the agent conversation prompt file
-	DefaultAgentPrompt = "config/agents/ara.md"
-	// DefaultAgentToolsPrompt is the default path to the agent tools/extraction prompt file
-	DefaultAgentToolsPrompt = "config/agents/ara_tools.md"
+	// DefaultAgentPrompt is the default filename for the agent conversation prompt.
+	// The file lives under {ConfigDir}/agents/ and is seeded from embedded defaults on first run.
+	DefaultAgentPrompt = "ara.md"
+	// DefaultAgentToolsPrompt is the default filename for the agent tools/extraction prompt.
+	// The file lives under {ConfigDir}/agents/ and is seeded from embedded defaults on first run.
+	DefaultAgentToolsPrompt = "ara_tools.md"
 
 	// Validation constraints
 	minPort    = 1024
@@ -72,8 +75,8 @@ var (
 	ErrShowHelp = errors.New("help requested")
 	// ErrShowVersion is returned when --version flag is requested
 	ErrShowVersion = errors.New("version requested")
-	// ErrInvalidPath is returned when agent prompt path is invalid
-	ErrInvalidPath = errors.New("agent prompt path must be relative, not absolute")
+	// ErrInvalidPath is returned when a relative agent prompt path attempts directory traversal
+	ErrInvalidPath = errors.New("agent prompt path must not traverse outside the working directory")
 )
 
 // Config holds all configuration values for the weave application.
@@ -100,6 +103,9 @@ type Config struct {
 	// Agent configuration
 	AgentPromptPath      string
 	AgentToolsPromptPath string
+
+	// Data directory
+	ConfigDir string
 
 	// Internal flags
 	showHelp    bool
@@ -159,6 +165,8 @@ func Parse(args []string, output io.Writer) (*Config, error) {
 		return nil, err
 	}
 
+	c.ConfigDir = resolveConfigDir()
+
 	return c, nil
 }
 
@@ -208,6 +216,34 @@ func (c *Config) validate() error {
 	}
 
 	return nil
+}
+
+// resolveConfigDir returns the configuration/data directory for weave.
+// If WEAVE_CONFIG_DIR is set, it is used as-is.
+// Otherwise, the platform default is used:
+//   - Linux/other: $XDG_CONFIG_HOME/weave or ~/.config/weave
+//   - macOS: ~/Library/Application Support/weave
+func resolveConfigDir() string {
+	if dir := os.Getenv("WEAVE_CONFIG_DIR"); dir != "" {
+		return filepath.Clean(dir)
+	}
+
+	if runtime.GOOS == "darwin" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, "Library", "Application Support", "weave")
+		}
+		return "config"
+	}
+
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "weave")
+	}
+
+	if home, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(home, ".config", "weave")
+	}
+
+	return "config"
 }
 
 // printHelp prints usage information
@@ -264,20 +300,17 @@ func printVersion(w io.Writer) {
 
 // LoadAgentPrompt loads the agent prompt from a file.
 // Returns the file contents or an error if the file doesn't exist or is unreadable.
-// Only accepts relative paths that stay within the working directory to prevent
-// reading arbitrary system files.
+// Accepts absolute paths (used when paths are constructed internally from ConfigDir)
+// and relative paths that stay within the working directory.
+// Rejects relative paths that traverse outside the working directory.
 func LoadAgentPrompt(path string) (string, error) {
 	// Clean the path to resolve any .., ., or redundant separators
 	cleanPath := filepath.Clean(path)
 
-	// Reject absolute paths - only accept relative paths
-	if filepath.IsAbs(cleanPath) {
-		return "", ErrInvalidPath
-	}
-
-	// Reject paths that try to escape the working directory via ..
+	// Allow absolute paths - these are constructed internally from ConfigDir and are trusted.
+	// For relative paths, reject those that escape the working directory via ..
 	// After Clean(), paths like "../foo" or "foo/../../../bar" become "../foo" or "../../bar"
-	if strings.HasPrefix(cleanPath, "..") {
+	if !filepath.IsAbs(cleanPath) && strings.HasPrefix(cleanPath, "..") {
 		return "", ErrInvalidPath
 	}
 

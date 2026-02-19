@@ -60,6 +60,7 @@ func run() int {
 		cfg.Port, cfg.Steps, cfg.CFG, cfg.Width, cfg.Height, cfg.Seed, cfg.LLMSeed)
 	logger.Debug("Ollama: url=%s, model=%s", cfg.OllamaURL, cfg.OllamaModel)
 	logger.Debug("Log level: %s", cfg.LogLevel)
+	logger.Debug("Config directory: %s", cfg.ConfigDir)
 
 	logger.Debug("Validating ollama connection...")
 	if err := startup.ValidateOllama(cfg.OllamaURL); err != nil {

@@ -3,7 +3,7 @@
 default: electron
 
 run: electron
-	./electron/dist/linux-unpacked/weave --no-sandbox
+	WEAVE_CONFIG_DIR=./config ./electron/dist/linux-unpacked/weave --no-sandbox
 
 electron: backend compute
 	@test -d electron/node_modules || (echo "Error: npm dependencies not installed" && echo "Run: cd electron && npm install" && exit 1)

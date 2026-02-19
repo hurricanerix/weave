@@ -3,6 +3,7 @@ package startup
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -51,7 +52,7 @@ func TestCreateSessionManager(t *testing.T) {
 	}
 	logger := CreateLogger(cfg)
 
-	manager := CreateSessionManager(logger)
+	manager := CreateSessionManager(t.TempDir(), logger)
 
 	if manager == nil {
 		t.Fatal("CreateSessionManager() returned nil")
@@ -69,9 +70,9 @@ func TestCreateWebServer(t *testing.T) {
 	ctx := context.Background()
 	logger := CreateLogger(cfg)
 	ollamaClient := CreateOllamaClient(cfg)
-	sessionManager := CreateSessionManager(logger)
+	sessionManager := CreateSessionManager(t.TempDir(), logger)
 	imageStorage := CreateImageStorage(ctx, logger)
-	imageStore := CreateImageStore(logger)
+	imageStore := CreateImageStore(t.TempDir(), logger)
 
 	server, err := CreateWebServer(cfg, ollamaClient, sessionManager, imageStorage, imageStore, nil, logger)
 	if err != nil {
@@ -95,6 +96,7 @@ func TestInitializeAll(t *testing.T) {
 		OllamaURL:   "http://localhost:11434",
 		OllamaModel: "llama3.2:1b",
 		LogLevel:    "info",
+		ConfigDir:   t.TempDir(),
 	}
 
 	output := &bytes.Buffer{}
@@ -154,6 +156,101 @@ func TestInitializeAll(t *testing.T) {
 
 	// Verify logger captured some debug output
 	_ = output
+}
+
+func TestSeedAgentPrompts_CreatesMissingFiles(t *testing.T) {
+	configDir := t.TempDir()
+	cfg := &config.Config{LogLevel: "debug"}
+	logger := CreateLogger(cfg)
+
+	// embedded function returns predictable content per name
+	embedded := func(name string) (string, error) {
+		return "content of " + name, nil
+	}
+
+	if err := SeedAgentPrompts(configDir, embedded, logger); err != nil {
+		t.Fatalf("SeedAgentPrompts() error = %v, want nil", err)
+	}
+
+	// Both default prompt files should exist under {configDir}/agents/
+	for _, name := range []string{config.DefaultAgentPrompt, config.DefaultAgentToolsPrompt} {
+		path := filepath.Join(configDir, "agents", name)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("expected file %s to exist: %v", path, err)
+			continue
+		}
+		want := "content of " + name
+		if string(data) != want {
+			t.Errorf("file %s content = %q, want %q", name, string(data), want)
+		}
+	}
+}
+
+func TestSeedAgentPrompts_PreservesExistingFiles(t *testing.T) {
+	configDir := t.TempDir()
+	agentsDir := filepath.Join(configDir, "agents")
+	if err := os.MkdirAll(agentsDir, 0755); err != nil {
+		t.Fatalf("failed to create agents dir: %v", err)
+	}
+
+	// Write a user-customized version of ara.md before seeding
+	customContent := "my custom ara prompt"
+	customPath := filepath.Join(agentsDir, config.DefaultAgentPrompt)
+	if err := os.WriteFile(customPath, []byte(customContent), 0644); err != nil {
+		t.Fatalf("failed to write custom prompt: %v", err)
+	}
+
+	cfg := &config.Config{LogLevel: "debug"}
+	logger := CreateLogger(cfg)
+
+	embedded := func(name string) (string, error) {
+		return "embedded content of " + name, nil
+	}
+
+	if err := SeedAgentPrompts(configDir, embedded, logger); err != nil {
+		t.Fatalf("SeedAgentPrompts() error = %v, want nil", err)
+	}
+
+	// The customized file must be untouched
+	data, err := os.ReadFile(customPath)
+	if err != nil {
+		t.Fatalf("failed to read custom prompt: %v", err)
+	}
+	if string(data) != customContent {
+		t.Errorf("custom prompt was overwritten: got %q, want %q", string(data), customContent)
+	}
+
+	// The missing tools prompt should have been seeded
+	toolsPath := filepath.Join(agentsDir, config.DefaultAgentToolsPrompt)
+	toolsData, err := os.ReadFile(toolsPath)
+	if err != nil {
+		t.Errorf("expected tools prompt to be seeded: %v", err)
+	} else {
+		want := "embedded content of " + config.DefaultAgentToolsPrompt
+		if string(toolsData) != want {
+			t.Errorf("tools prompt content = %q, want %q", string(toolsData), want)
+		}
+	}
+}
+
+func TestSeedAgentPrompts_EmbeddedFnError(t *testing.T) {
+	configDir := t.TempDir()
+	cfg := &config.Config{LogLevel: "debug"}
+	logger := CreateLogger(cfg)
+
+	embeddedErr := errors.New("embedded resource not found")
+	embedded := func(name string) (string, error) {
+		return "", embeddedErr
+	}
+
+	err := SeedAgentPrompts(configDir, embedded, logger)
+	if err == nil {
+		t.Fatal("SeedAgentPrompts() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "embedded agent prompt") {
+		t.Errorf("error = %q, want to contain 'embedded agent prompt'", err.Error())
+	}
 }
 
 func TestCreateSocket(t *testing.T) {

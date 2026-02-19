@@ -1391,12 +1391,7 @@ func TestFormatClampedFeedback(t *testing.T) {
 }
 
 func TestNewServerWithDeps_AgentPromptLoading(t *testing.T) {
-	// Create tmp directory within current test directory (not using .. traversal)
-	tmpDir := "testdata_web"
-	if err := os.MkdirAll(tmpDir, 0755); err != nil {
-		t.Fatalf("failed to create tmp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
+	tmpDir := t.TempDir()
 
 	// Create test agent prompt file
 	testPromptPath := filepath.Join(tmpDir, "test-agent.md")
@@ -1466,13 +1461,11 @@ func TestNewServerWithDeps_AgentPromptLoading(t *testing.T) {
 }
 
 func TestNewServerWithDeps_DefaultAgentPrompt(t *testing.T) {
-	// Create tmp directory within current test directory (not using .. traversal)
-	tmpDir := "testdata_web_default"
-	defaultPromptDir := filepath.Join(tmpDir, "config", "agents")
+	tmpDir := t.TempDir()
+	defaultPromptDir := filepath.Join(tmpDir, "agents")
 	if err := os.MkdirAll(defaultPromptDir, 0755); err != nil {
-		t.Fatalf("failed to create tmp dir: %v", err)
+		t.Fatalf("failed to create prompt dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
 
 	defaultPromptPath := filepath.Join(defaultPromptDir, "ara.md")
 	defaultContent := "Default agent prompt content."
@@ -1480,7 +1473,7 @@ func TestNewServerWithDeps_DefaultAgentPrompt(t *testing.T) {
 		t.Fatalf("failed to write default prompt file: %v", err)
 	}
 
-	// Test with config pointing to default path
+	// Test with config pointing to an absolute path (as resolved by startup)
 	cfg := &config.Config{
 		Steps:           4,
 		CFG:             1.0,
