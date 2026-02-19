@@ -126,8 +126,68 @@ func run() int {
 	components.ComputeSocketPath = socketPath
 	components.ComputeProcess = computeProcess
 	components.ComputeStdin = computeStdin
+	components.ComputeClient = computeConn
 
 	defer startup.CleanupCompute(components, logger)
+
+	// Wire compute restart function so the stop-generation endpoint can respawn
+	// the compute process after killing it mid-inference.
+	components.WebServer.SetComputeRestartFunc(func(restartCtx context.Context) (*client.Conn, error) {
+		logger.Info("Restarting compute process...")
+
+		// Kill old compute process.
+		if components.ComputeProcess != nil && components.ComputeProcess.Process != nil {
+			logger.Debug("Killing old compute process (PID: %d)", components.ComputeProcess.Process.Pid)
+			_ = components.ComputeProcess.Process.Kill()
+			_ = components.ComputeProcess.Wait() // Reap zombie to avoid resource leak.
+		}
+
+		// Close old connection.
+		if components.ComputeClient != nil {
+			_ = components.ComputeClient.Close()
+		}
+
+		// Close old listener and remove socket file.
+		if components.ComputeListener != nil {
+			_ = components.ComputeListener.Close()
+		}
+		if components.ComputeSocketPath != "" {
+			_ = os.Remove(components.ComputeSocketPath)
+		}
+
+		// Create new socket.
+		newListener, newSocketPath, err := startup.CreateSocket()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create socket: %w", err)
+		}
+
+		// Spawn new compute process.
+		newProcess, newStdin, err := startup.SpawnCompute(newSocketPath)
+		if err != nil {
+			_ = newListener.Close()
+			return nil, fmt.Errorf("failed to spawn compute: %w", err)
+		}
+
+		// Accept connection from the new compute process.
+		newConn, err := client.AcceptConnection(restartCtx, newListener)
+		if err != nil {
+			_ = newStdin.Close()
+			_ = newProcess.Process.Kill()
+			_ = newProcess.Wait()
+			_ = newListener.Close()
+			return nil, fmt.Errorf("failed to accept connection: %w", err)
+		}
+
+		// Update components so the next restart uses the new state.
+		components.ComputeListener = newListener
+		components.ComputeSocketPath = newSocketPath
+		components.ComputeProcess = newProcess
+		components.ComputeStdin = newStdin
+		components.ComputeClient = newConn
+
+		logger.Info("Compute process restarted (new PID: %d)", newProcess.Process.Pid)
+		return newConn, nil
+	})
 
 	// Log server startup
 	logger.Info("Listening on http://localhost:%d", cfg.Port)

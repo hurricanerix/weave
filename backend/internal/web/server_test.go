@@ -16,6 +16,7 @@ import (
 	"github.com/hurricanerix/weave/internal/config"
 	"github.com/hurricanerix/weave/internal/image"
 	"github.com/hurricanerix/weave/internal/ollama"
+	"github.com/hurricanerix/weave/internal/persistence"
 )
 
 func TestNewServer(t *testing.T) {
@@ -1540,6 +1541,107 @@ func TestServer_BuildExtractionPrompt(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestHandleSessionImage_Preview verifies that preview images are served via the
+// persistent ImageStore (LoadPreview), not from ./tmp/. This exercises the storage
+// path that generateImage() now writes to via SavePreview.
+func TestHandleSessionImage_Preview(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := persistence.NewImageStore(tmpDir)
+
+	server, err := NewServerWithDeps("", nil, nil, nil, store, nil, nil)
+	if err != nil {
+		t.Fatalf("NewServerWithDeps() error = %v", err)
+	}
+
+	sessionID := "aabbccdd11223344556677889900aabb"
+	messageID := 7
+	pngData := []byte("fake-png-preview-data")
+
+	if err := store.SavePreview(sessionID, messageID, pngData); err != nil {
+		t.Fatalf("SavePreview() error = %v", err)
+	}
+
+	// The URL format must match what generateImage() sends in the SSE event:
+	// GetPreviewURL(sessionID, messageID) + "?step=N"
+	previewURL := store.GetPreviewURL(sessionID, messageID)
+	wantURLPrefix := "/sessions/" + sessionID + "/images/7_preview.png"
+	if previewURL != wantURLPrefix {
+		t.Errorf("GetPreviewURL() = %q, want %q", previewURL, wantURLPrefix)
+	}
+
+	// Call the handler directly, setting path values and the authenticated session
+	// in context. The security check compares the context session ID to the path
+	// session ID, so they must match.
+	req := httptest.NewRequest("GET", previewURL+"?step=3", nil)
+	req.SetPathValue("sessionID", sessionID)
+	req.SetPathValue("filename", "7_preview.png")
+	ctx := setSessionID(req.Context(), sessionID)
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	server.handleSessionImage(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("got status %d, want %d", w.Code, http.StatusOK)
+	}
+	if got := w.Body.Bytes(); string(got) != string(pngData) {
+		t.Errorf("body = %q, want %q", got, pngData)
+	}
+	// Preview cache headers must not be immutable (preview files are overwritten each step).
+	if cc := w.Header().Get("Cache-Control"); cc != "private, max-age=300" {
+		t.Errorf("Cache-Control = %q, want %q", cc, "private, max-age=300")
+	}
+}
+
+// TestHandleSessionImage_PreviewDeletedOnCompletion verifies that after
+// DeletePreview is called (as generateImage() does on successful completion),
+// the preview is no longer served by the HTTP handler.
+func TestHandleSessionImage_PreviewDeletedOnCompletion(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := persistence.NewImageStore(tmpDir)
+
+	server, err := NewServerWithDeps("", nil, nil, nil, store, nil, nil)
+	if err != nil {
+		t.Fatalf("NewServerWithDeps() error = %v", err)
+	}
+
+	sessionID := "aabbccdd112233445566778899001122"
+	messageID := 3
+	pngData := []byte("fake-png-preview-data")
+
+	// Save a preview to simulate what generateImage() does during generation.
+	if err := store.SavePreview(sessionID, messageID, pngData); err != nil {
+		t.Fatalf("SavePreview() error = %v", err)
+	}
+
+	// Confirm the preview is accessible before deletion.
+	newReq := func() *http.Request {
+		req := httptest.NewRequest("GET", store.GetPreviewURL(sessionID, messageID), nil)
+		req.SetPathValue("sessionID", sessionID)
+		req.SetPathValue("filename", "3_preview.png")
+		return req.WithContext(setSessionID(req.Context(), sessionID))
+	}
+
+	w := httptest.NewRecorder()
+	server.handleSessionImage(w, newReq())
+	if w.Code != http.StatusOK {
+		t.Fatalf("preview before deletion: got status %d, want %d", w.Code, http.StatusOK)
+	}
+
+	// Delete the preview to simulate what generateImage() does after saving the
+	// final image (SD35GenerateResponse case).
+	if err := store.DeletePreview(sessionID, messageID); err != nil {
+		t.Fatalf("DeletePreview() error = %v", err)
+	}
+
+	// Verify the preview is no longer accessible.
+	w2 := httptest.NewRecorder()
+	server.handleSessionImage(w2, newReq())
+	if w2.Code != http.StatusNotFound {
+		t.Errorf("preview after deletion: got status %d, want %d", w2.Code, http.StatusNotFound)
 	}
 }
 

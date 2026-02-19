@@ -5,8 +5,10 @@
 Weave is an open-source, local-first desktop application for image generation through natural conversation.
 
 :warning: This project is an early prototype :warning:
+:warning: This project is a vibe coding experiment!  To date nearly the entire code base was written by agents using the rules under the [claude](.claude) directory. :warning:
+:warning: There are no gurantees the code in this project is correct or safe to run, use at your own risk. :warning:
 
-There are no guarantees that it works correctly. See the [docs](./docs) for more details about the project.
+See the [docs](./docs) for more details about the project.
 
 ![Preview of Weave](docs/images/weave-preview.png)
 

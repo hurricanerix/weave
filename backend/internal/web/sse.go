@@ -74,6 +74,13 @@ const (
 	// Example: {"url": "/tmp/preview_abc123.png", "width": 768, "height": 768, "message_id": 42}
 	EventGenerationPreview = "generation-preview"
 
+	// EventGenerationStopped indicates image generation was stopped before completion.
+	// Sent when the user explicitly stops generation. The preview URL (if any) points
+	// to the last preview image saved to persistent session storage.
+	// Data schema: {"message_id": int, "preview_url": string}
+	// Example: {"message_id": 42, "preview_url": "/sessions/abc.../images/42_preview.png"}
+	EventGenerationStopped = "generation-stopped"
+
 	// MaxConnections is the maximum number of concurrent SSE connections.
 	MaxConnections = 1000
 )
@@ -350,4 +357,12 @@ type GenerationPreviewData struct {
 	Width     int    `json:"width"`
 	Height    int    `json:"height"`
 	MessageID int    `json:"message_id"`
+}
+
+// GenerationStoppedData represents the data sent with EventGenerationStopped.
+// It includes the message ID and the URL of the last preview image (if one was saved).
+// PreviewURL is empty if no preview was captured before stopping.
+type GenerationStoppedData struct {
+	MessageID  int    `json:"message_id"`
+	PreviewURL string `json:"preview_url"`
 }

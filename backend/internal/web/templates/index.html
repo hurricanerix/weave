@@ -625,6 +625,21 @@ img {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
+/* Stopped state - preserve preview image, grayscale to indicate incomplete */
+.message-preview[data-status="stopped"] img {
+  opacity: 1;
+  filter: grayscale(100%);
+}
+
+.message-preview[data-status="stopped"] {
+  cursor: pointer;
+}
+
+.message-preview[data-status="stopped"]:hover {
+  transform: scale(1.02);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
 /* Selected message highlight */
 .message-selected .message-bubble {
   outline: 2px solid var(--color-accent);
@@ -1104,6 +1119,54 @@ img {
 
 .empty-state-hint {
   font-size: var(--font-size-sm);
+}
+
+/* Image panel footer: stop button + step progress */
+.image-panel-footer {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-md);
+  padding: var(--space-sm) var(--space-lg);
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.25));
+}
+
+.image-panel-footer.visible {
+  display: flex;
+}
+
+.stop-generation-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  background-color: rgba(0, 0, 0, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--border-radius);
+  color: white;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+
+  &:hover {
+    background-color: rgba(0, 0, 0, 0.8);
+  }
+
+  & svg {
+    width: 16px;
+    height: 16px;
+  }
+}
+
+.generation-step-text {
+  color: white;
+  font-size: var(--font-size-sm);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  user-select: none;
 }
 
 @media (max-width: 768px) {
@@ -1810,6 +1873,9 @@ img {
 
         <!-- generation-preview: Show preview image during generation -->
         <div id="generation-preview-target" sse-swap="generation-preview" hx-swap="none"></div>
+
+        <!-- generation-stopped: Handle stopped generation -->
+        <div id="generation-stopped-target" sse-swap="generation-stopped" hx-swap="none"></div>
     </div>
 
     <div class="app">
@@ -1901,6 +1967,13 @@ img {
                             <div class="empty-state-text">No image generated yet</div>
                             <div class="empty-state-hint">Use the chat to generate an image</div>
                         </div>
+                    </div>
+                    <div id="image-panel-footer" class="image-panel-footer">
+                        <button id="stop-generation-btn" class="stop-generation-btn" onclick="stopGeneration()">
+                            <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                            Stop
+                        </button>
+                        <span id="generation-step-text" class="generation-step-text"></span>
                     </div>
                 </div>
 
@@ -2439,6 +2512,9 @@ img {
                 case 'generation-preview':
                     handleGenerationPreview(data);
                     break;
+                case 'generation-stopped':
+                    handleGenerationStopped(data);
+                    break;
                 case 'connected':
                     console.log('SSE connected:', data);
                     break;
@@ -2714,6 +2790,7 @@ img {
             console.log('Generation started:', data);
             isGenerating = true;
             setGenerateButtonEnabled(false);
+            showImagePanelFooter();
 
             // Select the generating message so preview updates go to the large panel
             if (data.message_id !== undefined) {
@@ -2794,6 +2871,9 @@ img {
             // Update progress bar width
             const percent = Math.min(100, (data.step / data.total_steps) * 100);
             progressBar.style.width = percent + '%';
+
+            // Update step text in image panel footer
+            updateStepText(data.step, data.total_steps);
         }
 
         // Handle generation preview: display preview image
@@ -2827,6 +2907,82 @@ img {
             // Update the image detail panel only if this message is selected
             if (activeMessageId === data.message_id) {
                 showImageWithOverlay(data.url, 'Preview image');
+            }
+        }
+
+        // Stop the current generation
+        async function stopGeneration() {
+            try {
+                await fetch('/stop-generation', { method: 'POST' });
+            } catch (err) {
+                console.error('Failed to stop generation:', err);
+            }
+        }
+
+        // Handle generation stopped event
+        function handleGenerationStopped(data) {
+            console.log('Generation stopped:', data);
+
+            if (data.message_id !== undefined && data.preview_url) {
+                updatePreviewState(data.message_id, 'stopped', data.preview_url);
+            } else if (data.message_id !== undefined) {
+                updatePreviewState(data.message_id, 'stopped', '');
+            }
+
+            hideGeneratingIndicator();
+            isGenerating = false;
+            setGenerateButtonEnabled(true);
+
+            // Switch footer to restart mode
+            setFooterMode('restart');
+        }
+
+        // Show the image panel footer (stop button + step text)
+        function showImagePanelFooter() {
+            const footer = document.getElementById('image-panel-footer');
+            if (footer) footer.classList.add('visible');
+            setFooterMode('stop');
+        }
+
+        // Hide the image panel footer
+        function hideImagePanelFooter() {
+            const footer = document.getElementById('image-panel-footer');
+            if (footer) footer.classList.remove('visible');
+            const stepText = document.getElementById('generation-step-text');
+            if (stepText) stepText.textContent = '';
+        }
+
+        // Switch footer button between stop and restart modes
+        function setFooterMode(mode) {
+            const btn = document.getElementById('stop-generation-btn');
+            const stepText = document.getElementById('generation-step-text');
+            if (!btn) return;
+
+            if (mode === 'restart') {
+                btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg> Restart';
+                btn.onclick = restartGeneration;
+                if (stepText) stepText.textContent = 'Generation stopped';
+            } else {
+                btn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg> Stop';
+                btn.onclick = stopGeneration;
+                if (stepText) stepText.textContent = '';
+            }
+        }
+
+        // Restart generation by triggering the generate button
+        function restartGeneration() {
+            const generateButton = document.getElementById('generate-button');
+            if (generateButton && !generateButton.disabled) {
+                hideImagePanelFooter();
+                generateButton.click();
+            }
+        }
+
+        // Update the step text in the image panel footer
+        function updateStepText(step, totalSteps) {
+            const stepText = document.getElementById('generation-step-text');
+            if (stepText) {
+                stepText.textContent = 'Generating step ' + step + ' of ' + totalSteps;
             }
         }
 
@@ -2938,8 +3094,9 @@ img {
                 addImageToChat(data.url);
             }
 
-            // Hide generating indicator
+            // Hide generating indicator and image panel footer
             hideGeneratingIndicator();
+            hideImagePanelFooter();
 
             // Re-enable generate button
             isGenerating = false;
@@ -3100,6 +3257,7 @@ img {
             // Re-enable generate button on error
             if (isGenerating) {
                 hideGeneratingIndicator();
+                hideImagePanelFooter();
                 isGenerating = false;
                 setGenerateButtonEnabled(true);
             }

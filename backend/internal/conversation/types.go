@@ -136,6 +136,7 @@ const (
 	PreviewStatusNone       = "none"       // No preview generated yet
 	PreviewStatusGenerating = "generating" // Generation in progress
 	PreviewStatusComplete   = "complete"   // Generation complete
+	PreviewStatusStopped    = "stopped"    // Generation stopped before completion
 )
 
 // GenerationSettings holds the current generation parameters for a session.

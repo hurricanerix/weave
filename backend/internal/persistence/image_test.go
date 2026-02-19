@@ -624,3 +624,535 @@ func TestImageStore_MultipleImages(t *testing.T) {
 		}
 	}
 }
+
+func TestImageStore_SavePreview(t *testing.T) {
+	tests := []struct {
+		name      string
+		sessionID string
+		messageID int
+		pngData   []byte
+		wantErr   bool
+	}{
+		{
+			name:      "valid preview",
+			sessionID: createTestSessionID(61),
+			messageID: 1,
+			pngData:   createTestPNGData(100),
+			wantErr:   false,
+		},
+		{
+			name:      "large preview",
+			sessionID: createTestSessionID(62),
+			messageID: 2,
+			pngData:   createTestPNGData(1024 * 1024), // 1MB
+			wantErr:   false,
+		},
+		{
+			name:      "empty session ID",
+			sessionID: "",
+			messageID: 1,
+			pngData:   createTestPNGData(100),
+			wantErr:   true,
+		},
+		{
+			name:      "zero message ID",
+			sessionID: createTestSessionID(63),
+			messageID: 0,
+			pngData:   createTestPNGData(100),
+			wantErr:   true,
+		},
+		{
+			name:      "negative message ID",
+			sessionID: createTestSessionID(64),
+			messageID: -1,
+			pngData:   createTestPNGData(100),
+			wantErr:   true,
+		},
+		{
+			name:      "empty PNG data",
+			sessionID: createTestSessionID(65),
+			messageID: 1,
+			pngData:   []byte{},
+			wantErr:   true,
+		},
+		{
+			name:      "nil PNG data",
+			sessionID: createTestSessionID(66),
+			messageID: 1,
+			pngData:   nil,
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			store := NewImageStore(tmpDir)
+
+			err := store.SavePreview(tt.sessionID, tt.messageID, tt.pngData)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("SavePreview() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if err == nil && tt.sessionID != "" && tt.messageID > 0 {
+				imagesDir := filepath.Join(tmpDir, tt.sessionID, "images")
+				previewPath := filepath.Join(imagesDir, fmt.Sprintf("%d_preview.png", tt.messageID))
+
+				// Check images directory exists
+				if _, err := os.Stat(imagesDir); os.IsNotExist(err) {
+					t.Errorf("images directory not created")
+				}
+
+				// Check preview file exists
+				if _, err := os.Stat(previewPath); os.IsNotExist(err) {
+					t.Errorf("preview file not created")
+				}
+
+				// Verify file permissions (0600: owner read/write only)
+				info, err := os.Stat(previewPath)
+				if err != nil {
+					t.Fatalf("failed to stat preview file: %v", err)
+				}
+				if info.Mode().Perm() != 0600 {
+					t.Errorf("preview file permissions = %o, want 0600", info.Mode().Perm())
+				}
+
+				// Verify directory permissions (0700: owner-only access)
+				dirInfo, err := os.Stat(imagesDir)
+				if err != nil {
+					t.Fatalf("failed to stat images directory: %v", err)
+				}
+				if dirInfo.Mode().Perm() != 0700 {
+					t.Errorf("images directory permissions = %o, want 0700", dirInfo.Mode().Perm())
+				}
+
+				// Verify file size
+				if info.Size() != int64(len(tt.pngData)) {
+					t.Errorf("preview file size = %d, want %d", info.Size(), len(tt.pngData))
+				}
+			}
+		})
+	}
+}
+
+func TestImageStore_LoadPreview(t *testing.T) {
+	tests := []struct {
+		name       string
+		sessionID  string
+		messageID  int
+		setupStore func(*ImageStore)
+		wantErr    bool
+		checkFunc  func(*testing.T, []byte)
+	}{
+		{
+			name:      "existing preview",
+			sessionID: createTestSessionID(71),
+			messageID: 1,
+			setupStore: func(s *ImageStore) {
+				data := createTestPNGData(100)
+				if err := s.SavePreview(createTestSessionID(71), 1, data); err != nil {
+					t.Fatalf("failed to save test preview: %v", err)
+				}
+			},
+			wantErr: false,
+			checkFunc: func(t *testing.T, data []byte) {
+				if len(data) != 100 {
+					t.Errorf("expected 100 bytes, got %d", len(data))
+				}
+			},
+		},
+		{
+			name:      "nonexistent preview",
+			sessionID: createTestSessionID(72),
+			messageID: 1,
+			setupStore: func(s *ImageStore) {
+				// Don't save anything
+			},
+			wantErr: true,
+			checkFunc: func(t *testing.T, data []byte) {
+				// Should not be called
+			},
+		},
+		{
+			name:      "empty session ID",
+			sessionID: "",
+			messageID: 1,
+			setupStore: func(s *ImageStore) {
+				// Don't save anything
+			},
+			wantErr: true,
+			checkFunc: func(t *testing.T, data []byte) {
+				// Should not be called
+			},
+		},
+		{
+			name:      "zero message ID",
+			sessionID: createTestSessionID(73),
+			messageID: 0,
+			setupStore: func(s *ImageStore) {
+				// Don't save anything
+			},
+			wantErr: true,
+			checkFunc: func(t *testing.T, data []byte) {
+				// Should not be called
+			},
+		},
+		{
+			name:      "negative message ID",
+			sessionID: createTestSessionID(74),
+			messageID: -1,
+			setupStore: func(s *ImageStore) {
+				// Don't save anything
+			},
+			wantErr: true,
+			checkFunc: func(t *testing.T, data []byte) {
+				// Should not be called
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			store := NewImageStore(tmpDir)
+
+			if tt.setupStore != nil {
+				tt.setupStore(store)
+			}
+
+			data, err := store.LoadPreview(tt.sessionID, tt.messageID)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("LoadPreview() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr && tt.checkFunc != nil {
+				tt.checkFunc(t, data)
+			}
+		})
+	}
+}
+
+func TestImageStore_LoadPreview_ReturnsNotExist(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewImageStore(tmpDir)
+
+	_, err := store.LoadPreview(createTestSessionID(75), 1)
+	if err == nil {
+		t.Fatal("LoadPreview() should return error for nonexistent preview")
+	}
+
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("LoadPreview() error should be os.ErrNotExist, got: %v", err)
+	}
+}
+
+func TestImageStore_PreviewExists(t *testing.T) {
+	tests := []struct {
+		name       string
+		sessionID  string
+		messageID  int
+		setupStore func(*ImageStore)
+		want       bool
+	}{
+		{
+			name:      "existing preview",
+			sessionID: createTestSessionID(81),
+			messageID: 1,
+			setupStore: func(s *ImageStore) {
+				data := createTestPNGData(100)
+				if err := s.SavePreview(createTestSessionID(81), 1, data); err != nil {
+					t.Fatalf("failed to save test preview: %v", err)
+				}
+			},
+			want: true,
+		},
+		{
+			name:      "nonexistent preview",
+			sessionID: createTestSessionID(82),
+			messageID: 1,
+			setupStore: func(s *ImageStore) {
+				// Don't save anything
+			},
+			want: false,
+		},
+		{
+			name:      "empty session ID",
+			sessionID: "",
+			messageID: 1,
+			setupStore: func(s *ImageStore) {
+				// Don't save anything
+			},
+			want: false,
+		},
+		{
+			name:      "zero message ID",
+			sessionID: createTestSessionID(83),
+			messageID: 0,
+			setupStore: func(s *ImageStore) {
+				// Don't save anything
+			},
+			want: false,
+		},
+		{
+			name:      "negative message ID",
+			sessionID: createTestSessionID(84),
+			messageID: -1,
+			setupStore: func(s *ImageStore) {
+				// Don't save anything
+			},
+			want: false,
+		},
+		{
+			name:      "final image exists but not preview",
+			sessionID: createTestSessionID(85),
+			messageID: 1,
+			setupStore: func(s *ImageStore) {
+				// Save final image but not preview
+				data := createTestPNGData(100)
+				if err := s.Save(createTestSessionID(85), 1, data); err != nil {
+					t.Fatalf("failed to save test image: %v", err)
+				}
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			store := NewImageStore(tmpDir)
+
+			if tt.setupStore != nil {
+				tt.setupStore(store)
+			}
+
+			got := store.PreviewExists(tt.sessionID, tt.messageID)
+			if got != tt.want {
+				t.Errorf("PreviewExists() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestImageStore_DeletePreview(t *testing.T) {
+	tests := []struct {
+		name       string
+		sessionID  string
+		messageID  int
+		setupStore func(*ImageStore)
+		wantErr    bool
+	}{
+		{
+			name:      "delete existing preview",
+			sessionID: createTestSessionID(91),
+			messageID: 1,
+			setupStore: func(s *ImageStore) {
+				data := createTestPNGData(100)
+				if err := s.SavePreview(createTestSessionID(91), 1, data); err != nil {
+					t.Fatalf("failed to save test preview: %v", err)
+				}
+			},
+			wantErr: false,
+		},
+		{
+			name:      "delete nonexistent preview",
+			sessionID: createTestSessionID(92),
+			messageID: 1,
+			setupStore: func(s *ImageStore) {
+				// Don't save anything
+			},
+			wantErr: false, // Deleting nonexistent file is not an error
+		},
+		{
+			name:      "empty session ID",
+			sessionID: "",
+			messageID: 1,
+			setupStore: func(s *ImageStore) {
+				// Don't save anything
+			},
+			wantErr: true,
+		},
+		{
+			name:      "zero message ID",
+			sessionID: createTestSessionID(93),
+			messageID: 0,
+			setupStore: func(s *ImageStore) {
+				// Don't save anything
+			},
+			wantErr: true,
+		},
+		{
+			name:      "negative message ID",
+			sessionID: createTestSessionID(94),
+			messageID: -1,
+			setupStore: func(s *ImageStore) {
+				// Don't save anything
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			store := NewImageStore(tmpDir)
+
+			if tt.setupStore != nil {
+				tt.setupStore(store)
+			}
+
+			err := store.DeletePreview(tt.sessionID, tt.messageID)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("DeletePreview() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if err == nil && tt.sessionID != "" && tt.messageID > 0 {
+				if store.PreviewExists(tt.sessionID, tt.messageID) {
+					t.Errorf("preview still exists after deletion")
+				}
+			}
+		})
+	}
+}
+
+func TestImageStore_GetPreviewURL(t *testing.T) {
+	tests := []struct {
+		name      string
+		sessionID string
+		messageID int
+		want      string
+	}{
+		{
+			name:      "basic URL",
+			sessionID: createTestSessionID(100),
+			messageID: 1,
+			want:      "/sessions/00000000000000000000000000000100/images/1_preview.png",
+		},
+		{
+			name:      "different session",
+			sessionID: createTestSessionID(101),
+			messageID: 2,
+			want:      "/sessions/00000000000000000000000000000101/images/2_preview.png",
+		},
+		{
+			name:      "large message ID",
+			sessionID: createTestSessionID(102),
+			messageID: 999,
+			want:      "/sessions/00000000000000000000000000000102/images/999_preview.png",
+		},
+		{
+			name:      "valid 32-char hex session ID",
+			sessionID: "550e8400e29b41d4a716446655440000",
+			messageID: 1,
+			want:      "/sessions/550e8400e29b41d4a716446655440000/images/1_preview.png",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewImageStore("/any/path") // basePath doesn't affect URL
+
+			got := store.GetPreviewURL(tt.sessionID, tt.messageID)
+			if got != tt.want {
+				t.Errorf("GetPreviewURL() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestImageStore_SaveLoadPreview_RoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewImageStore(tmpDir)
+
+	original := createTestPNGData(1024)
+
+	if err := store.SavePreview(createTestSessionID(110), 1, original); err != nil {
+		t.Fatalf("SavePreview() failed: %v", err)
+	}
+
+	loaded, err := store.LoadPreview(createTestSessionID(110), 1)
+	if err != nil {
+		t.Fatalf("LoadPreview() failed: %v", err)
+	}
+
+	if len(loaded) != len(original) {
+		t.Fatalf("loaded data length = %d, want %d", len(loaded), len(original))
+	}
+
+	for i := range original {
+		if loaded[i] != original[i] {
+			t.Errorf("data mismatch at byte %d: got %d, want %d", i, loaded[i], original[i])
+			break
+		}
+	}
+}
+
+func TestImageStore_Preview_AtomicWrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewImageStore(tmpDir)
+
+	data := createTestPNGData(100)
+	if err := store.SavePreview(createTestSessionID(111), 1, data); err != nil {
+		t.Fatalf("SavePreview() failed: %v", err)
+	}
+
+	// Verify no .tmp file remains
+	imagesDir := filepath.Join(tmpDir, createTestSessionID(111), "images")
+	tmpFiles, err := filepath.Glob(filepath.Join(imagesDir, "*.tmp"))
+	if err != nil {
+		t.Fatalf("failed to glob tmp files: %v", err)
+	}
+	if len(tmpFiles) > 0 {
+		t.Errorf("found temp files after SavePreview: %v", tmpFiles)
+	}
+}
+
+func TestImageStore_PreviewIndependentFromFinalImage(t *testing.T) {
+	tmpDir := t.TempDir()
+	store := NewImageStore(tmpDir)
+	sessionID := createTestSessionID(112)
+
+	finalData := createTestPNGData(200)
+	previewData := createTestPNGData(100)
+
+	// Save both final and preview images for the same message
+	if err := store.Save(sessionID, 1, finalData); err != nil {
+		t.Fatalf("Save() failed: %v", err)
+	}
+	if err := store.SavePreview(sessionID, 1, previewData); err != nil {
+		t.Fatalf("SavePreview() failed: %v", err)
+	}
+
+	// Verify they are independent
+	if !store.Exists(sessionID, 1) {
+		t.Error("final image should exist")
+	}
+	if !store.PreviewExists(sessionID, 1) {
+		t.Error("preview should exist")
+	}
+
+	// Delete the preview; final image should be unaffected
+	if err := store.DeletePreview(sessionID, 1); err != nil {
+		t.Fatalf("DeletePreview() failed: %v", err)
+	}
+	if store.PreviewExists(sessionID, 1) {
+		t.Error("preview should not exist after deletion")
+	}
+	if !store.Exists(sessionID, 1) {
+		t.Error("final image should still exist after preview deletion")
+	}
+
+	// Delete the final image; verify preview methods still return correct results
+	if err := store.Delete(sessionID, 1); err != nil {
+		t.Fatalf("Delete() failed: %v", err)
+	}
+	if store.Exists(sessionID, 1) {
+		t.Error("final image should not exist after deletion")
+	}
+}

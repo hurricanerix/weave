@@ -10,9 +10,9 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
@@ -96,6 +96,15 @@ type Server struct {
 
 	// Request ID counter for compute process requests
 	requestID uint64
+
+	// Active generation tracking for stop functionality
+	activeGenMu     sync.Mutex
+	activeGenCancel map[string]context.CancelFunc // sessionID -> cancel func
+
+	// Compute process restart function (set by main after server creation).
+	// Called when stop-generation kills the compute process and needs to respawn.
+	// Returns the new client connection or error.
+	computeRestartFunc func(ctx context.Context) (*client.Conn, error)
 }
 
 // indexTemplateData holds data passed to the index.html template.
@@ -206,6 +215,7 @@ func NewServerWithDeps(addr string, ollamaClient ollamaClient, sessionManager *c
 		defaultHeight:    defaultHeight,
 		agentPrompt:      agentPrompt,
 		agentToolsPrompt: agentToolsPrompt,
+		activeGenCancel:  make(map[string]context.CancelFunc),
 	}
 
 	mux := http.NewServeMux()
@@ -230,6 +240,18 @@ func (s *Server) Broker() *Broker {
 	return s.broker
 }
 
+// SetComputeClient replaces the compute client connection.
+// Used by the compute restart function after spawning a new compute process.
+func (s *Server) SetComputeClient(c *client.Conn) {
+	s.computeClient = c
+}
+
+// SetComputeRestartFunc sets the function used to restart the compute process.
+// This is called by main after server creation to wire in the restart logic.
+func (s *Server) SetComputeRestartFunc(f func(ctx context.Context) (*client.Conn, error)) {
+	s.computeRestartFunc = f
+}
+
 // registerRoutes sets up all HTTP routes.
 func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Index page
@@ -245,12 +267,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /chat", s.handleChat)
 	mux.HandleFunc("POST /prompt", s.handlePrompt)
 	mux.HandleFunc("POST /generate", s.handleGenerate)
+	mux.HandleFunc("POST /stop-generation", s.handleStopGeneration)
 	mux.HandleFunc("POST /new-chat", s.handleNewChat)
 
 	// Image serving endpoints
 	mux.HandleFunc("GET /images/{id}", s.handleImage)
 	mux.HandleFunc("GET /sessions/{sessionID}/images/{filename}", s.handleSessionImage)
-	mux.HandleFunc("GET /tmp/{filename}", s.handleTmpFile)
 
 	// Message state endpoint for loading historical snapshots
 	mux.HandleFunc("GET /message/{id}/state", s.handleMessageState)
@@ -1092,7 +1114,25 @@ func (s *Server) generateImage(ctx context.Context, sessionID string, prompt str
 	genCtx, cancel := context.WithTimeout(ctx, 120*time.Second) // 2 min timeout for generation
 	defer cancel()
 
-	responseCh, err := s.computeClient.SendStream(genCtx, requestData)
+	// Create a separate cancellable context for stop functionality.
+	// This wraps genCtx so the stop handler can cancel generation independently
+	// of the timeout, without cancelling the parent context.
+	stopCtx, stopCancel := context.WithCancel(genCtx)
+	defer stopCancel()
+
+	// Register stop cancel for this session so handleStopGeneration can cancel us.
+	s.activeGenMu.Lock()
+	s.activeGenCancel[sessionID] = stopCancel
+	s.activeGenMu.Unlock()
+
+	// Deregister when generateImage returns so stale cancel funcs don't accumulate.
+	defer func() {
+		s.activeGenMu.Lock()
+		delete(s.activeGenCancel, sessionID)
+		s.activeGenMu.Unlock()
+	}()
+
+	responseCh, err := s.computeClient.SendStream(stopCtx, requestData)
 	if err != nil {
 		log.Printf("Failed to send request to compute process for session %s: %v", sessionID, err)
 		if errors.Is(err, client.ErrConnectionClosed) || errors.Is(err, client.ErrReaderDead) {
@@ -1104,15 +1144,6 @@ func (s *Server) generateImage(ctx context.Context, sessionID string, prompt str
 		}
 		return fmt.Errorf("failed to send request: %w", err)
 	}
-
-	// Ensure preview files are cleaned up even on error paths
-	defer func() {
-		if messageID > 0 {
-			previewFilename := fmt.Sprintf("preview_%s_%d.png", sessionID, messageID)
-			previewPath := filepath.Join("./tmp", previewFilename)
-			_ = os.Remove(previewPath)
-		}
-	}()
 
 	// Process streaming responses (progress, preview, final)
 	for responseData := range responseCh {
@@ -1164,28 +1195,15 @@ func (s *Server) generateImage(ctx context.Context, sessionID string, prompt str
 				continue
 			}
 
-			// Store preview image in ./tmp/ directory
-			// Create tmp directory if it doesn't exist
-			tmpDir := "./tmp"
-			if err := os.MkdirAll(tmpDir, 0755); err != nil {
-				log.Printf("Failed to create tmp directory for session %s: %v", sessionID, err)
+			// Store preview image in persistent session storage
+			if err := s.imageStore.SavePreview(sessionID, messageID, pngData); err != nil {
+				log.Printf("Failed to save preview image for session %s: %v", sessionID, err)
 				continue
 			}
 
-			// Generate preview filename pattern: preview_{session}_{message}.png
-			// This allows multiple concurrent generations and cleanup
-			previewFilename := fmt.Sprintf("preview_%s_%d.png", sessionID, messageID)
-			previewPath := filepath.Join(tmpDir, previewFilename)
-
-			// Write preview image to tmp directory
-			if err := os.WriteFile(previewPath, pngData, 0644); err != nil {
-				log.Printf("Failed to write preview image for session %s: %v", sessionID, err)
-				continue
-			}
-
-			// Send preview event via SSE with URL pointing to tmp file
+			// Send preview event via SSE with URL pointing to persistent storage
 			// Include step number as cache-buster so the browser re-fetches each update
-			previewURL := fmt.Sprintf("/tmp/%s?step=%d", previewFilename, resp.Step)
+			previewURL := s.imageStore.GetPreviewURL(sessionID, messageID) + fmt.Sprintf("?step=%d", resp.Step)
 			_ = s.broker.SendEvent(sessionID, EventGenerationPreview, GenerationPreviewData{
 				URL:       previewURL,
 				Width:     int(resp.ImageWidth),
@@ -1223,6 +1241,12 @@ func (s *Server) generateImage(ctx context.Context, sessionID string, prompt str
 				session := s.sessionManager.GetSession(sessionID)
 				manager := session.Manager()
 				manager.UpdateMessagePreview(messageID, conversation.PreviewStatusComplete, s.imageStore.GetURL(sessionID, messageID))
+
+				// Clean up preview file - final image supersedes it
+				if err := s.imageStore.DeletePreview(sessionID, messageID); err != nil {
+					log.Printf("Failed to delete preview for session %s, message %d: %v", sessionID, messageID, err)
+					// Non-fatal: preview cleanup failure does not affect the final image
+				}
 
 				imageURL = s.imageStore.GetURL(sessionID, messageID)
 				log.Printf("Saved image to session storage: %s", imageURL)
@@ -1263,6 +1287,28 @@ func (s *Server) generateImage(ctx context.Context, sessionID string, prompt str
 			s.sendErrorEvent(sessionID, "Unexpected response from image generation service")
 			return fmt.Errorf("unexpected response type: %T", response)
 		}
+	}
+
+	// Check if generation was stopped by user (context cancelled by handleStopGeneration).
+	if stopCtx.Err() != nil && messageID > 0 {
+		log.Printf("Generation stopped by user for session %s, message %d", sessionID, messageID)
+
+		// Update message preview status to stopped, keeping the last preview URL if one exists.
+		session := s.sessionManager.GetSession(sessionID)
+		manager := session.Manager()
+		previewURL := ""
+		if s.imageStore.PreviewExists(sessionID, messageID) {
+			previewURL = s.imageStore.GetPreviewURL(sessionID, messageID)
+		}
+		manager.UpdateMessagePreview(messageID, conversation.PreviewStatusStopped, previewURL)
+
+		// Send generation-stopped SSE event so the UI can update the bubble.
+		_ = s.broker.SendEvent(sessionID, EventGenerationStopped, GenerationStoppedData{
+			MessageID:  messageID,
+			PreviewURL: previewURL,
+		})
+
+		return nil // Not an error - user intentionally stopped.
 	}
 
 	return nil
@@ -1371,6 +1417,62 @@ func (s *Server) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `{"status":"ok","session_id":"%s"}`, sessionID)
 }
 
+// handleStopGeneration cancels any active image generation for the session.
+// It returns immediately after cancelling; the compute process restart happens
+// in a background goroutine to avoid blocking the HTTP response.
+//
+// POST /stop-generation
+func (s *Server) handleStopGeneration(w http.ResponseWriter, r *http.Request) {
+	sessionID := GetSessionID(r.Context())
+
+	// SECURITY: Check rate limit (reuse generate limiter).
+	if !s.rateLimiter.allowGenerate(sessionID) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprintf(w, `{"status":"error","message":"rate limit exceeded"}`)
+		return
+	}
+
+	// Look up and remove the active generation cancel function for this session.
+	s.activeGenMu.Lock()
+	cancel, ok := s.activeGenCancel[sessionID]
+	s.activeGenMu.Unlock()
+
+	if !ok {
+		// No active generation - nothing to stop.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, `{"status":"ok","message":"no active generation"}`)
+		return
+	}
+
+	// Cancel the generation context. generateImage will detect this after
+	// the response loop and send the generation-stopped SSE event.
+	cancel()
+
+	// Restart compute process in the background.
+	// The old compute process may be mid-inference and unresponsive; killing and
+	// respawning is the only reliable way to get it back to a clean state.
+	if s.computeRestartFunc != nil {
+		go func() {
+			restartCtx, restartCancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer restartCancel()
+
+			newConn, err := s.computeRestartFunc(restartCtx)
+			if err != nil {
+				log.Printf("Failed to restart compute process: %v", err)
+				return
+			}
+			s.SetComputeClient(newConn)
+			log.Printf("Compute process restarted successfully")
+		}()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, `{"status":"ok"}`)
+}
+
 // generatePlaceholderPixels creates a colored gradient for testing.
 // This will be replaced with actual compute process output.
 func generatePlaceholderPixels(width, height int) []byte {
@@ -1445,12 +1547,21 @@ func (s *Server) handleSessionImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Extract message ID from filename (format: {messageID}.png)
-	messageIDStr := strings.TrimSuffix(filename, ".png")
-	if messageIDStr == filename {
-		// No .png extension found
-		http.Error(w, "Invalid image filename (must be .png)", http.StatusBadRequest)
-		return
+	// Determine whether the request is for a preview image or a final image.
+	// Preview filename format: {messageID}_preview.png
+	// Final image filename format: {messageID}.png
+	isPreview := strings.HasSuffix(filename, "_preview.png")
+
+	var messageIDStr string
+	if isPreview {
+		messageIDStr = strings.TrimSuffix(filename, "_preview.png")
+	} else {
+		messageIDStr = strings.TrimSuffix(filename, ".png")
+		if messageIDStr == filename {
+			// No .png extension found
+			http.Error(w, "Invalid image filename (must be .png)", http.StatusBadRequest)
+			return
+		}
 	}
 
 	// SECURITY: Verify that the requesting session matches the sessionID in the path
@@ -1468,103 +1579,39 @@ func (s *Server) handleSessionImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load image from persistent storage
-	pngData, err := s.imageStore.Load(requestedSessionID, messageID)
+	// Load image from persistent storage.
+	// Preview images use a separate file ({messageID}_preview.png).
+	var pngData []byte
+	if isPreview {
+		pngData, err = s.imageStore.LoadPreview(requestedSessionID, messageID)
+	} else {
+		pngData, err = s.imageStore.Load(requestedSessionID, messageID)
+	}
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			http.Error(w, "Image not found", http.StatusNotFound)
 			return
 		}
-		log.Printf("Failed to load session image %s/%d: %v", requestedSessionID, messageID, err)
+		log.Printf("Failed to load session image %s/%d (preview=%v): %v", requestedSessionID, messageID, isPreview, err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	// Set headers for image serving
+	// Set headers for image serving.
+	// Preview images must not be cached as immutable because they are overwritten
+	// each time a new preview frame arrives during generation. Final images are
+	// content-addressed and never change, so they can be cached indefinitely.
 	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	if isPreview {
+		w.Header().Set("Cache-Control", "private, max-age=300")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	}
 
 	// Write PNG data
 	w.WriteHeader(http.StatusOK)
 	if _, err := w.Write(pngData); err != nil {
 		log.Printf("Failed to write image data for session %s, message %d: %v", requestedSessionID, messageID, err)
-	}
-}
-
-// handleTmpFile serves preview images from the ./tmp/ directory.
-// GET /tmp/{filename}
-// SECURITY: Only serves files matching the pattern preview_{sessionID}_{messageID}.png
-// to prevent directory traversal attacks and unauthorized file access.
-func (s *Server) handleTmpFile(w http.ResponseWriter, r *http.Request) {
-	// SECURITY: Get authenticated session ID from context
-	sessionID := GetSessionID(r.Context())
-	if sessionID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
-	// Extract filename from path parameter
-	filename := r.PathValue("filename")
-	if filename == "" {
-		http.Error(w, "Missing filename", http.StatusBadRequest)
-		return
-	}
-
-	// SECURITY: Validate filename format to prevent directory traversal
-	// Expected format: preview_{sessionID}_{messageID}.png
-	// This prevents access to arbitrary files in ./tmp/
-	if !strings.HasPrefix(filename, "preview_") || !strings.HasSuffix(filename, ".png") {
-		http.Error(w, "Invalid filename", http.StatusBadRequest)
-		return
-	}
-
-	// SECURITY: Reject filenames with path separators to prevent directory traversal
-	if strings.ContainsAny(filename, "/\\") {
-		http.Error(w, "Invalid filename", http.StatusBadRequest)
-		return
-	}
-
-	// Extract session ID from filename and verify it matches authenticated session
-	// Format: preview_{sessionID}_{messageID}.png
-	parts := strings.TrimPrefix(filename, "preview_")
-	parts = strings.TrimSuffix(parts, ".png")
-	splitParts := strings.Split(parts, "_")
-	if len(splitParts) < 2 {
-		http.Error(w, "Invalid filename format", http.StatusBadRequest)
-		return
-	}
-	filenameSessionID := splitParts[0]
-
-	if filenameSessionID != sessionID {
-		log.Printf("SECURITY: Session %s attempted to access preview from session %s", sessionID, filenameSessionID)
-		http.Error(w, "Forbidden", http.StatusForbidden)
-		return
-	}
-
-	// Construct file path (filename already validated above)
-	filePath := filepath.Join("./tmp", filename)
-
-	// Read file
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			http.Error(w, "Preview not found", http.StatusNotFound)
-			return
-		}
-		log.Printf("Failed to read tmp file %s: %v", filename, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	// Set headers for image serving
-	// Use shorter cache time for preview images since they're temporary
-	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Cache-Control", "private, max-age=60")
-
-	// Write PNG data
-	w.WriteHeader(http.StatusOK)
-	if _, err := w.Write(data); err != nil {
-		log.Printf("Failed to write tmp file data for %s: %v", filename, err)
 	}
 }
 
