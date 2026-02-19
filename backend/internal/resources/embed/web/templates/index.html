@@ -2348,21 +2348,27 @@ img {
             const selection = window.getSelection();
             if (selection && selection.toString().length > 0) return;
 
+            const messageId = message.dataset.messageId;
+
             // Handle click on preview area - select message and show image
             if (event.target.closest('.message-preview')) {
-                const messageId = message.dataset.messageId;
                 if (messageId) selectMessage(messageId);
                 const previewImg = preview.querySelector('img');
-                if (previewImg && preview.dataset.status === 'complete') {
+                const status = preview.dataset.status;
+                if (previewImg && (status === 'complete' || status === 'stopped')) {
                     showImageWithOverlay(previewImg.src, previewImg.alt || 'Generated image');
                 }
                 return;
             }
 
-            // Load the message state
-            const messageId = message.dataset.messageId;
+            // Load the message state and show image in large panel
             if (messageId) {
                 loadMessageState(messageId);
+                const previewImg = preview.querySelector('img');
+                const status = preview.dataset.status;
+                if (previewImg && (status === 'complete' || status === 'stopped')) {
+                    showImageWithOverlay(previewImg.src, previewImg.alt || 'Generated image');
+                }
             }
         }
 
@@ -2835,7 +2841,25 @@ img {
                         bubble.appendChild(previewDiv);
                         console.log('Preview created: status=generating, parent=', bubble.className);
                     } else if (bubble) {
-                        console.log('Preview already exists for message:', data.message_id);
+                        // Reset existing preview for restart/regenerate
+                        const existingPreview = bubble.querySelector('.message-preview');
+                        if (existingPreview) {
+                            existingPreview.setAttribute('data-status', 'generating');
+                            // Remove existing image
+                            const existingImg = existingPreview.querySelector('img');
+                            if (existingImg) existingImg.remove();
+                            // Reset progress bar
+                            let progressBar = existingPreview.querySelector('.progress-bar');
+                            if (progressBar) {
+                                progressBar.classList.remove('complete');
+                                progressBar.style.width = '0%';
+                            } else {
+                                progressBar = document.createElement('div');
+                                progressBar.className = 'progress-bar';
+                                existingPreview.appendChild(progressBar);
+                            }
+                            console.log('Preview reset to generating for message:', data.message_id);
+                        }
                     } else {
                         console.warn('No bubble found in target message:', targetMessage.innerHTML);
                     }
