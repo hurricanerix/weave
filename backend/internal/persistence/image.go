@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 const (
@@ -153,11 +154,14 @@ func (s *ImageStore) Delete(sessionID string, messageID int) error {
 	return s.deleteImage(s.imagePath(sessionID, "", messageID))
 }
 
-// GetURL returns the URL path for an image.
+// GetURL returns the URL path for an image with a cache-busting query parameter.
 // The path is relative and suitable for HTTP serving:
-// /sessions/{sessionID}/images/{messageID}.png
+// /sessions/{sessionID}/images/{messageID}.png?v={unixNano}
+//
+// The ?v= parameter ensures the browser treats each generation as a unique
+// resource, bypassing cached responses when an image is regenerated.
 func (s *ImageStore) GetURL(sessionID string, messageID int) string {
-	return fmt.Sprintf("/sessions/%s/images/%d.png", sessionID, messageID)
+	return fmt.Sprintf("/sessions/%s/images/%d.png?v=%d", sessionID, messageID, time.Now().UnixNano())
 }
 
 // SavePreview persists a preview image to disk.

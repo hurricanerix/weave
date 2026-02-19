@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -473,8 +474,9 @@ func TestImageStore_GetURL(t *testing.T) {
 			store := NewImageStore("/any/path") // basePath doesn't affect URL
 
 			got := store.GetURL(tt.sessionID, tt.messageID)
-			if got != tt.want {
-				t.Errorf("GetURL() = %q, want %q", got, tt.want)
+			// URL includes a ?v= cache-buster with a timestamp, so check prefix
+			if !strings.HasPrefix(got, tt.want+"?v=") {
+				t.Errorf("GetURL() = %q, want prefix %q?v=...", got, tt.want)
 			}
 		})
 	}

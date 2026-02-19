@@ -1608,15 +1608,11 @@ func (s *Server) handleSessionImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Set headers for image serving.
-	// Preview images must not be cached as immutable because they are overwritten
-	// each time a new preview frame arrives during generation. Final images are
-	// content-addressed and never change, so they can be cached indefinitely.
+	// Session images use message IDs (not content-addressed UUIDs) and can be
+	// overwritten when the user regenerates. Use no-cache to force revalidation
+	// so the browser always fetches the latest version.
 	w.Header().Set("Content-Type", "image/png")
-	if isPreview {
-		w.Header().Set("Cache-Control", "private, max-age=300")
-	} else {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	}
+	w.Header().Set("Cache-Control", "private, no-cache")
 
 	// Write PNG data
 	w.WriteHeader(http.StatusOK)

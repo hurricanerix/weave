@@ -1583,9 +1583,9 @@ func TestHandleSessionImage_Preview(t *testing.T) {
 	if got := w.Body.Bytes(); string(got) != string(pngData) {
 		t.Errorf("body = %q, want %q", got, pngData)
 	}
-	// Preview cache headers must not be immutable (preview files are overwritten each step).
-	if cc := w.Header().Get("Cache-Control"); cc != "private, max-age=300" {
-		t.Errorf("Cache-Control = %q, want %q", cc, "private, max-age=300")
+	// Session images use no-cache since content can change on regeneration.
+	if cc := w.Header().Get("Cache-Control"); cc != "private, no-cache" {
+		t.Errorf("Cache-Control = %q, want %q", cc, "private, no-cache")
 	}
 }
 
