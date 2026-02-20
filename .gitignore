@@ -10,6 +10,9 @@
 # But not these files...
 !/.gitignore
 
+# Level5 Prototype
+!/l5
+
 # Weave components
 !/backend
 !/compute

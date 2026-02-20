@@ -8,6 +8,7 @@ Production-grade desktop application for conversational image generation with GP
 - **weave-backend** (Go): Orchestration layer (web server, LLM integration, spawns compute)
 - **weave-compute** (C): GPU compute component (spawned by weave-backend, not a standalone process)
 - **Protocol**: Binary over Unix sockets between weave-backend and weave-compute
+- **Level5 (l5)**: Experimental container-isolated development pipeline (see below)
 
 ## Architecture
 
@@ -19,6 +20,14 @@ Electron (UI) → weave-backend (Go) → weave-compute (C)
                   ollama (LLM)          GPU inference
 ```
 
+## Experimental: Level5 (l5)
+
+Level5 (l5) is an experimental container-isolated development pipeline aiming toward Level 5 autonomous development. Instead of running agents locally with full filesystem access, l5 isolates each agent in an ephemeral Podman container: spec in, patch out.
+
+- **Status**: Early development. See `l5/` for design documents.
+- **Goal**: Human submits a spec, evaluates outcomes. Agents run autonomously in containers.
+- l5 is project-agnostic infrastructure. Weave is the first consumer.
+
 ## Development Workflow
 
 ### Design to Tasks
@@ -29,7 +38,7 @@ Electron (UI) → weave-backend (Go) → weave-compute (C)
 
 ### Implementation
 
-4. **backend-developer** or **compute-developer** - Implement each task
+4. **backend-developer**, **compute-developer**, or **l5-developer** - Implement each task
 5. **code-reviewer** - Review per-task for code quality
 
 ### Story Completion
@@ -61,6 +70,7 @@ Available in `.claude/agents/`:
 | **release-engineer** | Packaging and distribution | Per task |
 | **code-reviewer** | Review code quality | Per task |
 | **qa-reviewer** | Verify acceptance criteria, UX | Per story (complete) |
+| **l5-developer** | Implement l5 orchestrator (Go) code | Per task |
 | **security-reviewer** | Assess security, risk | Per story (complete) |
 
 ## Stories and Tasks
@@ -70,7 +80,7 @@ Stories live in `docs/stories/NNN-title.md`. Each story contains:
 - Acceptance criteria
 - Tasks (added by `/plan-tasks`)
 
-Tasks are numbered per-story (001, 002, 003...) and assigned to a domain (backend/compute/electron/packaging).
+Tasks are numbered per-story (001, 002, 003...) and assigned to a domain (backend/compute/electron/packaging/l5).
 
 ## Language-Specific Rules
 
@@ -79,6 +89,7 @@ Detailed conventions in `.claude/rules/`:
 - **c.md** - C standards and performance
 - **electron.md** - Electron security and patterns
 - **protocol.md** - Binary protocol specification
+- **l5.md** - Level5 pipeline conventions
 - **documentation.md** - Documentation standards
 
 ## Agent Philosophy
@@ -103,7 +114,7 @@ RTX 4070 SUPER (12GB VRAM):
 - **Security**: Auth on socket, input validation, no UB
 - **Testing**: Fast unit tests, slow integration tests (tagged), detailed benchmarks
 - **Temp files**: Use `./tmp/` (project-local), never `/tmp/`. Create the directory if it does not exist.
-- **Component boundaries**: Each component (`backend/`, `compute/`, `electron/`, `packaging/`) owns its own files. Don't modify files outside your assigned component without asking. Never consolidate or merge configuration files (especially `.gitignore`) across components.
+- **Component boundaries**: Each component (`backend/`, `compute/`, `electron/`, `packaging/`, `l5/`) owns its own files. Don't modify files outside your assigned component without asking. Never consolidate or merge configuration files (especially `.gitignore`) across components.
 
 ## Implementing Stories
 
@@ -119,6 +130,7 @@ When the user says "Implement Story NNN" (e.g., "Implement Story 015"):
       - `compute` → compute-developer
       - `electron` → electron-developer
       - `packaging` → release-engineer
+      - `l5` → l5-developer
    c. Developer implements the task
    d. Spawn code-reviewer to review the changes
    e. **If CHANGES REQUESTED:**
