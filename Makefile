@@ -1,4 +1,4 @@
-.PHONY: default clean backend compute electron run flatpak flatpak-install
+.PHONY: default clean backend compute electron run flatpak flatpak-install l5-relay
 
 default: electron
 
@@ -16,6 +16,10 @@ backend:
 compute:
 	$(MAKE) -C compute
 
+l5-relay:
+	mkdir -p l5/bin
+	cd l5 && go build -o bin/l5-relay ./cmd/l5-relay
+
 flatpak: electron
 	flatpak-builder --force-clean build-dir packaging/flatpak/com.placeholder.weave.yml
 
@@ -24,6 +28,7 @@ flatpak-install: flatpak
 
 clean:
 	rm -rf backend/bin/
+	rm -rf l5/bin/
 	rm -rf electron/dist/
 	rm -rf build-dir/
 	$(MAKE) -C compute clean
